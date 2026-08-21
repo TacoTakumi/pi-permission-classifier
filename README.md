@@ -1,104 +1,149 @@
 # pi-permission-classifier
 
-An auto-classifier Authorizer chain link for `@gotgenes/pi-permission-system`,
-giving pi a Claude-Code-style permission mode: a light model reviews each
-permission `ask` and returns allow / deny / defer, so benign requests are
-handled automatically and only uncertain ones reach the human.
+An auto-classifier for the [pi coding agent](https://github.com/badlogic/pi-mono)'s
+permission system. It registers an Authorizer chain link named `classifier`
+with `@gotgenes/pi-permission-system`: a light model reviews each permission
+`ask` and returns allow, deny, or defer, so clearly benign requests are
+approved automatically, clearly bad ones are rejected with a short teaching
+reason, and only genuinely uncertain ones reach you.
 
-The link registers as `classifier`. It is fail-safe by construction: a
-missing config, an unresolved model, an auth failure, a timeout, an
-unparseable reply, or any internal error resolves to `defer` - more
-prompting, never less.
+Think of it as a Claude-Code-style auto-approve mode, without giving up the
+permission gate: your deterministic policy still runs first, and the
+classifier only sees the asks that policy would have sent to you anyway.
 
-## How it works
+Fail-safe by construction: a missing config, an unresolved model, an auth
+failure, a timeout, an unparseable reply, or any internal error resolves to
+defer. More prompting, never less.
 
-- On each reviewed ask, the classifier renders the structured ask facts
-  (surface, tool names, the decision value, matched pattern, executed unit,
-  requester provenance) into a prompt. Tool results and file contents never
-  reach the judge, and the judged value is delimited as data, not
-  instructions.
-- The judge model is forced to call a `report_verdict` tool
-  (allow / deny / defer) so no free-text parsing is involved. The call is
-  aborted after `timeoutMs`.
-- The verdict is returned to the engine uncapped. The engine itself
-  downgrades any link `allow` on the `path` and `external_directory`
-  surfaces to `defer`; the classifier does not even attempt those surfaces.
-- A circuit breaker opens after 3 consecutive model-call failures or
-  timeouts: asks then defer instantly for a 60 second cooldown.
-- Every reviewed ask writes one `classifier.decision` entry to the
-  permission review log (request id, surface, value, model id, latency,
-  verdict, defer reason). Raw model replies go only to the debug log.
+## Requirements
 
-## Config
+- pi with `@gotgenes/pi-permission-system` installed and active
+- Node 22 or newer
+- No build step: pi loads `src/index.ts` directly
 
-Config lives at:
+## Setup / quickstart
+
+Everything below is an operator action - the package never enables itself,
+and installing it grants it no authority until you name it in the chain.
+
+1. Get the package and install its dependencies:
+
+       git clone <this repo> ~/pi-permission-classifier
+       cd ~/pi-permission-classifier
+       npm install
+
+2. Register the package with pi. In `~/.pi/agent/settings.json`, add the
+   package directory to the `packages` list (path relative to
+   `~/.pi/agent`, or absolute):
+
+       "packages": [
+         "../../pi-permission-classifier"
+       ]
+
+3. Activate the chain link. In
+   `~/.pi/agent/extensions/pi-permission-system/config.json`, add:
+
+       "authorizerChain": ["classifier"]
+
+   Only links named here are consulted; config order fixes the chain order.
+
+4. Create the classifier config. Without it the link registers nothing
+   (a safe no-op). The defaults are a good starting point:
+
+       mkdir -p ~/.pi/agent/extensions/pi-permission-classifier
+       echo '{}' > ~/.pi/agent/extensions/pi-permission-classifier/config.json
+
+   `{}` means: judge with the session's active model, review the default
+   surfaces, 5000 ms timeout, built-in rubric. See `config/config.example.json`
+   for a version with a dedicated judge model.
+
+5. Try it. Start a new pi session and trigger something your policy sends
+   to `ask` (for example a bash command not on your allowlist). A benign
+   command should now be approved automatically; a command matching the
+   never-allow list should be rejected with a reason; anything uncertain
+   still prompts you.
+
+6. Watch the decisions. Every reviewed ask writes one `classifier.decision`
+   entry to the permission review log:
+
+       ~/.pi/agent/extensions/pi-permission-system/logs/pi-permission-system-permission-review.jsonl
+
+   Each entry records request id, surface, value, model id, latency,
+   verdict, and defer reason. Enable `debugLog` in the permission system
+   config to also capture raw model replies and short-circuit traces.
+
+To disable, remove `classifier` from `authorizerChain` (or remove the
+package entry). The previous prompting behavior returns immediately.
+
+## Configuration
+
+Config files (project overrides global, shallow merge):
 
 - Global: `~/.pi/agent/extensions/pi-permission-classifier/config.json`
 - Project: `<cwd>/.pi/extensions/pi-permission-classifier/config.json`
 
-Project values override global values (shallow merge). A missing config
-means the link registers nothing (safe no-op). An empty object `{}` enables
-the defaults. See `config/config.example.json`.
-
-Fields:
-
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `provider` | unset | Judge model provider. Must be set together with `model`; with neither set, the session's active model judges. |
-| `model` | unset | Judge model id, resolved from the session model registry. Must be set together with `provider`. |
+| `provider` | unset | Judge model provider. Set together with `model`; with neither set, the session's active model judges. |
+| `model` | unset | Judge model id, resolved from the session model registry. Set together with `provider`. |
 | `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | `bash, mcp, skill, tool, read, write, edit` | The reviewed surfaces. A configured array replaces the default. `path` and `external_directory` are never reviewed. |
 | `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
 
-The default rubric is balanced: allow clearly benign, intent-aligned asks;
-deny only the hard never-allow list (secret/credential access, exfiltration,
-pipe-to-shell installs, force push, discarding uncommitted work, disarming
-safety guards, permission-system or classifier config/log edits); defer
-anything uncertain.
+A malformed or invalid config file means the link registers nothing and pi
+logs a warning - the gate falls back to normal prompting.
 
-Note on `read`/`write`/`edit`: including them lets the model auto-allow
-file access inside the working tree when the per-tool rule falls to `ask`.
-Cross-cutting `path` and `external_directory` rules still apply, and any
-allow that would fire on those surfaces is downgraded by the engine. Remove
-the three tools from `surfaces` for a more conservative posture.
+### The default rubric
 
-## Install (operator actions - you run these yourself)
+Balanced and defer-first: allow clearly benign, intent-aligned asks; deny
+only the hard never-allow list; defer anything uncertain. The never-allow
+list covers secret/credential access, exfiltration, pipe-to-shell installs,
+force push, discarding uncommitted work, disarming safety guards, and edits
+to the permission system's or the classifier's own config and logs.
 
-The package never enables itself. Two steps, both edits the operator makes
-by hand:
+Set `instructions` to replace the rubric wholesale with your own.
 
-1. Add the package path to the `packages` list in
-   `~/.pi/agent/settings.json`, for example:
+### Choosing surfaces
 
-       "packages": [
-         "../../AI/Projects/pi-permission-classifier"
-       ]
+Including `read`/`write`/`edit` lets the model auto-allow file access
+inside the working tree when the per-tool rule falls to `ask`. Your
+cross-cutting `path` and `external_directory` rules still apply, and the
+engine downgrades any link allow on those two surfaces to defer, so the
+classifier can never approve access outside the working directory or to a
+path your policy denies. Remove the three file tools from `surfaces` for a
+more conservative posture.
 
-2. Name the link in `authorizerChain` in
-   `~/.pi/agent/extensions/pi-permission-system/config.json`:
+## How it works
 
-       "authorizerChain": ["classifier"]
-
-Only links named in `authorizerChain` are consulted; registration alone
-grants no authority. Removing the name (or the package) restores the
-previous prompting behavior.
+- The classifier only sees asks your policy routed to `ask`, and only on
+  the configured surfaces. Anything else is untouched.
+- For each reviewed ask it renders the structured ask facts (surface, tool
+  names, the decision value, matched pattern, executed unit, requester
+  provenance) into a prompt. Tool results and file contents never reach
+  the judge, and the judged value is delimited as data, not instructions.
+- The judge model must answer through a forced `report_verdict` tool call
+  (allow / deny / defer), so there is no free-text parsing to get wrong.
+  The call is aborted after `timeoutMs`.
+- The verdict returns to the engine uncapped; the engine's own
+  bounded-delegation checkpoint enforces the `path` / `external_directory`
+  line.
+- A circuit breaker opens after 3 consecutive model-call failures or
+  timeouts; asks then defer instantly for a 60 second cooldown, so a down
+  model never stalls your session.
+- In-process subagents are handled correctly: registration is
+  session-scoped, so the link always serves the session that raised the ask.
 
 ## Development
 
-No build step: pi loads `src/index.ts` directly (see `pi.extensions` in
-`package.json`).
-
     npm install
-    npx tsc --noEmit
-    npx vitest run
+    npx tsc --noEmit    # typecheck
+    npx vitest run      # 97 tests
 
-`@gotgenes/pi-permission-system` resolves via a `file:` reference to the
-local source clone (see `package.json`), so the types track the current
-26.x API rather than the stale npm copy.
+The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
+to a local checkout of the permission system source, so types track the
+current API rather than a published copy. Adjust the path in `package.json`
+to wherever your checkout of `gotgenes/pi-packages` lives.
 
-## Read also
+## License
 
-- HANDOFF.md - the original handoff: problem, decisions, references, and
-  the exact paths to the existing permission system.
-- The permission system and the reference link (model-judge) live under
-  `/home/rob/AI/Projects/pi-env/gh/pi-packages/packages/`.
+MIT
