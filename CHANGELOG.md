@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to pi-permission-classifier are documented here. The
+format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-08-21
+
+### Added
+
+- Initial release.
+- `classifier` Authorizer chain link for `@gotgenes/pi-permission-system`:
+  a judge model reviews each permission ask on the configured surfaces and
+  returns allow, deny (with a teaching reason), or defer.
+- Fail-safe by construction: missing config, unresolved model, auth failure,
+  timeout, unparseable reply, and any internal error all resolve to defer.
+- Balanced default rubric with a hard never-allow list (secret/credential
+  access, exfiltration, pipe-to-shell installs, force push, discarding
+  uncommitted work, disarming safety guards, permission-system or classifier
+  config/log edits); a config `instructions` string replaces it verbatim.
+- Config via global and project scopes: `provider`/`model` judge override
+  (session's active model by default, following mid-session model switches),
+  `surfaces` (default: bash, mcp, skill, tool, read, write, edit), and
+  `timeoutMs` (default 5000).
+- Forced `report_verdict` tool call, so no free-text parsing; the judged
+  value and executed unit are delimited as data in the prompt, and tool
+  results and file contents never reach the judge.
+- Circuit breaker: 3 consecutive model-call failures or timeouts open a
+  60 second cooldown during which asks defer instantly.
+- One `classifier.decision` review-log entry per reviewed ask (request id,
+  surface, value, model id, latency, verdict, defer reason); raw model
+  replies only on the debug log.
+- Session-scoped registration, ordering-robust across `session_start` and
+  `permissions:ready`, disposed on shutdown.

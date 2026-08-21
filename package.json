@@ -3,8 +3,13 @@
   "version": "0.1.0",
   "description": "Auto-classifier Authorizer chain link for pi-permission-system: a light model reviews each ask and returns allow, deny, or defer",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "files": [
+    "src",
+    "config/config.example.json",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "imports": {
     "#src/*": "./src/*",
     "#test/*": "./test/*"
