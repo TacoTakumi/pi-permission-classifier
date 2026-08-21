@@ -24,7 +24,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   getPermissionsService,
+  getPermissionsServiceForSession,
   PERMISSIONS_READY_CHANNEL,
+  type PermissionsReadyEvent,
 } from "@gotgenes/pi-permission-system";
 
 import { type LoadConfigResult, loadClassifierConfig } from "./config-loader";
@@ -70,13 +72,22 @@ export function createClassifierExtension(
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
   let registry: ModelRegistryLike | undefined;
+  let readySessionId: string | undefined;
   let dispose: (() => void) | undefined;
 
   function tryRegister(): void {
     if (dispose || !sessionStarted || !config) {
       return;
     }
-    const service = getPermissionsService();
+    // The session-scoped accessor is the supported lookup (the legacy
+    // zero-arg one resolves the process root's service — the wrong node in an
+    // in-process subagent child). Once the ready payload has named this
+    // node's session, only its own service will do; the legacy slot is a
+    // fallback solely for a version-skew ready event that carried no id.
+    const service =
+      readySessionId !== undefined
+        ? getPermissionsServiceForSession(readySessionId)
+        : getPermissionsService();
     if (!service) {
       return;
     }
@@ -94,6 +105,9 @@ export function createClassifierExtension(
     config = result.config;
     sessionModel = ctx.model;
     registry = ctx.modelRegistry;
+    // The supported id source alongside the ready payload; guarded so a
+    // version-skew SDK without it degrades to the legacy service lookup.
+    readySessionId ??= ctx.sessionManager?.getSessionId?.();
     sessionStarted = true;
     for (const issue of result.issues) {
       warn(
@@ -107,7 +121,11 @@ export function createClassifierExtension(
     sessionModel = event.model;
   });
 
-  pi.events.on(PERMISSIONS_READY_CHANNEL, () => {
+  pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
+    const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
+    if (typeof sessionId === "string") {
+      readySessionId = sessionId;
+    }
     tryRegister();
   });
 
@@ -118,5 +136,6 @@ export function createClassifierExtension(
     config = undefined;
     sessionModel = undefined;
     registry = undefined;
+    readySessionId = undefined;
   });
 }
