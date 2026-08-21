@@ -27,6 +27,7 @@ import type {
   PromptPermissionDetails,
 } from "@gotgenes/pi-permission-system";
 
+import { CircuitBreaker } from "./breaker";
 import type { ClassifierConfig } from "./config-schema";
 import { type CompleteFn, reviewAsk } from "./model-review";
 
@@ -41,7 +42,14 @@ const SHORT_CIRCUIT_EVENT = "classifier.short_circuit";
 const MODEL_REPLY_EVENT = "classifier.model_reply";
 
 /** A defer decided before the model call, still recorded positively. */
-type PreModelDeferReason = "no-config" | "model-unresolved" | "auth-failed";
+type PreModelDeferReason =
+  | "no-config"
+  | "model-unresolved"
+  | "auth-failed"
+  | "breaker-open";
+
+/** Model-call outcomes that count against the circuit breaker. */
+const BREAKER_FAILURE_REASONS = new Set(["timeout", "call-failed"]);
 
 /**
  * The auth resolved for a model call — structurally the `ResolvedRequestAuth`
@@ -68,6 +76,8 @@ export interface ClassifierReviewerDeps {
   getRegistry: () => ModelRegistryLike | undefined;
   /** The model-completion seam (production: `complete` from `@earendil-works/pi-ai`). */
   complete: CompleteFn;
+  /** The shared circuit breaker (REQ-11); the reviewer makes its own when absent. */
+  breaker?: CircuitBreaker;
 }
 
 /**
@@ -79,6 +89,8 @@ export interface ClassifierReviewerDeps {
 export function createClassifierReviewer(
   deps: ClassifierReviewerDeps,
 ): Authorizer["authorize"] {
+  const breaker = deps.breaker ?? new CircuitBreaker();
+
   return async (details, _query, log) => {
     const { requestId } = details;
     const surface = gateSurfaceOf(details);
@@ -119,6 +131,16 @@ export function createClassifierReviewer(
       return { kind: "defer" };
     }
 
+    if (breaker.isOpen()) {
+      return deferWith(log, {
+        requestId,
+        surface,
+        value,
+        modelId: null,
+        deferReason: "breaker-open",
+      });
+    }
+
     const registry = deps.getRegistry();
     const model =
       config.provider !== undefined && config.model !== undefined
@@ -157,6 +179,14 @@ export function createClassifierReviewer(
       apiKey: auth.apiKey,
       headers: auth.headers,
     });
+    if (
+      outcome.deferReason !== undefined &&
+      BREAKER_FAILURE_REASONS.has(outcome.deferReason)
+    ) {
+      breaker.recordFailure(log, requestId);
+    } else {
+      breaker.recordSuccess(log, requestId);
+    }
     if (outcome.rawReply !== undefined) {
       log.debug(MODEL_REPLY_EVENT, {
         requestId,
