@@ -2,7 +2,8 @@
 
 An auto-classifier for the [pi coding agent](https://pi.dev/)'s
 permission system. It registers an Authorizer chain link named `classifier`
-with `@gotgenes/pi-permission-system`: a light model reviews each permission
+with [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system):
+a light model reviews each permission
 `ask` and returns allow, deny, or defer, so clearly benign requests are
 approved automatically, clearly bad ones are rejected with a short teaching
 reason, and only genuinely uncertain ones reach you.
