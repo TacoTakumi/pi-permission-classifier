@@ -1,6 +1,6 @@
 # pi-permission-classifier
 
-An auto-classifier for the [pi coding agent](https://github.com/badlogic/pi-mono)'s
+An auto-classifier for the [pi coding agent](https://github.com/earendil-works/pi)'s
 permission system. It registers an Authorizer chain link named `classifier`
 with `@gotgenes/pi-permission-system`: a light model reviews each permission
 `ask` and returns allow, deny, or defer, so clearly benign requests are
