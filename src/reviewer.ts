@@ -57,7 +57,13 @@ const BREAKER_FAILURE_REASONS = new Set(["timeout", "call-failed"]);
  * re-exported from `@earendil-works/pi-coding-agent`.
  */
 export type ResolvedRequestAuth =
-  | { ok: true; apiKey?: string; headers?: Record<string, string> }
+  | {
+      ok: true;
+      apiKey?: string;
+      headers?: Record<string, string | null>;
+      baseUrl?: string;
+      env?: Record<string, string>;
+    }
   | { ok: false; error: string };
 
 /** The narrow model-registry projection the reviewer needs (ISP). */
