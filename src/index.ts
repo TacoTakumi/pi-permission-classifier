@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type {
-  Authorizer,
-  AuthorizerVerdict,
-} from "@gotgenes/pi-permission-system";
 
-export type { Authorizer, AuthorizerVerdict };
+import { createClassifierExtension } from "./extension";
 
-export default function piPermissionClassifier(_pi: ExtensionAPI): void {
-  // Scaffold stub: the real wiring (createClassifierExtension) lands in T-08.
+/**
+ * Entry point: register the auto-classifier as a pi-permission-system
+ * Authorizer chain link named `"classifier"`.
+ */
+export default function piPermissionClassifier(pi: ExtensionAPI): void {
+  createClassifierExtension(pi);
 }

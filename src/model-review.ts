@@ -69,7 +69,7 @@ export type CompleteFn = (
   options?: {
     signal?: AbortSignal;
     apiKey?: string;
-    headers?: Record<string, string>;
+    headers?: Record<string, string | null>;
     toolChoice?: string;
   },
 ) => Promise<AssistantMessage>;
@@ -81,7 +81,7 @@ export interface ReviewAskInputs {
   model: Model<any>;
   complete: CompleteFn;
   apiKey?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, string | null>;
 }
 
 /**
