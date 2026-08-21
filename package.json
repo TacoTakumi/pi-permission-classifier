@@ -1,0 +1,47 @@
+{
+  "name": "pi-permission-classifier",
+  "version": "0.1.0",
+  "description": "Auto-classifier Authorizer chain link for pi-permission-system: a light model reviews each ask and returns allow, deny, or defer",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "imports": {
+    "#src/*": "./src/*",
+    "#test/*": "./test/*"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "permissions",
+    "authorizer",
+    "classifier",
+    "policy",
+    "access-control"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@gotgenes/pi-permission-system": "file:../pi-env/gh/pi-packages/packages/pi-permission-system",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

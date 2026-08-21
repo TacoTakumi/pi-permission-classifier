@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "#src/*": [
+        "./src/*",
+        "../pi-env/gh/pi-packages/packages/pi-permission-system/src/*"
+      ],
+      "#test/*": ["./test/*"]
+    }
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
