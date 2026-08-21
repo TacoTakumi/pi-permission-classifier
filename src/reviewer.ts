@@ -98,122 +98,152 @@ export function createClassifierReviewer(
   const breaker = deps.breaker ?? new CircuitBreaker();
 
   return async (details, _query, log) => {
-    const { requestId } = details;
-    const surface = gateSurfaceOf(details);
-    const value = details.payload.request.value;
-
-    const config = deps.getConfig();
-    if (!config) {
-      return deferWith(log, {
-        requestId,
-        surface: surface ?? null,
-        value,
-        modelId: null,
-        deferReason: "no-config",
-      });
-    }
-
-    if (surface === undefined) {
-      log.debug(SHORT_CIRCUIT_EVENT, {
-        requestId,
-        reason: "undeterminable-surface",
-      });
+    try {
+      return await decide(deps, breaker, details, log);
+    } catch {
+      // The unconditional backstop: whatever threw — an injected seam
+      // rejecting instead of returning ok:false, a malformed details bag,
+      // even the log itself — the ask defers (more prompting, never less).
+      try {
+        log.review(DECISION_EVENT, {
+          requestId: details.requestId,
+          surface: gateSurfaceOf(details) ?? null,
+          value: details.payload?.request?.value ?? null,
+          modelCalled: false,
+          modelId: null,
+          latencyMs: null,
+          verdict: "defer",
+          deferReason: "internal-error",
+        });
+      } catch {
+        // The log failed too; there is nothing left to record on.
+      }
       return { kind: "defer" };
     }
-    if (EXCLUDED_SURFACES.has(surface)) {
-      log.debug(SHORT_CIRCUIT_EVENT, {
-        requestId,
-        surface,
-        reason: "excluded-surface",
-      });
-      return { kind: "defer" };
-    }
-    if (!config.surfaces.includes(surface)) {
-      log.debug(SHORT_CIRCUIT_EVENT, {
-        requestId,
-        surface,
-        reason: "off-list-surface",
-      });
-      return { kind: "defer" };
-    }
+  };
+}
 
-    if (breaker.isOpen()) {
-      return deferWith(log, {
-        requestId,
-        surface,
-        value,
-        modelId: null,
-        deferReason: "breaker-open",
-      });
-    }
+async function decide(
+  deps: ClassifierReviewerDeps,
+  breaker: CircuitBreaker,
+  details: PromptPermissionDetails,
+  log: AuthorizerLog,
+): Promise<AuthorizerVerdict> {
+  const { requestId } = details;
+  const surface = gateSurfaceOf(details);
+  const value = details.payload.request.value;
 
-    const registry = deps.getRegistry();
-    const model =
-      config.provider !== undefined && config.model !== undefined
-        ? registry?.find(config.provider, config.model)
-        : deps.getSessionModel();
-    if (!registry || !model) {
-      return deferWith(log, {
-        requestId,
-        surface,
-        value,
-        modelId:
-          config.provider !== undefined && config.model !== undefined
-            ? `${config.provider}/${config.model}`
-            : null,
-        deferReason: "model-unresolved",
-      });
-    }
-    const modelId = `${model.provider}/${model.id}`;
-
-    const auth = await registry.getApiKeyAndHeaders(model);
-    if (!auth.ok) {
-      return deferWith(log, {
-        requestId,
-        surface,
-        value,
-        modelId,
-        deferReason: "auth-failed",
-      });
-    }
-
-    const outcome = await reviewAsk({
-      details,
-      config,
-      model,
-      complete: deps.complete,
-      apiKey: auth.apiKey,
-      headers: auth.headers,
+  const config = deps.getConfig();
+  if (!config) {
+    return deferWith(log, {
+      requestId,
+      surface: surface ?? null,
+      value,
+      modelId: null,
+      deferReason: "no-config",
     });
-    if (
-      outcome.deferReason !== undefined &&
-      BREAKER_FAILURE_REASONS.has(outcome.deferReason)
-    ) {
-      breaker.recordFailure(log, requestId);
-    } else {
-      breaker.recordSuccess(log, requestId);
-    }
-    if (outcome.rawReply !== undefined) {
-      log.debug(MODEL_REPLY_EVENT, {
-        requestId,
-        modelId,
-        rawReply: outcome.rawReply,
-      });
-    }
-    log.review(DECISION_EVENT, {
+  }
+
+  if (surface === undefined) {
+    log.debug(SHORT_CIRCUIT_EVENT, {
+      requestId,
+      reason: "undeterminable-surface",
+    });
+    return { kind: "defer" };
+  }
+  if (EXCLUDED_SURFACES.has(surface)) {
+    log.debug(SHORT_CIRCUIT_EVENT, {
+      requestId,
+      surface,
+      reason: "excluded-surface",
+    });
+    return { kind: "defer" };
+  }
+  if (!config.surfaces.includes(surface)) {
+    log.debug(SHORT_CIRCUIT_EVENT, {
+      requestId,
+      surface,
+      reason: "off-list-surface",
+    });
+    return { kind: "defer" };
+  }
+
+  if (breaker.isOpen()) {
+    return deferWith(log, {
       requestId,
       surface,
       value,
-      modelCalled: true,
-      modelId,
-      latencyMs: outcome.latencyMs,
-      verdict: outcome.verdict.kind,
-      deferReason: outcome.deferReason ?? null,
+      modelId: null,
+      deferReason: "breaker-open",
     });
-    // Returned uncapped: the engine envelope, not this link, owns any
-    // downgrade (REQ-07).
-    return outcome.verdict;
-  };
+  }
+
+  const registry = deps.getRegistry();
+  const model =
+    config.provider !== undefined && config.model !== undefined
+      ? registry?.find(config.provider, config.model)
+      : deps.getSessionModel();
+  if (!registry || !model) {
+    return deferWith(log, {
+      requestId,
+      surface,
+      value,
+      modelId:
+        config.provider !== undefined && config.model !== undefined
+          ? `${config.provider}/${config.model}`
+          : null,
+      deferReason: "model-unresolved",
+    });
+  }
+  const modelId = `${model.provider}/${model.id}`;
+
+  const auth = await registry.getApiKeyAndHeaders(model);
+  if (!auth.ok) {
+    return deferWith(log, {
+      requestId,
+      surface,
+      value,
+      modelId,
+      deferReason: "auth-failed",
+    });
+  }
+
+  const outcome = await reviewAsk({
+    details,
+    config,
+    model,
+    complete: deps.complete,
+    apiKey: auth.apiKey,
+    headers: auth.headers,
+  });
+  if (
+    outcome.deferReason !== undefined &&
+    BREAKER_FAILURE_REASONS.has(outcome.deferReason)
+  ) {
+    breaker.recordFailure(log, requestId);
+  } else {
+    breaker.recordSuccess(log, requestId);
+  }
+  if (outcome.rawReply !== undefined) {
+    log.debug(MODEL_REPLY_EVENT, {
+      requestId,
+      modelId,
+      rawReply: outcome.rawReply,
+    });
+  }
+  log.review(DECISION_EVENT, {
+    requestId,
+    surface,
+    value,
+    modelCalled: true,
+    modelId,
+    latencyMs: outcome.latencyMs,
+    verdict: outcome.verdict.kind,
+    deferReason: outcome.deferReason ?? null,
+  });
+  // Returned uncapped: the engine envelope, not this link, owns any
+  // downgrade (REQ-07).
+  return outcome.verdict;
 }
 
 /**

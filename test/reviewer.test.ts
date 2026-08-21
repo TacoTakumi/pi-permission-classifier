@@ -300,6 +300,46 @@ describe("failure paths", () => {
     expect(decisionEntry(log)?.deferReason).toBe("auth-failed");
   });
 
+  it("defers with reason internal-error when a seam throws unexpectedly", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const registry: ModelRegistryLike = {
+      find: vi.fn(),
+      getApiKeyAndHeaders: vi.fn(async () => {
+        throw new Error("registry blew up");
+      }),
+    };
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getRegistry: () => registry }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(decisionEntry(log)?.deferReason).toBe("internal-error");
+  });
+
+  it("still defers when even the review log throws", async () => {
+    const registry: ModelRegistryLike = {
+      find: vi.fn(),
+      getApiKeyAndHeaders: vi.fn(async () => {
+        throw new Error("registry blew up");
+      }),
+    };
+    const authorize = createClassifierReviewer(
+      makeDeps({ getRegistry: () => registry }),
+    );
+    const throwingLog = {
+      review: vi.fn(() => {
+        throw new Error("log broken");
+      }),
+      debug: vi.fn(() => {
+        throw new Error("log broken");
+      }),
+    };
+    const verdict = await authorize(askDetails(), QUERY, throwingLog);
+    expect(verdict).toEqual({ kind: "defer" });
+  });
+
   it("records the model-call defer reason from the review outcome", async () => {
     const complete: CompleteFn = vi.fn(async () => {
       throw new Error("boom");
