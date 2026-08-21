@@ -1,0 +1,6 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-4-5",
+  "surfaces": ["bash", "mcp", "skill", "tool", "read", "write", "edit"],
+  "timeoutMs": 5000
+}
