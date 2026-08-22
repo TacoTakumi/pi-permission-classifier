@@ -5,6 +5,28 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- BREAKING: requires `@gotgenes/pi-permission-system` 27.0.0 or newer,
+  declared as a peer dependency (`>=27.0.0`). No 26.x compatibility.
+- Registration moved to a single site: the `permissions:ready` handler
+  resolves the service with the session-keyed `getPermissionsService(sessionId)`
+  using the sessionId from the ready payload. The dual-path `session_start`
+  registration attempt and the legacy root-service fallback are removed;
+  the classifier never resolves the process root's permission service.
+
+### Added
+
+- Warn-once per session when the ready payload carries no sessionId or the
+  keyed locator has no service (pi-permission-system 27.0.0 or later must be
+  loaded in the same session); the classifier then registers nothing. The
+  warn latch resets at `session_shutdown`.
+- README known-issues section: a stray late ready carrying a previous
+  session's id would register on that session's still-published service
+  (inherent to the 27.0.0 contract).
+
 ## [0.1.0] - 2026-08-21
 
 ### Added
