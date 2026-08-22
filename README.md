@@ -18,7 +18,10 @@ defer. More prompting, never less.
 
 ## Requirements
 
-- pi with `@gotgenes/pi-permission-system` installed and active
+- pi with `@gotgenes/pi-permission-system` 27.0.0 or newer installed and
+  active in the same session (the classifier resolves the permission service
+  through the session-keyed locator introduced in 27.0.0; with an older
+  version it warns once and registers nothing)
 - Node 22 or newer
 - No build step: pi loads `src/index.ts` directly
 
