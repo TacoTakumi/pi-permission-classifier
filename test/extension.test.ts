@@ -5,9 +5,9 @@ import type {
 } from "@gotgenes/pi-permission-system";
 import {
   publishPermissionsService,
-  publishPermissionsServiceForSession,
+  publishRootPermissionsService,
   unpublishPermissionsService,
-  unpublishPermissionsServiceForSession,
+  unpublishRootPermissionsService,
 } from "@gotgenes/pi-permission-system";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,14 +87,14 @@ type RegisteredAuthorizer = (
 
 const SESSION_ID = "session-1";
 
-/** Pass `sessionId: null` to simulate a version-skew SDK without one. */
-function ctxWithModel(sessionId: string | null = SESSION_ID) {
+/**
+ * The extension takes the session id solely from the ready payload, so the
+ * fake ctx deliberately carries no session manager.
+ */
+function ctxWithModel() {
   return {
     cwd: "/project",
     model: SESSION_MODEL,
-    ...(sessionId === null
-      ? {}
-      : { sessionManager: { getSessionId: () => sessionId } }),
     modelRegistry: {
       find: vi.fn(),
       getApiKeyAndHeaders: vi.fn(async () => ({
@@ -112,17 +112,17 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  unpublishPermissionsService(service);
-  unpublishPermissionsServiceForSession(SESSION_ID, service);
+  unpublishPermissionsService(SESSION_ID, service);
   vi.restoreAllMocks();
 });
 
-/** Publish `service` for {@link SESSION_ID} and emit its ready event data. */
+/** Publish `service` under {@link SESSION_ID} in the keyed locator. */
 function publishForSession(): void {
-  publishPermissionsServiceForSession(SESSION_ID, service);
+  publishPermissionsService(SESSION_ID, service);
 }
 
 const READY_EVENT = { sessionId: SESSION_ID, adjudicatesLocally: true };
+const READY_EVENT_NO_ID = { sessionId: null, adjudicatesLocally: true };
 
 function start(
   pi: FakePi,
@@ -135,10 +135,11 @@ function start(
 }
 
 describe("createClassifierExtension", () => {
-  it("registers the classifier link when session_start runs before ready", () => {
+  it("registers the classifier link from the ready handler via the keyed locator", () => {
     const pi = makeFakePi();
     start(pi);
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    expect(service.registerAuthorizer).not.toHaveBeenCalled();
     publishForSession();
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
@@ -148,17 +149,8 @@ describe("createClassifierExtension", () => {
     );
   });
 
-  it("registers when ready fires before this session_start", () => {
-    const pi = makeFakePi();
-    start(pi);
-    publishForSession();
-    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).not.toHaveBeenCalled();
-    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
-  });
-
-  it("registers only once across both triggers", () => {
+  it("registers at most once across repeated ready emissions", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const pi = makeFakePi();
     start(pi);
     publishForSession();
@@ -166,6 +158,7 @@ describe("createClassifierExtension", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("registers nothing and warns when the config is invalid", () => {
@@ -219,51 +212,7 @@ describe("createClassifierExtension", () => {
     expect(complete.mock.calls[0]?.[0]).toBe(NEXT_MODEL);
   });
 
-  it("registers on the session-scoped service, not a legacy root service", () => {
-    // Both slots are populated the way an in-process subagent child sees
-    // them: the root's service in the legacy slot, this session's own in the
-    // per-session slot. Registration must land on this session's.
-    const rootService = makeService();
-    publishPermissionsService(rootService);
-    try {
-      publishForSession();
-      const pi = makeFakePi();
-      start(pi);
-      pi.lifecycle.get("session_start")?.({}, ctxWithModel());
-      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-      expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
-      expect(rootService.registerAuthorizer).not.toHaveBeenCalled();
-    } finally {
-      unpublishPermissionsService(rootService);
-    }
-  });
-
-  it("does not fall back to the legacy slot once a sessionId is known", () => {
-    // Only the legacy root service is published; this session published
-    // nothing. Registering on the root would be the wrong node - fail safe.
-    publishPermissionsService(service);
-    const pi = makeFakePi();
-    start(pi);
-    pi.lifecycle.get("session_start")?.({}, ctxWithModel("session-2"));
-    pi.events.get(READY_CHANNEL)?.({
-      sessionId: "session-2",
-      adjudicatesLocally: true,
-    });
-    expect(service.registerAuthorizer).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the legacy accessor when no sessionId is ever known", () => {
-    // Version-skew both sides: a ctx without a session manager and a ready
-    // event without a sessionId. The legacy root lookup still registers.
-    publishPermissionsService(service);
-    const pi = makeFakePi();
-    start(pi);
-    pi.lifecycle.get("session_start")?.({}, ctxWithModel(null));
-    pi.events.get(READY_CHANNEL)?.({});
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
-  });
-
-  it("disposes on session_shutdown and a later ready does not re-register", () => {
+  it("disposes on session_shutdown and a fresh session registers afresh", () => {
     const pi = makeFakePi();
     start(pi);
     publishForSession();
@@ -272,8 +221,71 @@ describe("createClassifierExtension", () => {
     expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
     pi.lifecycle.get("session_shutdown")?.({}, ctxWithModel());
     expect(service.disposer).toHaveBeenCalledTimes(1);
+    // A late ready from the torn-down session must not re-register.
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    // A subsequent session registers on its own keyed service.
+    const nextService = makeService();
+    publishPermissionsService("session-2", nextService);
+    try {
+      pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+      pi.events.get(READY_CHANNEL)?.({
+        sessionId: "session-2",
+        adjudicatesLocally: true,
+      });
+      expect(nextService.registerAuthorizer).toHaveBeenCalledTimes(1);
+      expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    } finally {
+      unpublishPermissionsService("session-2", nextService);
+    }
+  });
+
+  it("warns once per session and registers nothing when ready carries no session id", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    expect(service.registerAuthorizer).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/27\.0\.0/);
+  });
+
+  it("warns once per session and registers nothing on a keyed locator miss", () => {
+    // Only the deprecated root slot is populated — the classifier must not
+    // resolve it, so this is a locator miss for the session key.
+    const rootService = makeService();
+    publishRootPermissionsService(rootService);
+    try {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const pi = makeFakePi();
+      start(pi);
+      pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+      expect(rootService.registerAuthorizer).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/27\.0\.0/);
+    } finally {
+      unpublishRootPermissionsService(rootService);
+    }
+  });
+
+  it("resets the warn-once latch at session_shutdown", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi);
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    expect(warn).toHaveBeenCalledTimes(1);
+    pi.lifecycle.get("session_shutdown")?.({}, ctxWithModel());
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });
 
