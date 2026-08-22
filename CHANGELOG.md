@@ -5,7 +5,7 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-22
 
 ### Changed
 
@@ -26,6 +26,14 @@ this project adheres to
 - README known-issues section: a stray late ready carrying a previous
   session's id would register on that session's still-published service
   (inherent to the 27.0.0 contract).
+
+### Fixed
+
+- The forced tool choice is now spelled per judge-model API dialect:
+  "required" for OpenAI-family APIs, "any" elsewhere. Previously the
+  Anthropic spelling "any" was sent to every provider, so OpenAI-compatible
+  judges (local llama.cpp, OpenRouter) rejected each review call with a 400
+  and every ask fail-safed to defer.
 
 ## [0.1.0] - 2026-08-21
 
