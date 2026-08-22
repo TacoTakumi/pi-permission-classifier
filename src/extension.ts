@@ -1,15 +1,19 @@
 /**
  * Extension wiring: load the config at `session_start`, register the
- * `"classifier"` link once the permission service is ready, and dispose on
- * shutdown.
+ * `"classifier"` link from `permissions:ready`, and dispose on shutdown.
  *
- * Registration is attempted from both `session_start` and `permissions:ready`
- * behind an idempotency guard, because the two orderings are both possible:
- * the ready event fires inside pi-permission-system's own `session_start`,
- * which may run before or after this extension's. Whichever completes the
- * pair (config loaded here + service published there) triggers the single
- * registration; the guard prevents a duplicate (which `registerAuthorizer`
- * would reject).
+ * The ready handler is the sole registration site. pi-permission-system
+ * >=27.0.0 emits `permissions:ready` at least once after every extension's
+ * `session_start` (and it may repeat), so registering there needs no second
+ * attempt from this extension's own `session_start` — only an idempotency
+ * guard, because `registerAuthorizer` rejects a duplicate name.
+ *
+ * The service is resolved per node with the session-keyed locator, using the
+ * sessionId carried by the ready payload. When that id is missing, or the
+ * locator has no service for it, the permission system in this session is too
+ * old (or absent): warn once per session and register nothing — never fall
+ * back to the process root's service, which is another node's inside an
+ * in-process subagent child.
  *
  * The session's active model is captured at `session_start` and follows
  * `model_select`, so with no config override the judge is always the model
@@ -24,7 +28,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   getPermissionsService,
-  getPermissionsServiceForSession,
   PERMISSIONS_READY_CHANNEL,
   type PermissionsReadyEvent,
 } from "@gotgenes/pi-permission-system";
@@ -68,27 +71,53 @@ export function createClassifierExtension(
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
 
-  let sessionStarted = false;
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
   let registry: ModelRegistryLike | undefined;
-  let readySessionId: string | undefined;
   let dispose: (() => void) | undefined;
+  let warnedUnreachable = false;
 
-  function tryRegister(): void {
-    if (dispose || !sessionStarted || !config) {
+  function warnUnreachableOnce(): void {
+    if (warnedUnreachable) {
       return;
     }
-    // The session-scoped accessor is the supported lookup (the legacy
-    // zero-arg one resolves the process root's service — the wrong node in an
-    // in-process subagent child). Once the ready payload has named this
-    // node's session, only its own service will do; the legacy slot is a
-    // fallback solely for a version-skew ready event that carried no id.
-    const service =
-      readySessionId !== undefined
-        ? getPermissionsServiceForSession(readySessionId)
-        : getPermissionsService();
+    warnedUnreachable = true;
+    warn(
+      "could not resolve this session's permission service — " +
+        "pi-permission-system 27.0.0 or later must be loaded in the same " +
+        "session; the classifier link is not registered.",
+    );
+  }
+
+  pi.on("session_start", (_event, ctx) => {
+    const result = loadConfig(ctx.cwd);
+    config = result.config;
+    sessionModel = ctx.model;
+    registry = ctx.modelRegistry;
+    for (const issue of result.issues) {
+      warn(
+        `config issue at ${issue.sourcePath ?? "(merged)"} — ${issue.path}: ${issue.message}`,
+      );
+    }
+  });
+
+  pi.on("model_select", (event) => {
+    sessionModel = event.model;
+  });
+
+  pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
+    // Idempotent: ready fires at least once per session and may repeat.
+    if (dispose || !config) {
+      return;
+    }
+    const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
+    if (typeof sessionId !== "string") {
+      warnUnreachableOnce();
+      return;
+    }
+    const service = getPermissionsService(sessionId);
     if (!service) {
+      warnUnreachableOnce();
       return;
     }
     const authorize = createClassifierReviewer({
@@ -98,44 +127,14 @@ export function createClassifierExtension(
       complete,
     });
     dispose = service.registerAuthorizer(LINK_NAME, authorize);
-  }
-
-  pi.on("session_start", (_event, ctx) => {
-    const result = loadConfig(ctx.cwd);
-    config = result.config;
-    sessionModel = ctx.model;
-    registry = ctx.modelRegistry;
-    // The supported id source alongside the ready payload; guarded so a
-    // version-skew SDK without it degrades to the legacy service lookup.
-    readySessionId ??= ctx.sessionManager?.getSessionId?.();
-    sessionStarted = true;
-    for (const issue of result.issues) {
-      warn(
-        `config issue at ${issue.sourcePath ?? "(merged)"} — ${issue.path}: ${issue.message}`,
-      );
-    }
-    tryRegister();
-  });
-
-  pi.on("model_select", (event) => {
-    sessionModel = event.model;
-  });
-
-  pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
-    const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
-    if (typeof sessionId === "string") {
-      readySessionId = sessionId;
-    }
-    tryRegister();
   });
 
   pi.on("session_shutdown", () => {
     dispose?.();
     dispose = undefined;
-    sessionStarted = false;
     config = undefined;
     sessionModel = undefined;
     registry = undefined;
-    readySessionId = undefined;
+    warnedUnreachable = false;
   });
 }
