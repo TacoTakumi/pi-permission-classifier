@@ -128,6 +128,30 @@ describe("reviewAsk", () => {
     expect(options?.toolChoice).toBe("any");
   });
 
+  // "Force a tool call" is spelled per API dialect: OpenAI-family endpoints
+  // reject Anthropic's "any" with a 400, which would fail-safe every review
+  // to defer. The judge model's `api` field picks the spelling.
+  it.each([
+    ["openai-completions", "required"],
+    ["openai-responses", "required"],
+    ["azure-openai-responses", "required"],
+    ["openai-codex-responses", "required"],
+    ["anthropic-messages", "any"],
+    ["google-generative-ai", "any"],
+    ["bedrock-converse-stream", "any"],
+  ])("spells the forced tool choice for %s as %s", async (api, expected) => {
+    const complete = completeReporting({ verdict: "defer" });
+    await reviewAsk({
+      details: askDetails(),
+      config: CONFIG,
+      model: { provider: "p", id: "m", api } as never,
+      complete,
+    });
+    const [, , options] = (complete as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [unknown, Context, { toolChoice?: string } | undefined];
+    expect(options?.toolChoice).toBe(expected);
+  });
+
   it("uses a config instructions string verbatim as the system prompt", async () => {
     const config = classifierConfigSchema.parse({
       instructions: "Only ever defer.",

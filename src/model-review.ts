@@ -26,10 +26,10 @@ export const GENERIC_TEACHING_REASON =
   "The classifier judged this action unsafe to run unattended. Explain the intent and ask the human, or take a safer route.";
 
 /**
- * The single tool the model is forced to call. Forcing it (`toolChoice: "any"`)
- * removes free-text JSON parsing by construction — the verdict arrives as
- * structured `arguments`, so a Markdown fence or a prose preamble can no
- * longer cost a verdict.
+ * The single tool the model is forced to call. Forcing it removes free-text
+ * JSON parsing by construction — the verdict arrives as structured
+ * `arguments`, so a Markdown fence or a prose preamble can no longer cost a
+ * verdict.
  *
  * The Anthropic provider reads only `parameters.properties` /
  * `parameters.required`, so a plain JSON-Schema object is correct at runtime;
@@ -73,6 +73,27 @@ export type CompleteFn = (
     toolChoice?: string;
   },
 ) => Promise<AssistantMessage>;
+
+/**
+ * pi-ai passes `toolChoice` to the provider verbatim, and "force a tool call"
+ * is spelled per API dialect: OpenAI-family endpoints take "required" and
+ * reject Anthropic's "any" with a 400 — which would fail-safe every review to
+ * defer. Everything else pi-ai supports accepts "any" (Anthropic natively;
+ * Google, Bedrock, and Mistral translate it; pi-messages forwards it), so
+ * "any" is also the fallback for an unknown api.
+ */
+const REQUIRED_TOOL_CHOICE_APIS = new Set([
+  "openai-completions",
+  "openai-responses",
+  "azure-openai-responses",
+  "openai-codex-responses",
+]);
+
+function forcedToolChoice(api: string | undefined): "any" | "required" {
+  return api !== undefined && REQUIRED_TOOL_CHOICE_APIS.has(api)
+    ? "required"
+    : "any";
+}
 
 /** Inputs for a single ask review. */
 export interface ReviewAskInputs {
@@ -142,7 +163,7 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
       signal: controller.signal,
       apiKey: inputs.apiKey,
       headers: inputs.headers,
-      toolChoice: "any",
+      toolChoice: forcedToolChoice(inputs.model.api),
     });
     return readToolCallOutcome(reply, Date.now() - startedAt);
   } catch {
