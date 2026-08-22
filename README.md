@@ -97,6 +97,49 @@ Config files (project overrides global, shallow merge):
 A malformed or invalid config file means the link registers nothing and pi
 logs a warning - the gate falls back to normal prompting.
 
+### Example: a local judge model
+
+A small local model makes a good judge: verdicts stay on your machine, cost
+nothing, and return fast. Register the model in pi's `models.json` under a
+local OpenAI-compatible provider (llama.cpp, llama-swap, Ollama, vLLM):
+
+```json
+{
+  "providers": {
+    "llama-cpp-local": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "no-key",
+      "models": [
+        {
+          "id": "gemma-judge",
+          "name": "Gemma 4 E4B (judge)",
+          "reasoning": false,
+          "contextWindow": 16384,
+          "maxTokens": 4096,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}
+```
+
+Then point the classifier at it:
+
+```json
+{
+  "provider": "llama-cpp-local",
+  "model": "gemma-judge"
+}
+```
+
+The model must support tool calling: the classifier forces a
+`report_verdict` tool call and treats a reply without one as defer. Verify
+with a quick curl (`"tool_choice": "required"`) that your server returns
+`finish_reason: "tool_calls"`. Keep the model resident if you can - a cold
+load on the first ask can eat the `timeoutMs` budget.
+
 ### The default rubric
 
 Balanced and defer-first: allow clearly benign, intent-aligned asks; deny
