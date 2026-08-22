@@ -137,6 +137,14 @@ more conservative posture.
 - In-process subagents are handled correctly: registration is
   session-scoped, so the link always serves the session that raised the ask.
 
+## Known issues
+
+- The classifier trusts the sessionId on the `permissions:ready` payload. A
+  stray late ready that carries a previous session's id after a new
+  `session_start` would register the link on the old session's
+  still-published service. This is inherent to the pi-permission-system
+  27.0.0 contract and the reference implementation has the same property.
+
 ## Development
 
     npm install
