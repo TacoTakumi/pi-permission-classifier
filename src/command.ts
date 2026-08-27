@@ -8,10 +8,11 @@
  *   - `session`: remove the pair from the global config so the session's
  *     active model judges again.
  *   - no argument in the TUI: mount pi's own searchable model selector
- *     through `ctx.ui.custom`, built over `SettingsManager.inMemory()` so the
- *     operator's default model is never touched, the registry's runtime
- *     (reached behind a shape check, since it is a private field), the
- *     session's scoped models, and the current judge preselected. A
+ *     through `ctx.ui.custom`, built from the registry's runtime (reached
+ *     behind a shape check, since it is a private field), the session's
+ *     scoped models, and the current judge preselected, with no
+ *     set-as-default callback so the operator's default model is never
+ *     touched. A
  *     selection applies exactly like the typed form; a cancel changes
  *     nothing. When the runtime does not have the expected shape (a pi
  *     update moved it), the form degrades to `ctx.ui.select` over
@@ -43,7 +44,6 @@ import {
   ModelSelectorComponent,
   type ModelRuntime,
   type ScopedModel,
-  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
 import type { LoadConfigResult } from "./config-loader";
@@ -118,16 +118,16 @@ export interface PickerRequest {
 export type PickerSeam = (request: PickerRequest) => PickerComponent;
 
 /**
- * The production picker: pi's own model selector, over an in-memory settings
- * manager. The selector calls `setDefaultModelAndProvider` on that manager
- * before `onSelect`, so with the in-memory one the operator's real default
- * model is never rewritten (REQ-11).
+ * The production picker: pi's own model selector, in its pi 0.84.3 form
+ * (tui, currentModel, modelRuntime, scopedModels, onSelect, onCancel; the
+ * trailing optional arguments are omitted). The optional set-as-default
+ * callback is deliberately not passed, so the selector has no way to rewrite
+ * the operator's default model (REQ-11).
  */
 export const buildModelSelector: PickerSeam = (request) =>
   new ModelSelectorComponent(
     request.tui,
     request.currentModel,
-    SettingsManager.inMemory(),
     request.runtime,
     request.scopedModels,
     request.onSelect,
