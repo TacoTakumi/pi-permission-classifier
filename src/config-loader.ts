@@ -39,6 +39,19 @@ export interface ConfigIssue {
 }
 
 /**
+ * Render one issue as `<file> <path>: <message>`.
+ *
+ * Both user-facing surfaces use this single renderer: the `session_start`
+ * warnings in `src/extension.ts` and the command notifications in
+ * `src/command.ts`, so the same problem reads the same way in the log and in
+ * the TUI. An issue with no `sourcePath` prints `(merged)` in the file
+ * position. The output is printable ASCII.
+ */
+export function formatConfigIssue(issue: ConfigIssue): string {
+  return `${issue.sourcePath ?? "(merged)"} ${issue.path}: ${issue.message}`;
+}
+
+/**
  * Outcome of a config load: a validated config (or `undefined`) plus issues.
  * `projectSetsJudge` reports whether the project layer sets `provider` or
  * `model`, so a global judge write can warn that the project file shadows it.

@@ -52,6 +52,7 @@ import {
   type PickerSeam,
 } from "./command";
 import {
+  formatConfigIssue,
   getGlobalConfigPath,
   getProjectConfigPath,
   globalConfigExists,
@@ -220,9 +221,7 @@ export function createClassifierExtension(
     ui = ctx.ui;
     override = readFlagOverride();
     for (const issue of result.issues) {
-      warn(
-        `config issue at ${issue.sourcePath ?? "(merged)"} — ${issue.path}: ${issue.message}`,
-      );
+      warn(`config issue: ${formatConfigIssue(issue)}`);
     }
   });
 

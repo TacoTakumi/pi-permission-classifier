@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  formatConfigIssue,
   getGlobalConfigPath,
   getProjectConfigPath,
   globalConfigExists,
@@ -437,5 +438,39 @@ describe("config paths", () => {
     expect(getProjectConfigPath("/repo")).toBe(
       "/repo/.pi/extensions/pi-permission-classifier/config.json",
     );
+  });
+});
+
+/**
+ * The single renderer shared by the `session_start` warnings and the command
+ * notifications, so one issue reads the same everywhere (T-22).
+ */
+describe("formatConfigIssue", () => {
+  it("renders source path, field path and message in one line", () => {
+    expect(
+      formatConfigIssue({
+        path: "surfaces",
+        message: "Expected an array of surfaces.",
+        sourcePath:
+          "/agent/extensions/pi-permission-classifier/config.json",
+      }),
+    ).toBe(
+      "/agent/extensions/pi-permission-classifier/config.json surfaces: Expected an array of surfaces.",
+    );
+  });
+
+  it("labels an issue with no source path as merged", () => {
+    expect(
+      formatConfigIssue({ path: "$", message: "Expected a JSON object." }),
+    ).toBe("(merged) $: Expected a JSON object.");
+  });
+
+  it("is printable ASCII only", () => {
+    const formatted = formatConfigIssue({
+      path: "$",
+      message: "Failed to read config: Unexpected end of JSON input",
+      sourcePath: "/agent/extensions/pi-permission-classifier/config.json",
+    });
+    expect(/^[\x20-\x7E]+$/.test(formatted)).toBe(true);
   });
 });
