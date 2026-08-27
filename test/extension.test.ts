@@ -26,6 +26,7 @@ const CONFIG_RESULT: LoadConfigResult = {
     timeoutMs: 5000,
   },
   issues: [],
+  projectSetsJudge: false,
 };
 
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
@@ -168,6 +169,7 @@ describe("createClassifierExtension", () => {
       loadConfig: () => ({
         config: undefined,
         issues: [{ path: "provider", message: "must come with model" }],
+        projectSetsJudge: false,
       }),
     });
     publishForSession();
