@@ -20,6 +20,8 @@ const LINK_FILES = [
   "model-review.ts",
   "reviewer.ts",
   "breaker.ts",
+  "judge.ts",
+  "command.ts",
 ];
 
 function importsOf(source: string): string[] {
@@ -111,5 +113,47 @@ describe("operator docs", () => {
     ) as Record<string, unknown>;
     const parsed = classifierConfigSchema.safeParse(example);
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
+  it("lists the command and judge modules among the link files", () => {
+    expect(LINK_FILES).toContain("command.ts");
+    expect(LINK_FILES).toContain("judge.ts");
+  });
+
+  it("the command and judge modules import no node: builtins", () => {
+    for (const name of ["command.ts", "judge.ts"]) {
+      const nodeBuiltins = importsOf(src(name)).filter((imported) =>
+        imported.startsWith("node:"),
+      );
+      expect(nodeBuiltins).toEqual([]);
+    }
+  });
+
+  it("no link file changes the session model or the operator default model", () => {
+    for (const name of LINK_FILES) {
+      const source = src(name);
+      expect(source).not.toMatch(/\bsetModel\(/);
+      expect(source).not.toMatch(/setDefaultModelAndProvider\(/);
+    }
+  });
+
+  it("the judge write goes through a temp file and renameSync", () => {
+    const source = src("config-loader.ts");
+    expect(source).toContain("renameSync");
+    expect(source).toContain("export function writeGlobalJudge");
+  });
+
+  it("the picker is pi's own selector over an in-memory settings manager", () => {
+    const source = src("command.ts");
+    expect(source).toMatch(
+      /import \{[^}]*ModelSelectorComponent[^}]*\} from "@earendil-works\/pi-coding-agent"/,
+    );
+    expect(source).toMatch(
+      /import \{[^}]*SettingsManager[^}]*\} from "@earendil-works\/pi-coding-agent"/,
+    );
+    expect(source).toContain("new ModelSelectorComponent(");
+    expect(source).toContain("SettingsManager.inMemory()");
   });
 });
