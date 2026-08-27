@@ -45,8 +45,8 @@
     "@gotgenes/pi-permission-system": ">=27.0.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3",
     "@gotgenes/pi-permission-system": "file:../pi-env/gh/pi-packages/packages/pi-permission-system",
     "@types/node": "24.13.3",
     "typescript": "6.0.3",

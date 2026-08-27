@@ -171,15 +171,15 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
     expect(source).toContain("export function writeGlobalJudge");
   });
 
-  it("the picker is pi's own selector over an in-memory settings manager", () => {
+  it("the picker is pi's own selector, built with the 0.84.3 six-argument form (REQ-25)", () => {
     const source = src("command.ts");
     expect(source).toMatch(
       /import \{[^}]*ModelSelectorComponent[^}]*\} from "@earendil-works\/pi-coding-agent"/,
     );
     expect(source).toMatch(
-      /import \{[^}]*SettingsManager[^}]*\} from "@earendil-works\/pi-coding-agent"/,
+      /new ModelSelectorComponent\(\s*request\.tui,\s*request\.currentModel,\s*request\.runtime,\s*request\.scopedModels,\s*request\.onSelect,\s*request\.onCancel,?\s*\)/,
     );
-    expect(source).toContain("new ModelSelectorComponent(");
-    expect(source).toContain("SettingsManager.inMemory()");
+    expect(source).not.toContain("SettingsManager");
+    expect(source).not.toContain("onSelectAsDefault");
   });
 });
