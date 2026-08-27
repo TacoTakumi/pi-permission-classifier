@@ -456,3 +456,53 @@ describe("picker in the TUI (REQ-09, REQ-11)", () => {
     expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
   });
 });
+
+describe("degraded picker without a runtime shape (REQ-10, REQ-22)", () => {
+  const LABELS = ["anthropic/a", "anthropic/b", "openai/c"];
+
+  it("falls back to ui.select over provider/id labels and warns that the picker degraded", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui", { runtime: false });
+    ctx.ui.select.mockResolvedValue(undefined);
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.ui.custom).not.toHaveBeenCalled();
+    expect(deps.buildPicker).not.toHaveBeenCalled();
+    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.select).toHaveBeenCalledWith(expect.any(String), LABELS);
+    expect(notifyTypes(ctx)).toContain("warning");
+    expect(notifyOf(ctx, "warning")).toMatch(/degraded/);
+  });
+
+  it("a chosen label applies like the typed form", async () => {
+    const { state, reloaded, deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui", { runtime: false });
+    ctx.ui.select.mockResolvedValue("p/m");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.modelRegistry.find).toHaveBeenCalledWith("p", "m");
+    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(state.config).toBe(reloaded.config);
+    expect(notifyTypes(ctx)).toContain("info");
+  });
+
+  it("a cancel changes nothing", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    const before = structuredClone(state.config);
+    const ctx = makeCtx("tui", { runtime: false });
+    ctx.ui.select.mockResolvedValue(undefined);
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+  });
+
+  it("a runtime without getAvailableSnapshot counts as no runtime", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui", { runtime: false });
+    (ctx.modelRegistry as { runtime?: unknown }).runtime = { other: () => [] };
+    ctx.ui.select.mockResolvedValue(undefined);
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.ui.custom).not.toHaveBeenCalled();
+    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
+  });
+});

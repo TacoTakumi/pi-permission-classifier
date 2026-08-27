@@ -13,7 +13,9 @@
  *     (reached behind a shape check, since it is a private field), the
  *     session's scoped models, and the current judge preselected. A
  *     selection applies exactly like the typed form; a cancel changes
- *     nothing.
+ *     nothing. When the runtime does not have the expected shape (a pi
+ *     update moved it), the form degrades to `ctx.ui.select` over
+ *     `provider/id` labels from `getAvailable()` with a warning.
  *   - no argument outside the TUI: print the current judge and the usage
  *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
  *
@@ -89,6 +91,7 @@ export interface CommandContextLike {
   scopedModels: readonly ScopedModel[];
   ui: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
+    select(title: string, options: string[]): Promise<string | undefined>;
     custom<T>(
       factory: (
         tui: PickerTui,
@@ -258,14 +261,44 @@ export function createPermissionModelCommand(
     }
   }
 
+  /** Resolve a typed or chosen `<provider>/<id>` and apply it. */
+  function applyReference(text: string, ctx: CommandContextLike): void {
+    const pair = parseJudgePair(text);
+    if (!pair) {
+      ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
+      return;
+    }
+    const model = ctx.modelRegistry.find(pair.provider, pair.model);
+    if (!model) {
+      ctx.ui.notify(
+        `Unknown model ${pair.provider}/${pair.model}: not in the model registry. Nothing changed.`,
+        "error",
+      );
+      return;
+    }
+    applyModel(model, ctx);
+  }
+
+  /** The degraded picker: a plain list of `provider/id` labels. */
+  async function pickFromList(ctx: CommandContextLike): Promise<void> {
+    ctx.ui.notify(
+      "The model picker degraded to a plain list: this pi version does not expose the registry runtime the searchable selector needs.",
+      "warning",
+    );
+    const labels = ctx.modelRegistry
+      .getAvailable()
+      .map((model) => `${model.provider}/${model.id}`);
+    const chosen = await ctx.ui.select("Permission judge model", labels);
+    if (chosen !== undefined) {
+      applyReference(chosen, ctx);
+    }
+  }
+
   /** The no-argument TUI form: mount the picker; apply a selection. */
   async function pick(ctx: CommandContextLike): Promise<void> {
     const runtime = runtimeOf(ctx.modelRegistry);
     if (!runtime) {
-      ctx.ui.notify(
-        `The model picker is unavailable in this pi version. Usage: ${USAGE}`,
-        "warning",
-      );
+      await pickFromList(ctx);
       return;
     }
     const currentModel = currentJudge(ctx).model;
@@ -316,23 +349,13 @@ export function createPermissionModelCommand(
       }
       return;
     }
-    const pair = parseJudgePair(text);
-    if (!pair) {
+    if (parseJudgePair(text) === undefined) {
       ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
       return;
     }
-    if (!canWrite(ctx)) {
-      return;
+    if (canWrite(ctx)) {
+      applyReference(text, ctx);
     }
-    const model = ctx.modelRegistry.find(pair.provider, pair.model);
-    if (!model) {
-      ctx.ui.notify(
-        `Unknown model ${pair.provider}/${pair.model}: not in the model registry. Nothing changed.`,
-        "error",
-      );
-      return;
-    }
-    applyModel(model, ctx);
   }
 
   return {
