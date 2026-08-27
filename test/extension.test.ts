@@ -103,8 +103,18 @@ function ctxWithModel() {
         apiKey: "sk-test",
       })),
     },
+    ui: { setStatus: vi.fn() },
   };
 }
+
+const STATUS_KEY = "permission-classifier";
+
+const CONFIG_PM_RESULT: LoadConfigResult = {
+  config: { ...CONFIG_RESULT.config!, provider: "p", model: "m" },
+  issues: [],
+  projectSetsJudge: false,
+};
+const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
 
 let service: ReturnType<typeof makeService>;
 
@@ -288,6 +298,132 @@ describe("createClassifierExtension", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
+  it("sets judge:session when the link registers with an empty config", () => {
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "judge:session");
+  });
+
+  it("sets judge:<provider>/<id> for a configured judge the registry knows", () => {
+    const pi = makeFakePi();
+    start(pi, { loadConfig: () => CONFIG_PM_RESULT });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockReturnValue(PM_MODEL);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "judge:p/m");
+  });
+
+  it("appends (unresolved) when the configured judge is not in the registry", () => {
+    const pi = makeFakePi();
+    start(pi, { loadConfig: () => CONFIG_PM_RESULT });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockReturnValue(undefined);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(
+      STATUS_KEY,
+      "judge:p/m (unresolved)",
+    );
+  });
+
+  it("sets the status once across repeated ready emissions", () => {
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-sets the status on model_select", () => {
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.lifecycle.get("model_select")?.(
+      { type: "model_select", model: NEXT_MODEL, previousModel: SESSION_MODEL },
+      ctx,
+    );
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session",
+    );
+  });
+
+  it("clears the status with undefined at session_shutdown", () => {
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, undefined);
+  });
+
+  it("never sets a status when the config is missing or invalid", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () => ({
+        config: undefined,
+        issues: [],
+        projectSetsJudge: false,
+      }),
+    });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.lifecycle.get("model_select")?.(
+      { type: "model_select", model: NEXT_MODEL, previousModel: SESSION_MODEL },
+      ctx,
+    );
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("never sets a status when ready carries no session id", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT_NO_ID);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("never sets a status on a keyed locator miss", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi);
+    // Nothing published for SESSION_ID.
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
   });
 });
 
