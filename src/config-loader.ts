@@ -11,10 +11,13 @@
 import {
   closeSync,
   existsSync,
+  fchmodSync,
   fsyncSync,
   openSync,
   readFileSync,
   renameSync,
+  realpathSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -176,6 +179,12 @@ export function loadClassifierConfig(options: {
  * are already on disk) can leave a truncated config. Throws when the global
  * file is absent or is not a JSON object; the existing file is never touched on
  * failure.
+ *
+ * The rename replaces the inode, so the target is resolved with `realpathSync`
+ * first: a `config.json` that is a symlink (a dotfiles-managed agent dir) stays
+ * a symlink and its target is what gets rewritten. The replacement is created
+ * with the original file's mode, set exactly with `fchmodSync` so the process
+ * umask cannot silently tighten it.
  */
 export function writeGlobalJudge(
   agentDir: string,
@@ -186,7 +195,11 @@ export function writeGlobalJudge(
   if (!existsSync(path)) {
     throw new Error(`Global config file not found: ${path}`);
   }
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  // Rename replaces the inode, so write through the resolved target: a linked
+  // config keeps its link and the link's target receives the new bytes.
+  const target = realpathSync(path);
+  const mode = statSync(target).mode & 0o777;
+  const parsed: unknown = JSON.parse(readFileSync(target, "utf-8"));
   if (!isRecord(parsed)) {
     throw new Error(`Global config is not a JSON object: ${path}`);
   }
@@ -197,16 +210,18 @@ export function writeGlobalJudge(
       ? rest
       : { ...rest, provider, model };
 
-  const tempPath = `${path}.${process.pid}.tmp`;
+  const tempPath = `${target}.${process.pid}.tmp`;
   try {
-    const fd = openSync(tempPath, "w");
+    const fd = openSync(tempPath, "w", mode);
     try {
       writeSync(fd, `${JSON.stringify(next, null, 2)}\n`, undefined, "utf-8");
+      // openSync's mode is masked by the umask; set it exactly instead.
+      fchmodSync(fd, mode);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
-    renameSync(tempPath, path);
+    renameSync(tempPath, target);
   } catch (error) {
     try {
       unlinkSync(tempPath);

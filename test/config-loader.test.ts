@@ -1,9 +1,14 @@
 import {
+  chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -316,6 +321,48 @@ describe("writeGlobalJudge (REQ-12)", () => {
     expect(fd).toBeTypeOf("number");
     expect(fsCall("fsyncSync")?.args[0]).toBe(fd);
     expect(fsCall("closeSync")?.args[0]).toBe(fd);
+  });
+
+  it("keeps a symlinked config.json intact and rewrites its target", () => {
+    const target = join(root, "dotfiles", "permission-classifier.json");
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, JSON.stringify(existing));
+    symlinkSync(target, globalPath);
+
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    // The link survives and still points at the file that received the write.
+    expect(lstatSync(globalPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(globalPath)).toBe(target);
+    expect(JSON.parse(readFileSync(target, "utf-8"))).toEqual({
+      instructions: "Be strict.",
+      surfaces: ["bash", "mcp"],
+      timeoutMs: 750,
+      provider: "openai",
+      model: "gpt-5",
+    });
+    // The temp file is a sibling of the target and is gone: nothing new is
+    // left in either directory.
+    expect(readdirSync(dirname(target))).toEqual(["permission-classifier.json"]);
+    expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
+  });
+
+  it("creates the replacement with the original file's mode", () => {
+    writeFileSync(globalPath, JSON.stringify(existing), { mode: 0o600 });
+
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    expect(fsCall("openSync")?.args[2]).toBe(0o600);
+    expect(statSync(globalPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves a mode the process umask would strip from a fresh file", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    chmodSync(globalPath, 0o666);
+
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    expect(statSync(globalPath).mode & 0o777).toBe(0o666);
   });
 
   it("throws and writes nothing when the global file is absent", () => {
