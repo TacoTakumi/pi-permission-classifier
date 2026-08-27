@@ -47,6 +47,9 @@ import {
 
 import { COMMAND_NAME, createPermissionModelCommand } from "./command";
 import {
+  getGlobalConfigPath,
+  getProjectConfigPath,
+  globalConfigExists,
   type LoadConfigResult,
   loadClassifierConfig,
   writeGlobalJudge,
@@ -168,6 +171,9 @@ export function createClassifierExtension(
     createPermissionModelCommand({
       getConfig: () => config,
       getOverride: () => override,
+      globalConfigExists: () => globalConfigExists(getAgentDir()),
+      globalConfigPath: () => getGlobalConfigPath(getAgentDir()),
+      projectConfigPath: getProjectConfigPath,
       writeJudge,
       reload: (cwd) => loadConfig(cwd),
       apply: (next) => {

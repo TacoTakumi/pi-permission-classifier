@@ -5,6 +5,14 @@
  * Forms:
  *   - `<provider>/<id>`: validate through the model registry, persist the
  *     pair to the global config, reload, and apply live for the next ask.
+ *   - `session`: remove the pair from the global config so the session's
+ *     active model judges again.
+ *
+ * Every write form refuses when there is no valid merged config (the link is
+ * not registered) or the global config file is absent: nothing is written and
+ * the operator gets the setup hint naming the global path. Writes always
+ * target the global file; when the project layer sets its own pair the
+ * operator is warned that it shadows the choice.
  *
  * Choosing a judge never touches pi's session model or the operator's default
  * model. This module performs no filesystem or network access of its own:
@@ -23,7 +31,9 @@ import { type JudgePair, parseJudgePair } from "./judge";
 /** The slash command name (`/permission-model`). */
 export const COMMAND_NAME = "permission-model";
 
-const USAGE = `/${COMMAND_NAME} <provider>/<id>`;
+const SESSION_FORM = "session";
+
+const USAGE = `/${COMMAND_NAME} <provider>/<id> | ${SESSION_FORM}`;
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
 type ArgumentCompletions = ReturnType<
@@ -52,6 +62,12 @@ export interface CommandDependencies {
   getConfig(): ClassifierConfig | undefined;
   /** The active session-only flag override, if any. */
   getOverride(): JudgePair | undefined;
+  /** Whether the global config file exists (the precondition for a write). */
+  globalConfigExists(): boolean;
+  /** The global config path, for operator hints. */
+  globalConfigPath(): string;
+  /** The project config path for `cwd`, for the shadow warning. */
+  projectConfigPath(cwd: string): string;
   /** Persist the pair to the global config (both `undefined` removes it). */
   writeJudge(provider: string | undefined, model: string | undefined): void;
   /** Reload the merged config from disk after a write. */
@@ -70,21 +86,63 @@ export interface PermissionModelCommand {
 export function createPermissionModelCommand(
   deps: CommandDependencies,
 ): PermissionModelCommand {
-  function persist(pair: JudgePair, ctx: CommandContextLike): void {
-    deps.writeJudge(pair.provider, pair.model);
+  /**
+   * Whether a write can proceed: the link must be registered (a valid merged
+   * config) and the global file must exist. Otherwise notify the setup hint.
+   */
+  function canWrite(ctx: CommandContextLike): boolean {
+    if (deps.getConfig() === undefined || !deps.globalConfigExists()) {
+      ctx.ui.notify(
+        `The permission classifier is not set up: create ${deps.globalConfigPath()} first, then retry. Nothing changed.`,
+        "warning",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /** Write the pair (or its removal), reload, apply, and report. */
+  function persist(pair: JudgePair | undefined, ctx: CommandContextLike): void {
+    try {
+      deps.writeJudge(pair?.provider, pair?.model);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.ui.notify(
+        `Could not write ${deps.globalConfigPath()}: ${message}. Nothing changed.`,
+        "error",
+      );
+      return;
+    }
     const result = deps.reload(ctx.cwd);
     deps.apply(result.config);
     ctx.ui.notify(
-      `Permission judge set to ${pair.provider}/${pair.model} (saved to the global config).`,
+      pair
+        ? `Permission judge set to ${pair.provider}/${pair.model} (saved to the global config).`
+        : "Permission judge follows the session model (provider/model removed from the global config).",
       "info",
     );
+    if (result.projectSetsJudge) {
+      ctx.ui.notify(
+        `${deps.projectConfigPath(ctx.cwd)} sets its own provider/model and shadows this choice in this project.`,
+        "warning",
+      );
+    }
   }
 
   async function handler(args: string, ctx: CommandContextLike): Promise<void> {
     const text = args.trim();
+    if (text === SESSION_FORM) {
+      if (canWrite(ctx)) {
+        persist(undefined, ctx);
+      }
+      return;
+    }
     const pair = parseJudgePair(text);
     if (!pair) {
       ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
+      return;
+    }
+    if (!canWrite(ctx)) {
       return;
     }
     const model = ctx.modelRegistry.find(pair.provider, pair.model);
