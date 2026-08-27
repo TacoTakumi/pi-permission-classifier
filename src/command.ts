@@ -170,7 +170,7 @@ export interface CommandDependencies {
   /** Reload the merged config from disk after a write. */
   reload(cwd: string): LoadConfigResult;
   /** Replace the live config, drop any flag override, refresh the status. */
-  apply(config: ClassifierConfig | undefined): void;
+  apply(config: ClassifierConfig): void;
   /** Builds the picker component; defaults to {@link buildModelSelector}. */
   buildPicker?: PickerSeam;
 }
@@ -210,8 +210,14 @@ export function createPermissionModelCommand(
       .join("; ");
   }
 
-  /** Write the pair (or its removal), reload, apply, and report. */
-  function persist(pair: JudgePair | undefined, ctx: CommandContextLike): void {
+  /**
+   * Write the pair (or its removal), reload, apply, and report. Returns
+   * whether the new config went live.
+   */
+  function persist(
+    pair: JudgePair | undefined,
+    ctx: CommandContextLike,
+  ): boolean {
     try {
       deps.writeJudge(pair?.provider, pair?.model);
     } catch (error) {
@@ -220,7 +226,7 @@ export function createPermissionModelCommand(
         `Could not write ${deps.globalConfigPath()}: ${message}. Nothing changed.`,
         "error",
       );
-      return;
+      return false;
     }
     const result = deps.reload(ctx.cwd);
     if (result.config === undefined) {
@@ -232,7 +238,7 @@ export function createPermissionModelCommand(
         `Saved to ${deps.globalConfigPath()}, but the merged config is now invalid (${describeIssues(result.issues)}). The previous judge stays active for this session; fix the config and restart.`,
         "error",
       );
-      return;
+      return false;
     }
     deps.apply(result.config);
     ctx.ui.notify(
@@ -253,6 +259,7 @@ export function createPermissionModelCommand(
         "warning",
       );
     }
+    return true;
   }
 
   const buildPicker = deps.buildPicker ?? buildModelSelector;
@@ -282,8 +289,7 @@ export function createPermissionModelCommand(
   function applyModel(model: Model<any>, ctx: CommandContextLike): void {
     const pair: JudgePair = { provider: model.provider, model: model.id };
     const hasAuth = ctx.modelRegistry.hasConfiguredAuth(model);
-    persist(pair, ctx);
-    if (!hasAuth) {
+    if (persist(pair, ctx) && !hasAuth) {
       ctx.ui.notify(
         `No auth is configured for ${pair.provider}/${pair.model}; permission asks will defer to the prompt until it is.`,
         "warning",
@@ -291,13 +297,8 @@ export function createPermissionModelCommand(
     }
   }
 
-  /** Resolve a typed or chosen `<provider>/<id>` and apply it. */
-  function applyReference(text: string, ctx: CommandContextLike): void {
-    const pair = parseJudgePair(text);
-    if (!pair) {
-      ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
-      return;
-    }
+  /** Resolve a `<provider>/<id>` pair through the registry and apply it. */
+  function applyPair(pair: JudgePair, ctx: CommandContextLike): void {
     const model = ctx.modelRegistry.find(pair.provider, pair.model);
     if (!model) {
       ctx.ui.notify(
@@ -319,8 +320,10 @@ export function createPermissionModelCommand(
       .getAvailable()
       .map((model) => `${model.provider}/${model.id}`);
     const chosen = await ctx.ui.select("Permission judge model", labels);
-    if (chosen !== undefined) {
-      applyReference(chosen, ctx);
+    // Labels are built as provider/id above, so the parse cannot fail.
+    const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
+    if (pair) {
+      applyPair(pair, ctx);
     }
   }
 
@@ -379,12 +382,13 @@ export function createPermissionModelCommand(
       }
       return;
     }
-    if (parseJudgePair(text) === undefined) {
+    const pair = parseJudgePair(text);
+    if (!pair) {
       ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
       return;
     }
     if (canWrite(ctx)) {
-      applyReference(text, ctx);
+      applyPair(pair, ctx);
     }
   }
 
