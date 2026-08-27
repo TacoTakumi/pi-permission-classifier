@@ -4,8 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { LoadConfigResult } from "#src/config-loader";
 import type { ClassifierConfig } from "#src/config-schema";
 import {
+  type CommandContextLike,
   type CommandDependencies,
   createPermissionModelCommand,
+  type PickerComponent,
+  type PickerRequest,
+  type PickerSeam,
+  type PickerTui,
 } from "#src/command";
 import { type JudgePair, resolveJudge } from "#src/judge";
 
@@ -31,21 +36,52 @@ const AVAILABLE = [
   { provider: "openai", id: "c" },
 ] as Model<any>[];
 
-function makeRegistry() {
+const FAKE_TUI = { requestRender: vi.fn() } as unknown as PickerTui;
+const FAKE_COMPONENT = {
+  render: () => [],
+  handleInput: () => {},
+} as unknown as PickerComponent;
+
+type CustomFactory<T> = (
+  tui: PickerTui,
+  theme: unknown,
+  keybindings: unknown,
+  done: (result: T) => void,
+) => PickerComponent;
+
+function makeRegistry(options: { runtime?: boolean } = {}) {
   return {
     find: vi.fn(findKnown),
     hasConfiguredAuth: vi.fn(() => true),
     getAvailable: vi.fn(() => AVAILABLE),
+    ...(options.runtime === false
+      ? {}
+      : { runtime: { getAvailableSnapshot: vi.fn(() => AVAILABLE) } }),
   };
 }
 
-function makeCtx(mode: "tui" | "rpc" | "json" | "print" = "tui") {
+function makeCtx(
+  mode: "tui" | "rpc" | "json" | "print" = "tui",
+  options: { runtime?: boolean } = {},
+) {
   return {
     cwd: "/project",
     mode,
     model: SESSION_MODEL,
-    modelRegistry: makeRegistry(),
-    ui: { notify: vi.fn(), custom: vi.fn(), select: vi.fn() },
+    modelRegistry: makeRegistry(options),
+    scopedModels: [] as const,
+    ui: {
+      notify: vi.fn(),
+      // Mount synchronously; resolve when the component calls done().
+      // vi.fn erases the generic, so cast back to the context's own signature.
+      custom: vi.fn(
+        (factory: CustomFactory<unknown>) =>
+          new Promise<unknown>((resolve) => {
+            factory(FAKE_TUI, {}, {}, resolve);
+          }),
+      ) as unknown as CommandContextLike["ui"]["custom"],
+      select: vi.fn(),
+    },
   };
 }
 
@@ -64,6 +100,7 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
     getConfig: () => state.config,
     getOverride: () => state.override,
     getRegistry: () => registry,
+    buildPicker: vi.fn<PickerSeam>(() => FAKE_COMPONENT),
     globalConfigExists: vi.fn<CommandDependencies["globalConfigExists"]>(
       () => true,
     ),
@@ -337,5 +374,85 @@ describe("argument completion (REQ-07)", () => {
       getRegistry: () => undefined,
     });
     expect(command.getArgumentCompletions("anth")).toBeNull();
+  });
+});
+
+describe("picker in the TUI (REQ-09, REQ-11)", () => {
+  function pickerRequest(deps: ReturnType<typeof makeDeps>["deps"]): PickerRequest {
+    return deps.buildPicker.mock.calls[0]![0];
+  }
+
+  it("mounts the picker once through ui.custom with the runtime, scoped models, and current judge preselected", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui");
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.ui.custom).toHaveBeenCalledTimes(1);
+    expect(deps.buildPicker).toHaveBeenCalledTimes(1);
+    const request = pickerRequest(deps);
+    expect(request.tui).toBe(FAKE_TUI);
+    expect(request.runtime).toBe(ctx.modelRegistry.runtime);
+    expect(request.scopedModels).toBe(ctx.scopedModels);
+    expect(request.currentModel).toBe(QN_MODEL);
+    request.onCancel();
+    await pending;
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  it("preselects the session model when the session model judges", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    const ctx = makeCtx("tui");
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    expect(pickerRequest(deps).currentModel).toBe(SESSION_MODEL);
+    pickerRequest(deps).onCancel();
+    await pending;
+  });
+
+  it("a selection applies like the typed form", async () => {
+    const { state, reloaded, deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui");
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    pickerRequest(deps).onSelect(PM_MODEL);
+    await pending;
+    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(deps.reload).toHaveBeenCalledWith("/project");
+    expect(state.config).toBe(reloaded.config);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toContain("p/m");
+  });
+
+  it("a selection without configured auth is persisted with a warning", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui");
+    ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    pickerRequest(deps).onSelect(PM_MODEL);
+    await pending;
+    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(notifyTypes(ctx)).toContain("warning");
+  });
+
+  it("a cancel changes nothing", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    const before = structuredClone(state.config);
+    const ctx = makeCtx("tui");
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    pickerRequest(deps).onCancel();
+    await pending;
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+    expect(ctx.ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("refuses before opening the picker when the global file is absent", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    deps.globalConfigExists.mockReturnValue(false);
+    const ctx = makeCtx("tui");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.ui.custom).not.toHaveBeenCalled();
+    expect(deps.buildPicker).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["warning"]);
+    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
   });
 });

@@ -44,6 +44,7 @@ interface FakePi {
     registerFlag: ReturnType<typeof vi.fn>;
     getFlag: ReturnType<typeof vi.fn>;
     registerCommand: ReturnType<typeof vi.fn>;
+    setModel: ReturnType<typeof vi.fn>;
   };
   commands: Map<string, RegisteredCommandOptions>;
 }
@@ -82,6 +83,7 @@ function makeFakePi(): FakePi {
           commands.set(name, options);
         },
       ),
+      setModel: vi.fn(),
     },
   };
 }
@@ -117,6 +119,7 @@ const SESSION_ID = "session-1";
 function ctxWithModel() {
   return {
     cwd: "/project",
+    mode: "tui" as const,
     model: SESSION_MODEL,
     modelRegistry: {
       find: vi.fn(),
@@ -125,8 +128,28 @@ function ctxWithModel() {
         apiKey: "sk-test",
       })),
       hasConfiguredAuth: vi.fn(() => true),
+      getAvailable: vi.fn(() => []),
+      runtime: { getAvailableSnapshot: vi.fn(() => []) },
     },
-    ui: { setStatus: vi.fn(), notify: vi.fn() },
+    scopedModels: [] as const,
+    ui: {
+      setStatus: vi.fn(),
+      notify: vi.fn(),
+      custom: vi.fn(
+        (
+          factory: (
+            tui: unknown,
+            theme: unknown,
+            keybindings: unknown,
+            done: (result: unknown) => void,
+          ) => unknown,
+        ) =>
+          new Promise<unknown>((resolve) => {
+            factory({}, {}, {}, resolve);
+          }),
+      ),
+      select: vi.fn(),
+    },
   };
 }
 
@@ -185,12 +208,14 @@ function start(
     loadConfig?: () => LoadConfigResult;
     complete?: CompleteFn;
     writeJudge?: ClassifierDependencies["writeJudge"];
+    buildPicker?: ClassifierDependencies["buildPicker"];
   } = {},
 ) {
   createClassifierExtension(pi.api as never, {
     loadConfig: overrides.loadConfig ?? (() => CONFIG_RESULT),
     complete: overrides.complete ?? vi.fn(),
     writeJudge: overrides.writeJudge ?? vi.fn(),
+    ...(overrides.buildPicker ? { buildPicker: overrides.buildPicker } : {}),
   });
 }
 
@@ -605,6 +630,40 @@ describe("/permission-model command wiring (REQ-01, REQ-17, REQ-20)", () => {
     expect(loadConfig).toHaveBeenCalledTimes(2);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.any(String), "info");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
+});
+
+describe("picker selection through the extension (REQ-09, REQ-11)", () => {
+  it("writes global, refreshes the status, judges the next ask, and never calls pi.setModel", async () => {
+    const complete = allowingComplete();
+    const writeJudge = vi.fn();
+    const loadConfig = vi
+      .fn<() => LoadConfigResult>()
+      .mockReturnValueOnce(CONFIG_RESULT)
+      .mockReturnValue(CONFIG_QN_RESULT);
+    let onSelect: ((model: Model<any>) => void) | undefined;
+    const buildPicker = vi.fn((request: { onSelect: (model: Model<any>) => void }) => {
+      onSelect = request.onSelect;
+      return { render: () => [], handleInput: () => {} };
+    });
+    const pi = makeFakePi();
+    start(pi, { complete, loadConfig, writeJudge, buildPicker: buildPicker as never });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+
+    const pending = pi.commands.get("permission-model")?.handler("", ctx);
+    expect(buildPicker).toHaveBeenCalledTimes(1);
+    onSelect?.(QN_MODEL);
+    await pending;
+
+    expect(writeJudge).toHaveBeenCalledWith("q", "n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+    expect(pi.api.setModel).not.toHaveBeenCalled();
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
