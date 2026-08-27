@@ -1,4 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LoadConfigResult } from "#src/config-loader";
@@ -572,5 +573,29 @@ describe("auth warning only after a successful write (review round 2)", () => {
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
     await createPermissionModelCommand(deps).handler("p/m", ctx);
     expect(notifyTypes(ctx)).toEqual(["error"]);
+  });
+});
+
+/** Exact type identity, the usual conditional-type trick. */
+type Equals<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2)
+    ? true
+    : false;
+
+/**
+ * The handler's `ui` slice must be derived from pi's own `ExtensionUIContext`,
+ * never hand-copied (T-21). A copy that happens to be accurate today is still
+ * compared bivariantly, because a method signature allows it, so a pi signature
+ * change would surface as a runtime failure in the picker rather than as a
+ * compile error here. `npm run check` is what runs this assertion: the value is
+ * a type, so vitest alone cannot see it.
+ */
+describe("the ui slice is pi's own ExtensionUIContext (T-21)", () => {
+  it("is exactly Pick<ExtensionUIContext, notify | select | custom>", () => {
+    const derived: Equals<
+      CommandContextLike["ui"],
+      Pick<ExtensionUIContext, "notify" | "select" | "custom">
+    > = true;
+    expect(derived).toBe(true);
   });
 });
