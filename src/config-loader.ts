@@ -9,11 +9,14 @@
  */
 
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
+  openSync,
   readFileSync,
   renameSync,
   unlinkSync,
-  writeFileSync,
+  writeSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -167,10 +170,12 @@ export function loadClassifierConfig(options: {
  * every other field. When either argument is `undefined` both keys are
  * removed (the session model judges); the command passes both or neither.
  *
- * The write is atomic: the new content goes to a sibling temporary file that
- * is then renamed over `config.json`, so a crash never leaves a truncated
- * config. Throws when the global file is absent or is not a JSON object; the
- * existing file is never touched on failure.
+ * The write is atomic and durable: the new content goes to a sibling temporary
+ * file that is fsynced before it is renamed over `config.json`, so neither a
+ * process crash (the rename is atomic) nor an OS crash or power loss (the bytes
+ * are already on disk) can leave a truncated config. Throws when the global
+ * file is absent or is not a JSON object; the existing file is never touched on
+ * failure.
  */
 export function writeGlobalJudge(
   agentDir: string,
@@ -194,7 +199,13 @@ export function writeGlobalJudge(
 
   const tempPath = `${path}.${process.pid}.tmp`;
   try {
-    writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
+    const fd = openSync(tempPath, "w");
+    try {
+      writeSync(fd, `${JSON.stringify(next, null, 2)}\n`, undefined, "utf-8");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tempPath, path);
   } catch (error) {
     try {

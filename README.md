@@ -199,10 +199,11 @@ A choice applies to the next reviewed ask immediately and is saved to the
 global config file
 (`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only
 `provider` and `model` are rewritten, every other field is preserved, and
-the write goes through a temporary file and a rename so a crash never
-leaves a truncated config. The command never creates the file. When the
-file is absent, or the link is not registered (no valid merged config),
-every write form refuses and prints the setup hint naming the global path.
+the write goes through a temporary file that is fsynced and then renamed, so
+neither a process crash nor an OS crash leaves a truncated config. The command
+never creates the file. When the file is absent, or the link is not registered
+(no valid merged config), every write form refuses and prints the setup hint
+naming the global path.
 When the project config sets `provider` or `model`, the global write still
 happens but the command warns that the project file shadows the choice in
 that project.

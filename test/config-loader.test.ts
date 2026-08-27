@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   getGlobalConfigPath,
@@ -18,6 +18,53 @@ import {
   loadClassifierConfig,
   writeGlobalJudge,
 } from "#src/config-loader";
+
+/**
+ * Ordered record of the `node:fs` write-path calls. The mock below wraps them
+ * with delegating spies, so the ordering of the atomic write (REQ-12) is
+ * asserted against the real filesystem instead of a fake one: every call still
+ * runs the original implementation.
+ */
+interface FsCall {
+  name: string;
+  args: unknown[];
+  returned: unknown;
+}
+
+const { fsCalls } = vi.hoisted(() => ({ fsCalls: [] as FsCall[] }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const tracked = [
+    "openSync",
+    "writeSync",
+    "fsyncSync",
+    "closeSync",
+    "renameSync",
+    "writeFileSync",
+  ] as const;
+  const spy = (name: string) => {
+    const original = actual[name as keyof typeof actual] as (
+      ...callArgs: unknown[]
+    ) => unknown;
+    return (...args: unknown[]) => {
+      const returned = original(...args);
+      fsCalls.push({ name, args, returned });
+      return returned;
+    };
+  };
+  return { ...actual, ...Object.fromEntries(tracked.map((n) => [n, spy(n)])) };
+});
+
+/** The recorded write-path calls, in the order they ran. */
+function writePathCalls(): string[] {
+  return fsCalls.map((call) => call.name);
+}
+
+/** The first recorded call under `name`, or `undefined` when it never ran. */
+function fsCall(name: string): FsCall | undefined {
+  return fsCalls.find((call) => call.name === name);
+}
 
 describe("loadClassifierConfig", () => {
   let root: string;
@@ -198,6 +245,7 @@ describe("writeGlobalJudge (REQ-12)", () => {
     agentDir = join(root, "agent");
     globalPath = getGlobalConfigPath(agentDir);
     mkdirSync(dirname(globalPath), { recursive: true });
+    fsCalls.length = 0;
   });
 
   afterEach(() => {
@@ -247,6 +295,27 @@ describe("writeGlobalJudge (REQ-12)", () => {
     expect(result.config?.provider).toBe("openai");
     expect(result.config?.model).toBe("gpt-5");
     expect(result.config?.timeoutMs).toBe(750);
+  });
+
+  it("fsyncs the temp file before renaming it over the config", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    fsCalls.length = 0;
+
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    expect(writePathCalls()).toEqual([
+      "openSync",
+      "writeSync",
+      "fsyncSync",
+      "closeSync",
+      "renameSync",
+    ]);
+    // The fsync and close land on the descriptor the temp file was opened
+    // with, so the bytes are durable before the rename makes them the config.
+    const fd = fsCall("openSync")?.returned;
+    expect(fd).toBeTypeOf("number");
+    expect(fsCall("fsyncSync")?.args[0]).toBe(fd);
+    expect(fsCall("closeSync")?.args[0]).toBe(fd);
   });
 
   it("throws and writes nothing when the global file is absent", () => {
