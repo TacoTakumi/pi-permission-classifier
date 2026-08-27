@@ -48,7 +48,7 @@ import {
   type ScopedModel,
 } from "@earendil-works/pi-coding-agent";
 
-import type { LoadConfigResult } from "./config-loader";
+import { formatConfigIssue, type LoadConfigResult } from "./config-loader";
 import type { ClassifierConfig } from "./config-schema";
 import {
   formatJudgeStatus,
@@ -203,9 +203,7 @@ export function createPermissionModelCommand(
     if (issues.length === 0) {
       return "no config file was found";
     }
-    return issues
-      .map((issue) => `${issue.sourcePath ?? "(merged)"} ${issue.path}: ${issue.message}`)
-      .join("; ");
+    return issues.map(formatConfigIssue).join("; ");
   }
 
   /**
