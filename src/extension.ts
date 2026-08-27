@@ -23,6 +23,13 @@
  * the effective judge (see `judge.ts`); it follows `model_select` and is
  * cleared at `session_shutdown`. No status is set when the link does not
  * register.
+ *
+ * The `--permission-model <provider>/<id>` launch flag is read at
+ * `session_start`. A value the registry knows becomes a session-only judge
+ * override with precedence over the merged config and the session model;
+ * nothing is written, and the override is dropped at `session_shutdown`. An
+ * unknown value is ignored with a warning, so the merged config (or the
+ * session model) applies as if no flag were given.
  */
 
 import type { Model } from "@earendil-works/pi-ai";
@@ -43,7 +50,12 @@ import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
 } from "./config-schema";
-import { formatJudgeStatus, resolveJudge } from "./judge";
+import {
+  formatJudgeStatus,
+  type JudgePair,
+  parseJudgePair,
+  resolveJudge,
+} from "./judge";
 import type { CompleteFn } from "./model-review";
 import {
   createClassifierReviewer,
@@ -55,6 +67,9 @@ const LINK_NAME = "classifier";
 
 /** The footer status key naming the effective judge. */
 const STATUS_KEY = "permission-classifier";
+
+/** The launch flag carrying a session-only judge override. */
+const FLAG_NAME = "permission-model";
 
 /** Injectable seams; production defaults read the filesystem and call the model. */
 export interface ClassifierDependencies {
@@ -81,12 +96,50 @@ export function createClassifierExtension(
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
 
+  pi.registerFlag(FLAG_NAME, {
+    description:
+      "Judge model for the permission classifier this session only " +
+      "(<provider>/<id>); overrides the configured judge, writes nothing.",
+    type: "string",
+  });
+
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
   let registry: ModelRegistryLike | undefined;
   let ui: ExtensionContext["ui"] | undefined;
+  let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
   let warnedUnreachable = false;
+
+  /**
+   * The config the reviewer judges with: the merged config, with the
+   * provider/model pair replaced by the session-only override when one is
+   * active. The reviewer's own resolution (registry lookup, auth check,
+   * defer on failure) is unchanged, so an override can never widen a verdict.
+   */
+  function effectiveConfig(): ClassifierConfig | undefined {
+    if (!config || !override) {
+      return config;
+    }
+    return { ...config, provider: override.provider, model: override.model };
+  }
+
+  /** Read the launch flag; a value the registry does not know is ignored. */
+  function readFlagOverride(): JudgePair | undefined {
+    const raw = pi.getFlag(FLAG_NAME);
+    if (typeof raw !== "string" || raw.length === 0) {
+      return undefined;
+    }
+    const pair = parseJudgePair(raw);
+    if (pair && registry?.find(pair.provider, pair.model)) {
+      return pair;
+    }
+    warn(
+      `--${FLAG_NAME} ${raw} is not a known <provider>/<id>; ` +
+        "the configured judge applies.",
+    );
+    return undefined;
+  }
 
   /** Name the effective judge in the footer; a no-op until the link registers. */
   function refreshStatus(): void {
@@ -95,7 +148,7 @@ export function createClassifierExtension(
     }
     ui?.setStatus(
       STATUS_KEY,
-      formatJudgeStatus(resolveJudge(undefined, config, registry, sessionModel)),
+      formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)),
     );
   }
 
@@ -117,6 +170,7 @@ export function createClassifierExtension(
     sessionModel = ctx.model;
     registry = ctx.modelRegistry;
     ui = ctx.ui;
+    override = readFlagOverride();
     for (const issue of result.issues) {
       warn(
         `config issue at ${issue.sourcePath ?? "(merged)"} — ${issue.path}: ${issue.message}`,
@@ -145,7 +199,7 @@ export function createClassifierExtension(
       return;
     }
     const authorize = createClassifierReviewer({
-      getConfig: () => config,
+      getConfig: effectiveConfig,
       getSessionModel: () => sessionModel,
       getRegistry: () => registry,
       complete,
@@ -164,6 +218,7 @@ export function createClassifierExtension(
     sessionModel = undefined;
     registry = undefined;
     ui = undefined;
+    override = undefined;
     warnedUnreachable = false;
   });
 }

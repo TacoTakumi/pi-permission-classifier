@@ -5,6 +5,7 @@ import type { ClassifierConfig } from "#src/config-schema";
 import {
   formatJudgeStatus,
   type JudgeRegistryLike,
+  parseJudgePair,
   resolveJudge,
 } from "#src/judge";
 
@@ -148,5 +149,26 @@ describe("formatJudgeStatus (REQ-18, REQ-19)", () => {
         model: OVERRIDE_MODEL,
       }),
     ).toBe("judge:q/n");
+  });
+});
+
+describe("parseJudgePair", () => {
+  it("splits provider and id at the first slash", () => {
+    expect(parseJudgePair("p/m")).toEqual({ provider: "p", model: "m" });
+  });
+
+  it("keeps later slashes in the id", () => {
+    expect(parseJudgePair("openrouter/anthropic/claude-sonnet-5")).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-5",
+    });
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(parseJudgePair("  p/m ")).toEqual({ provider: "p", model: "m" });
+  });
+
+  it.each(["", "p", "/m", "p/", "/"])("rejects %j", (text) => {
+    expect(parseJudgePair(text)).toBeUndefined();
   });
 });

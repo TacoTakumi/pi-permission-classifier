@@ -38,6 +38,8 @@ interface FakePi {
   api: {
     on: ReturnType<typeof vi.fn>;
     events: { on: ReturnType<typeof vi.fn>; emit: ReturnType<typeof vi.fn> };
+    registerFlag: ReturnType<typeof vi.fn>;
+    getFlag: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -60,6 +62,8 @@ function makeFakePi(): FakePi {
         }),
         emit: vi.fn(),
       },
+      registerFlag: vi.fn(),
+      getFlag: vi.fn(() => undefined),
     },
   };
 }
@@ -115,6 +119,27 @@ const CONFIG_PM_RESULT: LoadConfigResult = {
   projectSetsJudge: false,
 };
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
+
+const CONFIG_QN_RESULT: LoadConfigResult = {
+  config: { ...CONFIG_RESULT.config!, provider: "q", model: "n" },
+  issues: [],
+  projectSetsJudge: false,
+};
+const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
+
+/** A registry that knows exactly p/m and q/n. */
+function findKnown(provider: string, id: string): Model<any> | undefined {
+  if (provider === "p" && id === "m") return PM_MODEL;
+  if (provider === "q" && id === "n") return QN_MODEL;
+  return undefined;
+}
+
+const allowingComplete = () =>
+  vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "allow" }));
+
+function lastAuthorizer(): RegisteredAuthorizer {
+  return service.registerAuthorizer.mock.calls.at(-1)?.[1] as RegisteredAuthorizer;
+}
 
 let service: ReturnType<typeof makeService>;
 
@@ -427,10 +452,100 @@ describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
   });
 });
 
+describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
+  it("registers a string CLI flag named permission-model", () => {
+    const pi = makeFakePi();
+    start(pi);
+    expect(pi.api.registerFlag).toHaveBeenCalledTimes(1);
+    expect(pi.api.registerFlag).toHaveBeenCalledWith(
+      "permission-model",
+      expect.objectContaining({ type: "string" }),
+    );
+  });
+
+  it("a resolvable flag overrides config and session for the next ask and the status", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const loadConfig = vi.fn(() => CONFIG_QN_RESULT);
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("p/m");
+    start(pi, { complete, loadConfig });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(pi.api.getFlag).toHaveBeenCalledWith("permission-model");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:p/m");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("drops the override at session_shutdown so the config judge applies next session", async () => {
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("p/m");
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    pi.api.getFlag.mockReturnValue(undefined);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
+
+  it("an unknown flag value warns once and the config judge applies", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("nope/x");
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("nope/x");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
+
+  it("an unknown flag value with an empty config leaves the session model judging", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("not-a-pair");
+    start(pi, { complete });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:session");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(SESSION_MODEL);
+  });
+});
+
 describe("default export", () => {
   it("wires the extension lifecycle handlers", () => {
     const pi = makeFakePi();
     piPermissionClassifier(pi.api as never);
+    expect(pi.api.registerFlag).toHaveBeenCalledWith(
+      "permission-model",
+      expect.objectContaining({ type: "string" }),
+    );
     expect(pi.lifecycle.has("session_start")).toBe(true);
     expect(pi.lifecycle.has("model_select")).toBe(true);
     expect(pi.lifecycle.has("session_shutdown")).toBe(true);

@@ -26,6 +26,20 @@ export interface JudgeRegistryLike {
   find(provider: string, modelId: string): Model<any> | undefined;
 }
 
+/**
+ * Parse an operator-typed `<provider>/<id>` reference, splitting at the first
+ * slash (as pi's own model resolver does) so ids that contain slashes
+ * survive. Returns `undefined` for anything without both halves.
+ */
+export function parseJudgePair(text: string): JudgePair | undefined {
+  const trimmed = text.trim();
+  const slash = trimmed.indexOf("/");
+  if (slash <= 0 || slash === trimmed.length - 1) {
+    return undefined;
+  }
+  return { provider: trimmed.slice(0, slash), model: trimmed.slice(slash + 1) };
+}
+
 /** The effective judge and how it was chosen. */
 export interface ResolvedJudge {
   /** Which rule chose the judge. */
