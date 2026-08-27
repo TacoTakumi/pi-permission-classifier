@@ -18,12 +18,18 @@
  * The session's active model is captured at `session_start` and follows
  * `model_select`, so with no config override the judge is always the model
  * the session is actually running.
+ *
+ * Once the link registers, the footer status `permission-classifier` names
+ * the effective judge (see `judge.ts`); it follows `model_select` and is
+ * cleared at `session_shutdown`. No status is set when the link does not
+ * register.
  */
 
 import type { Model } from "@earendil-works/pi-ai";
 import { complete as realComplete } from "@earendil-works/pi-ai/compat";
 import {
   type ExtensionAPI,
+  type ExtensionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -37,6 +43,7 @@ import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
 } from "./config-schema";
+import { formatJudgeStatus, resolveJudge } from "./judge";
 import type { CompleteFn } from "./model-review";
 import {
   createClassifierReviewer,
@@ -45,6 +52,9 @@ import {
 
 /** The operator-facing chain-link name referenced from `authorizerChain`. */
 const LINK_NAME = "classifier";
+
+/** The footer status key naming the effective judge. */
+const STATUS_KEY = "permission-classifier";
 
 /** Injectable seams; production defaults read the filesystem and call the model. */
 export interface ClassifierDependencies {
@@ -74,8 +84,20 @@ export function createClassifierExtension(
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
   let registry: ModelRegistryLike | undefined;
+  let ui: ExtensionContext["ui"] | undefined;
   let dispose: (() => void) | undefined;
   let warnedUnreachable = false;
+
+  /** Name the effective judge in the footer; a no-op until the link registers. */
+  function refreshStatus(): void {
+    if (!dispose) {
+      return;
+    }
+    ui?.setStatus(
+      STATUS_KEY,
+      formatJudgeStatus(resolveJudge(undefined, config, registry, sessionModel)),
+    );
+  }
 
   function warnUnreachableOnce(): void {
     if (warnedUnreachable) {
@@ -94,6 +116,7 @@ export function createClassifierExtension(
     config = result.config;
     sessionModel = ctx.model;
     registry = ctx.modelRegistry;
+    ui = ctx.ui;
     for (const issue of result.issues) {
       warn(
         `config issue at ${issue.sourcePath ?? "(merged)"} — ${issue.path}: ${issue.message}`,
@@ -103,6 +126,7 @@ export function createClassifierExtension(
 
   pi.on("model_select", (event) => {
     sessionModel = event.model;
+    refreshStatus();
   });
 
   pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
@@ -127,14 +151,19 @@ export function createClassifierExtension(
       complete,
     });
     dispose = service.registerAuthorizer(LINK_NAME, authorize);
+    refreshStatus();
   });
 
   pi.on("session_shutdown", () => {
+    if (dispose) {
+      ui?.setStatus(STATUS_KEY, undefined);
+    }
     dispose?.();
     dispose = undefined;
     config = undefined;
     sessionModel = undefined;
     registry = undefined;
+    ui = undefined;
     warnedUnreachable = false;
   });
 }
