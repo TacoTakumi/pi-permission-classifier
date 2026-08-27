@@ -59,7 +59,8 @@ and installing it grants it no authority until you name it in the chain.
 
    `{}` means: judge with the session's active model, review the default
    surfaces, 5000 ms timeout, built-in rubric. See `config/config.example.json`
-   for a version with a dedicated judge model.
+   for a version with a dedicated judge model, or pick one later from
+   inside pi with `/permission-model` (see "Choosing the judge model").
 
 5. Try it. Start a new pi session and trigger something your policy sends
    to `ask` (for example a bash command not on your allowlist). A benign
@@ -160,6 +161,66 @@ classifier can never approve access outside the working directory or to a
 path your policy denies. Remove the three file tools from `surfaces` for a
 more conservative posture.
 
+## Choosing the judge model
+
+The judge is the model that reviews each ask. With no `provider` and
+`model` in the config it is the session's active model. Three ways to
+change it:
+
+### The /permission-model command
+
+- `/permission-model` with no argument opens pi's own searchable model
+  picker (the same list as `/model`, scoped models included) with the
+  current judge preselected. Pick a model to make it the judge; cancel to
+  change nothing. Outside the TUI (rpc, json, print modes) the command
+  prints the current judge and the usage line instead. If your pi version
+  does not expose the registry runtime the picker needs, the command warns
+  that the picker degraded and offers a plain list of `provider/id` labels.
+- `/permission-model <provider>/<id>` sets the judge by reference. The pair
+  must be in pi's model registry: an unknown pair is rejected and nothing
+  changes. A known model without configured auth is accepted with a
+  warning, and asks defer until the auth exists. Tab completion offers the
+  `provider/id` labels of the available models plus `session`.
+- `/permission-model session` removes `provider` and `model` so the
+  session's active model judges again.
+
+A choice applies to the next reviewed ask immediately and is saved to the
+global config file
+(`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only
+`provider` and `model` are rewritten, every other field is preserved, and
+the write goes through a temporary file and a rename so a crash never
+leaves a truncated config. The command never creates the file. When the
+file is absent, or the link is not registered (no valid merged config),
+every write form refuses and prints the setup hint naming the global path.
+When the project config sets `provider` or `model`, the global write still
+happens but the command warns that the project file shadows the choice in
+that project.
+
+Choosing a judge never changes pi's session model or your default model:
+`/model` and `/permission-model` are independent.
+
+### The --permission-model launch flag
+
+`pi --permission-model <provider>/<id>` makes that model the judge for the
+session only. It takes precedence over the config and the session model,
+nothing is written, and it is dropped at session shutdown. A reference the
+registry does not know is ignored with a warning and the configured judge
+applies. An explicit `/permission-model` choice during the session replaces
+the flag for the rest of that session.
+
+### The status bar entry
+
+Once the link registers, the footer shows the effective judge under the
+key `permission-classifier`, in one of three states:
+
+- `judge:<provider>/<id>` - a configured or flag-set judge
+- `judge:session` - the session's active model judges
+- `judge:<provider>/<id> (unresolved)` - the configured pair is not in the
+  registry, so every ask defers until it resolves
+
+The entry follows `/permission-model` changes and `/model` switches and is
+cleared at session shutdown. No entry means the link did not register.
+
 ## How it works
 
 - The classifier only sees asks your policy routed to `ask`, and only on
@@ -192,7 +253,7 @@ more conservative posture.
 
     npm install
     npx tsc --noEmit    # typecheck
-    npx vitest run      # 97 tests
+    npx vitest run      # 192 tests
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the
