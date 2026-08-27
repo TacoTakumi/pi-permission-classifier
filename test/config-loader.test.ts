@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -7,7 +14,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   getGlobalConfigPath,
   getProjectConfigPath,
+  globalConfigExists,
   loadClassifierConfig,
+  writeGlobalJudge,
 } from "#src/config-loader";
 
 describe("loadClassifierConfig", () => {
@@ -105,6 +114,153 @@ describe("loadClassifierConfig", () => {
     const result = loadClassifierConfig({ cwd, agentDir });
     expect(result.config?.timeoutMs).toBe(100);
     expect(result.issues).toHaveLength(1);
+  });
+
+  describe("projectSetsJudge (REQ-14)", () => {
+    it("is false when no project layer exists", () => {
+      writeConfig(getGlobalConfigPath(agentDir), "{}");
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.projectSetsJudge).toBe(false);
+    });
+
+    it("is false when the project layer sets neither provider nor model", () => {
+      writeConfig(
+        getGlobalConfigPath(agentDir),
+        JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
+      );
+      writeConfig(getProjectConfigPath(cwd), JSON.stringify({ timeoutMs: 100 }));
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.config?.provider).toBe("anthropic");
+      expect(result.projectSetsJudge).toBe(false);
+    });
+
+    it("is true when the project layer sets provider and model", () => {
+      writeConfig(getGlobalConfigPath(agentDir), "{}");
+      writeConfig(
+        getProjectConfigPath(cwd),
+        JSON.stringify({ provider: "openai", model: "gpt-5" }),
+      );
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.projectSetsJudge).toBe(true);
+    });
+
+    it("is true when the project layer sets only one of the pair, even if the merge is invalid", () => {
+      writeConfig(getGlobalConfigPath(agentDir), "{}");
+      writeConfig(getProjectConfigPath(cwd), JSON.stringify({ model: "gpt-5" }));
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.config).toBeUndefined();
+      expect(result.projectSetsJudge).toBe(true);
+    });
+  });
+});
+
+describe("globalConfigExists (REQ-08)", () => {
+  let root: string;
+  let agentDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pi-permission-classifier-test-"));
+    agentDir = join(root, "agent");
+    mkdirSync(agentDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("is false when the global file is absent", () => {
+    expect(globalConfigExists(agentDir)).toBe(false);
+  });
+
+  it("is true when the global file is present", () => {
+    const path = getGlobalConfigPath(agentDir);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "{}");
+    expect(globalConfigExists(agentDir)).toBe(true);
+  });
+});
+
+describe("writeGlobalJudge (REQ-12)", () => {
+  let root: string;
+  let agentDir: string;
+  let globalPath: string;
+
+  const existing = {
+    instructions: "Be strict.",
+    surfaces: ["bash", "mcp"],
+    timeoutMs: 750,
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pi-permission-classifier-test-"));
+    agentDir = join(root, "agent");
+    globalPath = getGlobalConfigPath(agentDir);
+    mkdirSync(dirname(globalPath), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function readGlobal(): Record<string, unknown> {
+    return JSON.parse(readFileSync(globalPath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("replaces provider and model and preserves every other field", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    expect(readGlobal()).toEqual({
+      instructions: "Be strict.",
+      surfaces: ["bash", "mcp"],
+      timeoutMs: 750,
+      provider: "openai",
+      model: "gpt-5",
+    });
+  });
+
+  it("removes both keys when provider and model are undefined", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalJudge(agentDir, undefined, undefined);
+    expect(readGlobal()).toEqual({
+      instructions: "Be strict.",
+      surfaces: ["bash", "mcp"],
+      timeoutMs: 750,
+    });
+  });
+
+  it("leaves only config.json in the directory after writing", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
+  });
+
+  it("writes a file the loader accepts", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    const result = loadClassifierConfig({ cwd: join(root, "project"), agentDir });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.provider).toBe("openai");
+    expect(result.config?.model).toBe("gpt-5");
+    expect(result.config?.timeoutMs).toBe(750);
+  });
+
+  it("throws and writes nothing when the global file is absent", () => {
+    expect(() => writeGlobalJudge(agentDir, "openai", "gpt-5")).toThrow(
+      globalPath,
+    );
+    expect(readdirSync(dirname(globalPath))).toEqual([]);
+  });
+
+  it("throws and leaves the file untouched when it is not a JSON object", () => {
+    writeFileSync(globalPath, "{ not json");
+    expect(() => writeGlobalJudge(agentDir, "openai", "gpt-5")).toThrow();
+    expect(readFileSync(globalPath, "utf-8")).toBe("{ not json");
+    expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
   });
 });
 

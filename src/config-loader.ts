@@ -8,7 +8,13 @@
  * auto-decision, never to a wrong one (more prompting, never less).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -26,10 +32,15 @@ export interface ConfigIssue {
   sourcePath?: string;
 }
 
-/** Outcome of a config load: a validated config (or `undefined`) plus issues. */
+/**
+ * Outcome of a config load: a validated config (or `undefined`) plus issues.
+ * `projectSetsJudge` reports whether the project layer sets `provider` or
+ * `model`, so a global judge write can warn that the project file shadows it.
+ */
 export interface LoadConfigResult {
   config: ClassifierConfig | undefined;
   issues: ConfigIssue[];
+  projectSetsJudge: boolean;
 }
 
 /** Global scope: `<agentDir>/extensions/<id>/config.json`. */
@@ -53,8 +64,17 @@ export function getProjectConfigPath(cwd: string): string {
   );
 }
 
+/** Whether the global config file exists (the precondition for any write). */
+export function globalConfigExists(agentDir: string): boolean {
+  return existsSync(getGlobalConfigPath(agentDir));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function setsJudge(layer: Record<string, unknown> | undefined): boolean {
+  return layer !== undefined && ("provider" in layer || "model" in layer);
 }
 
 /**
@@ -114,9 +134,10 @@ export function loadClassifierConfig(options: {
   const projectPath = getProjectConfigPath(cwd);
   const global = readLayer(globalPath, issues);
   const project = readLayer(projectPath, issues);
+  const projectSetsJudge = setsJudge(project);
 
   if (global === undefined && project === undefined) {
-    return { config: undefined, issues };
+    return { config: undefined, issues, projectSetsJudge };
   }
 
   // Shallow merge: project scalars and arrays replace global wholesale.
@@ -135,8 +156,51 @@ export function loadClassifierConfig(options: {
         sourcePath,
       });
     }
-    return { config: undefined, issues };
+    return { config: undefined, issues, projectSetsJudge };
   }
 
-  return { config: parsed.data, issues };
+  return { config: parsed.data, issues, projectSetsJudge };
+}
+
+/**
+ * Rewrite only `provider` and `model` in the global config file, preserving
+ * every other field. Both `undefined` removes the pair (session model judges).
+ *
+ * The write is atomic: the new content goes to a sibling temporary file that
+ * is then renamed over `config.json`, so a crash never leaves a truncated
+ * config. Throws when the global file is absent or is not a JSON object; the
+ * existing file is never touched on failure.
+ */
+export function writeGlobalJudge(
+  agentDir: string,
+  provider: string | undefined,
+  model: string | undefined,
+): void {
+  const path = getGlobalConfigPath(agentDir);
+  if (!existsSync(path)) {
+    throw new Error(`Global config file not found: ${path}`);
+  }
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  if (!isRecord(parsed)) {
+    throw new Error(`Global config is not a JSON object: ${path}`);
+  }
+
+  const { provider: _provider, model: _model, ...rest } = parsed;
+  const next: Record<string, unknown> =
+    provider === undefined || model === undefined
+      ? rest
+      : { ...rest, provider, model };
+
+  const tempPath = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
+    renameSync(tempPath, path);
+  } catch (error) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // Nothing to clean up.
+    }
+    throw error;
+  }
 }
