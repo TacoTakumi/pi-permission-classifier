@@ -264,7 +264,7 @@ cleared at session shutdown. No entry means the link did not register.
 
     npm install
     npx tsc --noEmit    # typecheck
-    npx vitest run      # 192 tests
+    npx vitest run      # 199 tests
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the

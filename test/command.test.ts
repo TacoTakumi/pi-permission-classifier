@@ -506,3 +506,58 @@ describe("degraded picker without a runtime shape (REQ-10, REQ-22)", () => {
     expect(ctx.ui.select).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("reload after a write (review round 1, F1)", () => {
+  it("does not apply an invalid merged config: previous config stays live, error names the issue and the global path", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    const before = structuredClone(state.config);
+    deps.reload.mockReturnValue({
+      config: undefined,
+      issues: [
+        {
+          path: "$",
+          message: "provider and model must be set together or not at all",
+          sourcePath: `${GLOBAL_PATH}, ${PROJECT_PATH}`,
+        },
+      ],
+      projectSetsJudge: true,
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("session", ctx);
+    expect(deps.writeJudge).toHaveBeenCalledWith(undefined, undefined);
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("must be set together");
+    expect(notifyOf(ctx, "error")).toContain(GLOBAL_PATH);
+  });
+
+  it("applies a valid reload but surfaces loader issues as a warning", async () => {
+    const { state, reloaded, deps } = makeDeps(CONFIG_QN);
+    deps.reload.mockReturnValue({
+      ...reloaded,
+      issues: [
+        { path: "$", message: "Failed to read config: bad json", sourcePath: PROJECT_PATH },
+      ],
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    expect(deps.apply).toHaveBeenCalledWith(reloaded.config);
+    expect(state.config).toBe(reloaded.config);
+    expect(notifyTypes(ctx)).toEqual(["info", "warning"]);
+    expect(notifyOf(ctx, "warning")).toContain("bad json");
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+  });
+});
+
+describe("no-argument form without a valid config (review round 1, F3)", () => {
+  it("outside the TUI says the classifier is not set up instead of naming a judge", async () => {
+    const { state, deps } = makeDeps();
+    state.config = undefined;
+    const ctx = makeCtx("rpc");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(notifyTypes(ctx)).toEqual(["warning"]);
+    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+    expect(notifyOf(ctx, "warning")).not.toContain("judge:session");
+  });
+});

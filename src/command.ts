@@ -12,9 +12,8 @@
  *     behind a shape check, since it is a private field), the session's
  *     scoped models, and the current judge preselected, with no
  *     set-as-default callback so the operator's default model is never
- *     touched. A
- *     selection applies exactly like the typed form; a cancel changes
- *     nothing. When the runtime does not have the expected shape (a pi
+ *     touched. A selection applies exactly like the typed form; a cancel
+ *     changes nothing. When the runtime does not have the expected shape (a pi
  *     update moved it), the form degrades to `ctx.ui.select` over
  *     `provider/id` labels from `getAvailable()` with a warning.
  *   - no argument outside the TUI: print the current judge and the usage
@@ -186,19 +185,29 @@ export interface PermissionModelCommand {
 export function createPermissionModelCommand(
   deps: CommandDependencies,
 ): PermissionModelCommand {
+  function setupHint(): string {
+    return `The permission classifier is not set up: create ${deps.globalConfigPath()} first.`;
+  }
+
   /**
    * Whether a write can proceed: the link must be registered (a valid merged
    * config) and the global file must exist. Otherwise notify the setup hint.
    */
   function canWrite(ctx: CommandContextLike): boolean {
     if (deps.getConfig() === undefined || !deps.globalConfigExists()) {
-      ctx.ui.notify(
-        `The permission classifier is not set up: create ${deps.globalConfigPath()} first, then retry. Nothing changed.`,
-        "warning",
-      );
+      ctx.ui.notify(`${setupHint()} Nothing changed.`, "warning");
       return false;
     }
     return true;
+  }
+
+  function describeIssues(issues: LoadConfigResult["issues"]): string {
+    if (issues.length === 0) {
+      return "no config file was found";
+    }
+    return issues
+      .map((issue) => `${issue.sourcePath ?? "(merged)"} ${issue.path}: ${issue.message}`)
+      .join("; ");
   }
 
   /** Write the pair (or its removal), reload, apply, and report. */
@@ -214,6 +223,17 @@ export function createPermissionModelCommand(
       return;
     }
     const result = deps.reload(ctx.cwd);
+    if (result.config === undefined) {
+      // The write landed, but the merged global-plus-project config no
+      // longer validates. Applying `undefined` would leave a registered link
+      // deferring every ask behind a footer that says otherwise, so keep the
+      // previous config live and tell the operator what to fix.
+      ctx.ui.notify(
+        `Saved to ${deps.globalConfigPath()}, but the merged config is now invalid (${describeIssues(result.issues)}). The previous judge stays active for this session; fix the config and restart.`,
+        "error",
+      );
+      return;
+    }
     deps.apply(result.config);
     ctx.ui.notify(
       pair
@@ -221,6 +241,12 @@ export function createPermissionModelCommand(
         : "Permission judge follows the session model (provider/model removed from the global config).",
       "info",
     );
+    if (result.issues.length > 0) {
+      ctx.ui.notify(
+        `Config issues after reload: ${describeIssues(result.issues)}.`,
+        "warning",
+      );
+    }
     if (result.projectSetsJudge) {
       ctx.ui.notify(
         `${deps.projectConfigPath(ctx.cwd)} sets its own provider/model and shadows this choice in this project.`,
@@ -242,6 +268,10 @@ export function createPermissionModelCommand(
   }
 
   function printJudge(ctx: CommandContextLike): void {
+    if (deps.getConfig() === undefined) {
+      ctx.ui.notify(setupHint(), "warning");
+      return;
+    }
     ctx.ui.notify(
       `Permission classifier ${formatJudgeStatus(currentJudge(ctx))}. Usage: ${USAGE}`,
       "info",

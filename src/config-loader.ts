@@ -164,7 +164,8 @@ export function loadClassifierConfig(options: {
 
 /**
  * Rewrite only `provider` and `model` in the global config file, preserving
- * every other field. Both `undefined` removes the pair (session model judges).
+ * every other field. When either argument is `undefined` both keys are
+ * removed (the session model judges); the command passes both or neither.
  *
  * The write is atomic: the new content goes to a sibling temporary file that
  * is then renamed over `config.json`, so a crash never leaves a truncated
