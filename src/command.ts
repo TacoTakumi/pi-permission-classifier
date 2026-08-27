@@ -23,11 +23,14 @@
  * available models whose label starts with the typed prefix, plus the
  * literal `session` when it matches.
  *
- * Every write form refuses when there is no valid merged config (the link is
- * not registered) or the global config file is absent: nothing is written and
- * the operator gets the setup hint naming the global path. Writes always
- * target the global file; when the project layer sets its own pair the
- * operator is warned that it shadows the choice.
+ * Every write form refuses when the global config file is absent or there is
+ * no valid merged config - no config file found, or the files found failed
+ * validation: nothing is written and the operator gets the setup hint naming
+ * the global path. The precondition is the config, not registration: with a
+ * valid config and a link that never registers a write still succeeds, and the
+ * new judge applies once the link does. Writes always target the global file;
+ * when the project layer sets its own pair the operator is warned that it
+ * shadows the choice.
  *
  * Choosing a judge never touches pi's session model or the operator's default
  * model. This module performs no filesystem or network access of its own:
@@ -153,7 +156,7 @@ function runtimeOf(registry: CommandRegistryLike): ModelRuntime | undefined {
 
 /** Seams the extension supplies; none of them are called on a rejected pick. */
 export interface CommandDependencies {
-  /** The merged config driving the reviewer; `undefined` when not registered. */
+  /** The merged config the reviewer judges with; `undefined` when invalid or absent. */
   getConfig(): ClassifierConfig | undefined;
   /** The active session-only flag override, if any. */
   getOverride(): JudgePair | undefined;
@@ -190,8 +193,9 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Whether a write can proceed: the link must be registered (a valid merged
-   * config) and the global file must exist. Otherwise notify the setup hint.
+   * Whether a write can proceed: a valid merged config must be live and the
+   * global file must exist. Otherwise notify the setup hint. Neither check is
+   * on registration.
    */
   function canWrite(ctx: CommandContextLike): boolean {
     if (deps.getConfig() === undefined || !deps.globalConfigExists()) {

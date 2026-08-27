@@ -119,6 +119,17 @@ describe("operator docs", () => {
     }
   });
 
+  it("describes a refused write as bad or missing config, never as an unregistered link (REQ-08)", () => {
+    const flat = readme.replace(/\s+/g, " ");
+    expect(flat).toContain("no valid merged config");
+    expect(flat).toContain("global config file is absent");
+    expect(flat).not.toMatch(/link (?:is|was|has been) not registered/);
+    // The refusal sentence itself is about the config, not about registration.
+    const refusal = flat.match(/[^.]*\brefus\w*\b[^.]*\./i)?.[0] ?? "";
+    expect(refusal).toContain("refuses");
+    expect(refusal).not.toMatch(/link/i);
+  });
+
   it("tells the operator to list the classifier before pi-permission-system (REQ-18)", () => {
     const flat = readme.replace(/\s+/g, " ");
     expect(flat).toContain(

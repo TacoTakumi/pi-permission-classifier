@@ -201,9 +201,13 @@ global config file
 `provider` and `model` are rewritten, every other field is preserved, and
 the write goes through a temporary file that is fsynced and then renamed, so
 neither a process crash nor an OS crash leaves a truncated config. The command
-never creates the file. When the file is absent, or the link is not registered
-(no valid merged config), every write form refuses and prints the setup hint
-naming the global path.
+never creates the file. Every write form refuses - nothing is written, and the
+setup hint names the global path - when the global config file is absent or
+there is no valid merged config, which means no config file was found this
+session or the files found failed validation. The precondition is the config,
+not registration: with a valid config and a link that never registers
+(`pi-permission-system` absent or older than 27.0.0) a write still succeeds,
+and the new judge applies as soon as the link does register.
 When the project config sets `provider` or `model`, the global write still
 happens but the command warns that the project file shadows the choice in
 that project.
