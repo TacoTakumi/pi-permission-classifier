@@ -7,6 +7,12 @@
  *     pair to the global config, reload, and apply live for the next ask.
  *   - `session`: remove the pair from the global config so the session's
  *     active model judges again.
+ *   - no argument outside the TUI: print the current judge and the usage
+ *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
+ *
+ * Argument completion offers `provider/id` labels from the registry's
+ * available models whose label starts with the typed prefix, plus the
+ * literal `session` when it matches.
  *
  * Every write form refuses when there is no valid merged config (the link is
  * not registered) or the global config file is absent: nothing is written and
@@ -26,7 +32,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import type { LoadConfigResult } from "./config-loader";
 import type { ClassifierConfig } from "./config-schema";
-import { type JudgePair, parseJudgePair } from "./judge";
+import {
+  formatJudgeStatus,
+  type JudgePair,
+  parseJudgePair,
+  resolveJudge,
+} from "./judge";
 
 /** The slash command name (`/permission-model`). */
 export const COMMAND_NAME = "permission-model";
@@ -36,19 +47,23 @@ const SESSION_FORM = "session";
 const USAGE = `/${COMMAND_NAME} <provider>/<id> | ${SESSION_FORM}`;
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
-type ArgumentCompletions = ReturnType<
-  NonNullable<CommandOptions["getArgumentCompletions"]>
+/** pi's completion result, restricted to the synchronous half this command returns. */
+type ArgumentCompletions = Exclude<
+  ReturnType<NonNullable<CommandOptions["getArgumentCompletions"]>>,
+  Promise<unknown>
 >;
 
 /** The narrow registry projection the command needs. */
 export interface CommandRegistryLike {
   find(provider: string, modelId: string): Model<any> | undefined;
   hasConfiguredAuth(model: Model<any>): boolean;
+  getAvailable(): Model<any>[];
 }
 
 /** The slice of pi's command context the handler reads. */
 export interface CommandContextLike {
   cwd: string;
+  mode: "tui" | "rpc" | "json" | "print";
   model: Model<any> | undefined;
   modelRegistry: CommandRegistryLike;
   ui: {
@@ -62,6 +77,8 @@ export interface CommandDependencies {
   getConfig(): ClassifierConfig | undefined;
   /** The active session-only flag override, if any. */
   getOverride(): JudgePair | undefined;
+  /** The session's model registry (captured at `session_start`), for completion. */
+  getRegistry(): CommandRegistryLike | undefined;
   /** Whether the global config file exists (the precondition for a write). */
   globalConfigExists(): boolean;
   /** The global config path, for operator hints. */
@@ -129,8 +146,47 @@ export function createPermissionModelCommand(
     }
   }
 
+  /** The judge the next ask would use, as the footer shows it. */
+  function currentJudgeText(ctx: CommandContextLike): string {
+    return formatJudgeStatus(
+      resolveJudge(
+        deps.getOverride(),
+        deps.getConfig(),
+        ctx.modelRegistry,
+        ctx.model,
+      ),
+    );
+  }
+
+  function printJudge(ctx: CommandContextLike): void {
+    ctx.ui.notify(
+      `Permission classifier ${currentJudgeText(ctx)}. Usage: ${USAGE}`,
+      "info",
+    );
+  }
+
+  function getArgumentCompletions(prefix: string): ArgumentCompletions {
+    const registry = deps.getRegistry();
+    if (!registry) {
+      return null;
+    }
+    const wanted = prefix.trim().toLowerCase();
+    const labels = [
+      ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`),
+      SESSION_FORM,
+    ];
+    const items = labels
+      .filter((label) => label.toLowerCase().startsWith(wanted))
+      .map((label) => ({ value: label, label }));
+    return items.length > 0 ? items : null;
+  }
+
   async function handler(args: string, ctx: CommandContextLike): Promise<void> {
     const text = args.trim();
+    if (text === "") {
+      printJudge(ctx);
+      return;
+    }
     if (text === SESSION_FORM) {
       if (canWrite(ctx)) {
         persist(undefined, ctx);
@@ -165,7 +221,7 @@ export function createPermissionModelCommand(
 
   return {
     description: "Choose the judge model for the permission classifier",
-    getArgumentCompletions: () => null,
+    getArgumentCompletions,
     handler,
   };
 }

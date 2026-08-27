@@ -25,16 +25,27 @@ function findKnown(provider: string, id: string): Model<any> | undefined {
   return undefined;
 }
 
-function makeCtx() {
+const AVAILABLE = [
+  { provider: "anthropic", id: "a" },
+  { provider: "anthropic", id: "b" },
+  { provider: "openai", id: "c" },
+] as Model<any>[];
+
+function makeRegistry() {
+  return {
+    find: vi.fn(findKnown),
+    hasConfiguredAuth: vi.fn(() => true),
+    getAvailable: vi.fn(() => AVAILABLE),
+  };
+}
+
+function makeCtx(mode: "tui" | "rpc" | "json" | "print" = "tui") {
   return {
     cwd: "/project",
-    mode: "tui" as const,
+    mode,
     model: SESSION_MODEL,
-    modelRegistry: {
-      find: vi.fn(findKnown),
-      hasConfiguredAuth: vi.fn(() => true),
-    },
-    ui: { notify: vi.fn() },
+    modelRegistry: makeRegistry(),
+    ui: { notify: vi.fn(), custom: vi.fn(), select: vi.fn() },
   };
 }
 
@@ -48,9 +59,11 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
     issues: [],
     projectSetsJudge: false,
   };
+  const registry = makeRegistry();
   const deps = {
     getConfig: () => state.config,
     getOverride: () => state.override,
+    getRegistry: () => registry,
     globalConfigExists: vi.fn<CommandDependencies["globalConfigExists"]>(
       () => true,
     ),
@@ -64,7 +77,7 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
       state.override = undefined;
     }),
   } satisfies CommandDependencies;
-  return { state, reloaded, deps };
+  return { state, reloaded, deps, registry };
 }
 
 function notifyTypes(ctx: ReturnType<typeof makeCtx>): string[] {
@@ -240,5 +253,89 @@ describe("write failure (REQ-22)", () => {
     expect(state.config).toEqual(before);
     expect(notifyTypes(ctx)).toEqual(["error"]);
     expect(notifyOf(ctx, "error")).toContain("EACCES");
+  });
+});
+
+describe("no-argument form outside the TUI (REQ-06)", () => {
+  it.each(["rpc", "json", "print"] as const)(
+    "in %s mode opens no picker and prints the current judge and usage",
+    async (mode) => {
+      const { deps } = makeDeps(CONFIG_QN);
+      const ctx = makeCtx(mode);
+      await createPermissionModelCommand(deps).handler("", ctx);
+      expect(ctx.ui.custom).not.toHaveBeenCalled();
+      expect(ctx.ui.select).not.toHaveBeenCalled();
+      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(notifyTypes(ctx)).toEqual(["info"]);
+      expect(notifyOf(ctx, "info")).toContain("judge:q/n");
+      expect(notifyOf(ctx, "info")).toContain("/permission-model");
+    },
+  );
+
+  it("prints judge:session when the session model judges", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    const ctx = makeCtx("rpc");
+    await createPermissionModelCommand(deps).handler("  ", ctx);
+    expect(notifyOf(ctx, "info")).toContain("judge:session");
+  });
+
+  it("prints the active flag override ahead of the config judge", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    state.override = { provider: "p", model: "m" };
+    const ctx = makeCtx("rpc");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(notifyOf(ctx, "info")).toContain("judge:p/m");
+  });
+});
+
+describe("argument completion (REQ-07)", () => {
+  it("offers provider/id labels whose label starts with the prefix", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions(
+      "anth",
+    );
+    expect(items?.map((item) => item.value)).toEqual([
+      "anthropic/a",
+      "anthropic/b",
+    ]);
+    expect(items?.map((item) => item.label)).toEqual([
+      "anthropic/a",
+      "anthropic/b",
+    ]);
+  });
+
+  it("offers the literal session when it matches", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions(
+      "ses",
+    );
+    expect(items?.map((item) => item.value)).toEqual(["session"]);
+  });
+
+  it("offers everything for an empty prefix", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions("");
+    expect(items?.map((item) => item.value)).toEqual([
+      "anthropic/a",
+      "anthropic/b",
+      "openai/c",
+      "session",
+    ]);
+  });
+
+  it("returns null when nothing matches", () => {
+    const { deps } = makeDeps();
+    expect(
+      createPermissionModelCommand(deps).getArgumentCompletions("zzz"),
+    ).toBeNull();
+  });
+
+  it("returns null before a session captured the registry", () => {
+    const { deps } = makeDeps();
+    const command = createPermissionModelCommand({
+      ...deps,
+      getRegistry: () => undefined,
+    });
+    expect(command.getArgumentCompletions("anth")).toBeNull();
   });
 });

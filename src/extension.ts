@@ -45,7 +45,11 @@ import {
   type PermissionsReadyEvent,
 } from "@gotgenes/pi-permission-system";
 
-import { COMMAND_NAME, createPermissionModelCommand } from "./command";
+import {
+  COMMAND_NAME,
+  type CommandRegistryLike,
+  createPermissionModelCommand,
+} from "./command";
 import {
   getGlobalConfigPath,
   getProjectConfigPath,
@@ -119,7 +123,7 @@ export function createClassifierExtension(
 
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
-  let registry: ModelRegistryLike | undefined;
+  let registry: (ModelRegistryLike & CommandRegistryLike) | undefined;
   let ui: ExtensionContext["ui"] | undefined;
   let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
@@ -171,6 +175,7 @@ export function createClassifierExtension(
     createPermissionModelCommand({
       getConfig: () => config,
       getOverride: () => override,
+      getRegistry: () => registry,
       globalConfigExists: () => globalConfigExists(getAgentDir()),
       globalConfigPath: () => getGlobalConfigPath(getAgentDir()),
       projectConfigPath: getProjectConfigPath,
