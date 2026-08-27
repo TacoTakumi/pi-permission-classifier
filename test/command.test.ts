@@ -7,7 +7,7 @@ import {
   type CommandDependencies,
   createPermissionModelCommand,
 } from "#src/command";
-import type { JudgePair } from "#src/judge";
+import { type JudgePair, resolveJudge } from "#src/judge";
 
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
@@ -15,6 +15,9 @@ const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
 
 const EMPTY_CONFIG: ClassifierConfig = { surfaces: ["bash"], timeoutMs: 5000 };
 const CONFIG_QN: ClassifierConfig = { ...EMPTY_CONFIG, provider: "q", model: "n" };
+
+const GLOBAL_PATH = "/agent/extensions/pi-permission-classifier/config.json";
+const PROJECT_PATH = "/project/.pi/extensions/pi-permission-classifier/config.json";
 
 function findKnown(provider: string, id: string): Model<any> | undefined {
   if (provider === "p" && id === "m") return PM_MODEL;
@@ -48,6 +51,12 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
   const deps = {
     getConfig: () => state.config,
     getOverride: () => state.override,
+    globalConfigExists: vi.fn<CommandDependencies["globalConfigExists"]>(
+      () => true,
+    ),
+    globalConfigPath: () => GLOBAL_PATH,
+    projectConfigPath: (cwd: string) =>
+      `${cwd}/.pi/extensions/pi-permission-classifier/config.json`,
     writeJudge: vi.fn<CommandDependencies["writeJudge"]>(),
     reload: vi.fn<CommandDependencies["reload"]>(() => reloaded),
     apply: vi.fn<CommandDependencies["apply"]>((config) => {
@@ -134,5 +143,102 @@ describe("typed form /permission-model <provider>/<id>", () => {
     expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
     expect(notifyTypes(ctx)).toContain("warning");
     expect(notifyOf(ctx, "warning")).toMatch(/defer/);
+  });
+});
+
+describe("session form /permission-model session (REQ-05)", () => {
+  it("removes both keys, applies the reloaded config, and the session model judges again", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    deps.reload.mockReturnValue({
+      config: EMPTY_CONFIG,
+      issues: [],
+      projectSetsJudge: false,
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("session", ctx);
+    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(deps.writeJudge).toHaveBeenCalledWith(undefined, undefined);
+    expect(deps.reload).toHaveBeenCalledWith("/project");
+    expect(state.config?.provider).toBeUndefined();
+    expect(state.config?.model).toBeUndefined();
+    expect(
+      resolveJudge(undefined, state.config, ctx.modelRegistry, SESSION_MODEL)
+        .model,
+    ).toBe(SESSION_MODEL);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toMatch(/session/);
+  });
+
+  it("does not consult the registry", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("session", ctx);
+    expect(ctx.modelRegistry.find).not.toHaveBeenCalled();
+  });
+});
+
+describe("refusal when there is no valid config or no global file (REQ-08)", () => {
+  it.each(["p/m", "session"])(
+    "%j refuses with a warning naming the global path when the link is not registered",
+    async (args) => {
+      const { state, deps } = makeDeps();
+      state.config = undefined;
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler(args, ctx);
+      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(deps.reload).not.toHaveBeenCalled();
+      expect(notifyTypes(ctx)).toEqual(["warning"]);
+      expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+    },
+  );
+
+  it.each(["p/m", "session"])(
+    "%j refuses with a warning naming the global path when the global file is absent",
+    async (args) => {
+      const { state, deps } = makeDeps(CONFIG_QN);
+      deps.globalConfigExists.mockReturnValue(false);
+      const before = structuredClone(state.config);
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler(args, ctx);
+      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(state.config).toEqual(before);
+      expect(notifyTypes(ctx)).toEqual(["warning"]);
+      expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+    },
+  );
+});
+
+describe("project layer shadowing the choice (REQ-14)", () => {
+  it("still writes the global file and warns naming the project config path", async () => {
+    const { deps } = makeDeps();
+    deps.reload.mockReturnValue({
+      config: CONFIG_QN,
+      issues: [],
+      projectSetsJudge: true,
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(deps.apply).toHaveBeenCalledWith(CONFIG_QN);
+    expect(notifyTypes(ctx)).toContain("warning");
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+  });
+});
+
+describe("write failure (REQ-22)", () => {
+  it("leaves the config unchanged, skips the reload, and notifies error", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    deps.writeJudge.mockImplementation(() => {
+      throw new Error("EACCES: permission denied");
+    });
+    const before = structuredClone(state.config);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    expect(deps.reload).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("EACCES");
   });
 });
