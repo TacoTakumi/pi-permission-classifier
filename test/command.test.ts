@@ -561,3 +561,16 @@ describe("no-argument form without a valid config (review round 1, F3)", () => {
     expect(notifyOf(ctx, "warning")).not.toContain("judge:session");
   });
 });
+
+describe("auth warning only after a successful write (review round 2)", () => {
+  it("does not warn about auth when the write failed", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    deps.writeJudge.mockImplementation(() => {
+      throw new Error("EACCES: permission denied");
+    });
+    const ctx = makeCtx();
+    ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
+    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+  });
+});

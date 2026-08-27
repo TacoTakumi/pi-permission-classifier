@@ -86,6 +86,8 @@ const FLAG_NAME = "permission-model";
 
 /** Injectable seams; production defaults read the filesystem and call the model. */
 export interface ClassifierDependencies {
+  /** The pi agent dir holding the global config; defaults to `getAgentDir()`. */
+  agentDir?: () => string;
   loadConfig?: (cwd: string) => LoadConfigResult;
   complete?: CompleteFn;
   /** Persist a judge pair to the global config; both `undefined` removes it. */
@@ -102,20 +104,21 @@ export function createClassifierExtension(
   pi: ExtensionAPI,
   dependencies: ClassifierDependencies = {},
 ): void {
-  // `getAgentDir()` is read here rather than hoisted out of the lambda so the
-  // env read happens only on the production path, and only when a config is
-  // actually loaded — it honors `PI_CODING_AGENT_DIR`, matching where
-  // pi-permission-system looks for the same global scope.
+  // `agentDir()` is called inside each lambda rather than hoisted so the env
+  // read happens only on the production path, and only when a config is
+  // actually touched — `getAgentDir()` honors `PI_CODING_AGENT_DIR`, matching
+  // where pi-permission-system looks for the same global scope.
+  const agentDir = dependencies.agentDir ?? getAgentDir;
   const loadConfig =
     dependencies.loadConfig ??
-    ((cwd: string) => loadClassifierConfig({ cwd, agentDir: getAgentDir() }));
+    ((cwd: string) => loadClassifierConfig({ cwd, agentDir: agentDir() }));
   const complete: CompleteFn =
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
   const writeJudge =
     dependencies.writeJudge ??
     ((provider: string | undefined, model: string | undefined) =>
-      writeGlobalJudge(getAgentDir(), provider, model));
+      writeGlobalJudge(agentDir(), provider, model));
 
   pi.registerFlag(FLAG_NAME, {
     description:
@@ -155,10 +158,11 @@ export function createClassifierExtension(
     if (pair && registry?.find(pair.provider, pair.model)) {
       return pair;
     }
-    warn(
+    const message =
       `--${FLAG_NAME} ${raw} is not a known <provider>/<id>; ` +
-        "the configured judge applies.",
-    );
+      "the configured judge applies.";
+    warn(message);
+    ui?.notify(message, "warning");
     return undefined;
   }
 
@@ -182,8 +186,8 @@ export function createClassifierExtension(
       ...(dependencies.buildPicker
         ? { buildPicker: dependencies.buildPicker }
         : {}),
-      globalConfigExists: () => globalConfigExists(getAgentDir()),
-      globalConfigPath: () => getGlobalConfigPath(getAgentDir()),
+      globalConfigExists: () => globalConfigExists(agentDir()),
+      globalConfigPath: () => getGlobalConfigPath(agentDir()),
       projectConfigPath: getProjectConfigPath,
       writeJudge,
       reload: (cwd) => loadConfig(cwd),

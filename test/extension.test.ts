@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import type { Model } from "@earendil-works/pi-ai";
 import type {
   PermissionsService,
@@ -11,7 +15,7 @@ import {
 } from "@gotgenes/pi-permission-system";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LoadConfigResult } from "#src/config-loader";
+import { getGlobalConfigPath, type LoadConfigResult } from "#src/config-loader";
 import {
   type ClassifierDependencies,
   createClassifierExtension,
@@ -184,6 +188,8 @@ function lastAuthorizer(): RegisteredAuthorizer {
 }
 
 let service: ReturnType<typeof makeService>;
+/** Scratch agent dirs created by `start()`; removed after each test. */
+const agentDirs: string[] = [];
 
 beforeEach(() => {
   service = makeService();
@@ -192,7 +198,20 @@ beforeEach(() => {
 afterEach(() => {
   unpublishPermissionsService(SESSION_ID, service);
   vi.restoreAllMocks();
+  for (const dir of agentDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
+
+/** A throwaway agent dir holding an empty global config, so writes are allowed. */
+function makeAgentDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "pi-permission-classifier-agent-"));
+  const globalPath = getGlobalConfigPath(dir);
+  mkdirSync(dirname(globalPath), { recursive: true });
+  writeFileSync(globalPath, "{}");
+  agentDirs.push(dir);
+  return dir;
+}
 
 /** Publish `service` under {@link SESSION_ID} in the keyed locator. */
 function publishForSession(): void {
@@ -211,7 +230,9 @@ function start(
     buildPicker?: ClassifierDependencies["buildPicker"];
   } = {},
 ) {
+  const agentDir = makeAgentDir();
   createClassifierExtension(pi.api as never, {
+    agentDir: () => agentDir,
     loadConfig: overrides.loadConfig ?? (() => CONFIG_RESULT),
     complete: overrides.complete ?? vi.fn(),
     writeJudge: overrides.writeJudge ?? vi.fn(),
@@ -567,6 +588,10 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("nope/x");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("nope/x"),
+      "warning",
+    );
     expect(writeJudge).not.toHaveBeenCalled();
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });

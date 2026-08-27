@@ -214,10 +214,12 @@ Choosing a judge never changes pi's session model or your default model:
 
 `pi --permission-model <provider>/<id>` makes that model the judge for the
 session only. It takes precedence over the config and the session model,
-nothing is written, and it is dropped at session shutdown. A reference the
-registry does not know is ignored with a warning and the configured judge
-applies. An explicit `/permission-model` choice during the session replaces
-the flag for the rest of that session.
+nothing is written, and it is dropped at session shutdown. The flag is read
+again at every session start in that pi process, so after `/reload` or a new
+session in the same process it applies again. A reference the registry does
+not know is ignored with a warning and the configured judge applies. An
+explicit `/permission-model` choice during the session replaces the flag for
+the rest of that session.
 
 ### The status bar entry
 
@@ -264,7 +266,7 @@ cleared at session shutdown. No entry means the link did not register.
 
     npm install
     npx tsc --noEmit    # typecheck
-    npx vitest run      # 199 tests
+    npx vitest run      # 200 tests
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the
