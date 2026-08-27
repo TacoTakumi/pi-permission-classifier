@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -11,21 +11,42 @@ function src(name: string): string {
   return readFileSync(join(ROOT, "src", name), "utf-8");
 }
 
-const LINK_FILES = [
-  "index.ts",
-  "extension.ts",
-  "config-schema.ts",
-  "config-loader.ts",
-  "prompt.ts",
-  "model-review.ts",
-  "reviewer.ts",
-  "breaker.ts",
-  "judge.ts",
-  "command.ts",
-];
+/**
+ * Every module under `src/`, read from disk rather than listed by hand: a new
+ * link file cannot escape the guards below by omission (REQ-23).
+ */
+const LINK_FILES = readdirSync(join(ROOT, "src"))
+  .filter((name) => name.endsWith(".ts"))
+  .sort();
 
 function importsOf(source: string): string[] {
   return [...source.matchAll(/from "([^"]+)"/g)].map((match) => match[1]!);
+}
+
+/**
+ * Whether `source` touches the member `name` in any form that could reach the
+ * runtime: a direct or optional call, a bare property read (aliased or passed
+ * around), or bracket/string access.
+ */
+function referencesMember(source: string, name: string): boolean {
+  const forms = [
+    `\\.${name}(?![\\w$])`, // pi.setModel, pi.setModel?.()
+    `(?<![$\\w.])${name}\\s*[?(]`, // setModel(), setModel?.()
+    `["'\`]${name}["'\`]`, // pi["setModel"], const key = "setModel"
+  ];
+  return forms.some((form) => new RegExp(form).test(source));
+}
+
+/**
+ * The text of `export function <name>` through the next top-level export, so a
+ * guard can be scoped to one function body instead of the whole file.
+ */
+function functionSource(source: string, name: string): string {
+  const start = source.search(new RegExp(`^export function ${name}\\b`, "m"));
+  expect(start, `no export function ${name}`).toBeGreaterThan(-1);
+  const rest = source.slice(start);
+  const next = rest.slice(1).search(/^export\b/m);
+  return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
 /** Numeric `major.minor.patch >= floor`, without a semver dependency. */
@@ -212,7 +233,11 @@ describe("operator docs", () => {
 });
 
 describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
-  it("lists the command and judge modules among the link files", () => {
+  it("covers every module under src/, command and judge included", () => {
+    // LINK_FILES is read from src/, so both assertions fail when a module is
+    // renamed away or the directory is not found (an empty list would make
+    // every loop below pass vacuously).
+    expect(LINK_FILES.length).toBeGreaterThan(0);
     expect(LINK_FILES).toContain("command.ts");
     expect(LINK_FILES).toContain("judge.ts");
   });
@@ -229,15 +254,21 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
   it("no link file changes the session model or the operator default model", () => {
     for (const name of LINK_FILES) {
       const source = src(name);
-      expect(source).not.toMatch(/\bsetModel\(/);
-      expect(source).not.toMatch(/setDefaultModelAndProvider\(/);
+      for (const setter of ["setModel", "setDefaultModelAndProvider"]) {
+        expect(
+          referencesMember(source, setter),
+          `${name} references ${setter}`,
+        ).toBe(false);
+      }
     }
   });
 
-  it("the judge write goes through a temp file and renameSync", () => {
-    const source = src("config-loader.ts");
-    expect(source).toContain("renameSync");
-    expect(source).toContain("export function writeGlobalJudge");
+  it("the judge write renames over the target inside writeGlobalJudge", () => {
+    // Scoped to the writer body: a renameSync elsewhere in the file, or in a
+    // comment, proves nothing about how config.json is replaced.
+    const body = functionSource(src("config-loader.ts"), "writeGlobalJudge");
+    expect(body).toMatch(/\brenameSync\s*\(/);
+    expect(body).not.toMatch(/\bwriteFileSync\s*\(/);
   });
 
   it("the picker is pi's own selector, built with the 0.84.3 six-argument form (REQ-25)", () => {

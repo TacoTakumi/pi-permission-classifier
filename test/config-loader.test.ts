@@ -6,6 +6,7 @@ import {
   readlinkSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -69,6 +70,27 @@ function writePathCalls(): string[] {
 /** The first recorded call under `name`, or `undefined` when it never ran. */
 function fsCall(name: string): FsCall | undefined {
   return fsCalls.find((call) => call.name === name);
+}
+
+/** Whether an `openSync` flag argument asks for a write. */
+function opensForWriting(flag: unknown): boolean {
+  if (flag === undefined) return false; // node's default is "r"
+  if (typeof flag === "string") return /[wax]/.test(flag);
+  return typeof flag === "number" && (flag & 3) !== 0; // O_WRONLY | O_RDWR
+}
+
+/**
+ * Recorded calls that put bytes straight at one of `paths` — the shape an
+ * atomic writer must never produce (REQ-12). Callers reset `fsCalls` first so
+ * only the writer's own calls are in scope.
+ */
+function directWriteCalls(paths: unknown[]): FsCall[] {
+  return fsCalls.filter(
+    (call) =>
+      (call.name === "writeFileSync" ||
+        (call.name === "openSync" && opensForWriting(call.args[1]))) &&
+      paths.some((path) => call.args[0] === path),
+  );
 }
 
 describe("loadClassifierConfig", () => {
@@ -323,13 +345,33 @@ describe("writeGlobalJudge (REQ-12)", () => {
     expect(fsCall("closeSync")?.args[0]).toBe(fd);
   });
 
+  it("never writes the config path: only the temp file receives bytes", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    fsCalls.length = 0;
+
+    writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    const target = realpathSync(globalPath);
+    expect(directWriteCalls([globalPath, target])).toEqual([]);
+    // The bytes go to a sibling temp file; the config changes by rename alone.
+    const opened = fsCall("openSync");
+    const tempPath = String(opened?.args[0]);
+    expect(tempPath).not.toBe(target);
+    expect(tempPath.startsWith(`${target}.`)).toBe(true);
+    expect(tempPath).toMatch(/\.\d+\.tmp$/);
+  });
+
   it("keeps a symlinked config.json intact and rewrites its target", () => {
     const target = join(root, "dotfiles", "permission-classifier.json");
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, JSON.stringify(existing));
     symlinkSync(target, globalPath);
 
+    fsCalls.length = 0;
     writeGlobalJudge(agentDir, "openai", "gpt-5");
+
+    // Neither the link nor its target is written directly.
+    expect(directWriteCalls([globalPath, target])).toEqual([]);
 
     // The link survives and still points at the file that received the write.
     expect(lstatSync(globalPath).isSymbolicLink()).toBe(true);
@@ -374,9 +416,13 @@ describe("writeGlobalJudge (REQ-12)", () => {
 
   it("throws and leaves the file untouched when it is not a JSON object", () => {
     writeFileSync(globalPath, "{ not json");
+    fsCalls.length = 0;
     expect(() => writeGlobalJudge(agentDir, "openai", "gpt-5")).toThrow();
     expect(readFileSync(globalPath, "utf-8")).toBe("{ not json");
     expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
+    expect(directWriteCalls([globalPath, realpathSync(globalPath)])).toEqual(
+      [],
+    );
   });
 });
 
