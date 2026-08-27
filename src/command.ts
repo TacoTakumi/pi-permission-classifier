@@ -7,6 +7,13 @@
  *     pair to the global config, reload, and apply live for the next ask.
  *   - `session`: remove the pair from the global config so the session's
  *     active model judges again.
+ *   - no argument in the TUI: mount pi's own searchable model selector
+ *     through `ctx.ui.custom`, built over `SettingsManager.inMemory()` so the
+ *     operator's default model is never touched, the registry's runtime
+ *     (reached behind a shape check, since it is a private field), the
+ *     session's scoped models, and the current judge preselected. A
+ *     selection applies exactly like the typed form; a cancel changes
+ *     nothing.
  *   - no argument outside the TUI: print the current judge and the usage
  *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
  *
@@ -28,7 +35,14 @@
  */
 
 import type { Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  type ExtensionUIContext,
+  ModelSelectorComponent,
+  type ModelRuntime,
+  type ScopedModel,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 
 import type { LoadConfigResult } from "./config-loader";
 import type { ClassifierConfig } from "./config-schema";
@@ -53,6 +67,12 @@ type ArgumentCompletions = Exclude<
   Promise<unknown>
 >;
 
+type PickerFactory = Parameters<ExtensionUIContext["custom"]>[0];
+/** pi's TUI handle, as `ctx.ui.custom` hands it to the factory. */
+export type PickerTui = Parameters<PickerFactory>[0];
+/** What the factory returns: a component, optionally disposable. */
+export type PickerComponent = ReturnType<PickerFactory>;
+
 /** The narrow registry projection the command needs. */
 export interface CommandRegistryLike {
   find(provider: string, modelId: string): Model<any> | undefined;
@@ -66,9 +86,67 @@ export interface CommandContextLike {
   mode: "tui" | "rpc" | "json" | "print";
   model: Model<any> | undefined;
   modelRegistry: CommandRegistryLike;
+  scopedModels: readonly ScopedModel[];
   ui: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
+    custom<T>(
+      factory: (
+        tui: PickerTui,
+        theme: unknown,
+        keybindings: unknown,
+        done: (result: T) => void,
+      ) => PickerComponent,
+    ): Promise<T>;
   };
+}
+
+/** Everything the picker component is built from. */
+export interface PickerRequest {
+  tui: PickerTui;
+  /** The current judge, preselected in the list; `undefined` when unresolved. */
+  currentModel: Model<any> | undefined;
+  runtime: ModelRuntime;
+  scopedModels: readonly ScopedModel[];
+  onSelect(model: Model<any>): void;
+  onCancel(): void;
+}
+
+/** Builds the picker component; injectable so tests never mount a real TUI. */
+export type PickerSeam = (request: PickerRequest) => PickerComponent;
+
+/**
+ * The production picker: pi's own model selector, over an in-memory settings
+ * manager. The selector calls `setDefaultModelAndProvider` on that manager
+ * before `onSelect`, so with the in-memory one the operator's real default
+ * model is never rewritten (REQ-11).
+ */
+export const buildModelSelector: PickerSeam = (request) =>
+  new ModelSelectorComponent(
+    request.tui,
+    request.currentModel,
+    SettingsManager.inMemory(),
+    request.runtime,
+    request.scopedModels,
+    request.onSelect,
+    request.onCancel,
+  );
+
+/**
+ * The registry's runtime, reached behind a shape check: `runtime` is a
+ * private field of `ModelRegistry`, so a pi update that moves or reshapes it
+ * yields `undefined` here (and a degraded picker) instead of a crash.
+ */
+function runtimeOf(registry: CommandRegistryLike): ModelRuntime | undefined {
+  const runtime = (registry as { runtime?: unknown }).runtime;
+  if (
+    typeof runtime === "object" &&
+    runtime !== null &&
+    typeof (runtime as { getAvailableSnapshot?: unknown })
+      .getAvailableSnapshot === "function"
+  ) {
+    return runtime as ModelRuntime;
+  }
+  return undefined;
 }
 
 /** Seams the extension supplies; none of them are called on a rejected pick. */
@@ -91,6 +169,8 @@ export interface CommandDependencies {
   reload(cwd: string): LoadConfigResult;
   /** Replace the live config, drop any flag override, refresh the status. */
   apply(config: ClassifierConfig | undefined): void;
+  /** Builds the picker component; defaults to {@link buildModelSelector}. */
+  buildPicker?: PickerSeam;
 }
 
 /** What `registerCommand` receives, with the handler typed to the slice it reads. */
@@ -146,22 +226,61 @@ export function createPermissionModelCommand(
     }
   }
 
-  /** The judge the next ask would use, as the footer shows it. */
-  function currentJudgeText(ctx: CommandContextLike): string {
-    return formatJudgeStatus(
-      resolveJudge(
-        deps.getOverride(),
-        deps.getConfig(),
-        ctx.modelRegistry,
-        ctx.model,
-      ),
+  const buildPicker = deps.buildPicker ?? buildModelSelector;
+
+  /** The judge the next ask would use. */
+  function currentJudge(ctx: CommandContextLike) {
+    return resolveJudge(
+      deps.getOverride(),
+      deps.getConfig(),
+      ctx.modelRegistry,
+      ctx.model,
     );
   }
 
   function printJudge(ctx: CommandContextLike): void {
     ctx.ui.notify(
-      `Permission classifier ${currentJudgeText(ctx)}. Usage: ${USAGE}`,
+      `Permission classifier ${formatJudgeStatus(currentJudge(ctx))}. Usage: ${USAGE}`,
       "info",
+    );
+  }
+
+  /** Persist a registry model as the judge; warn when it has no auth. */
+  function applyModel(model: Model<any>, ctx: CommandContextLike): void {
+    const pair: JudgePair = { provider: model.provider, model: model.id };
+    const hasAuth = ctx.modelRegistry.hasConfiguredAuth(model);
+    persist(pair, ctx);
+    if (!hasAuth) {
+      ctx.ui.notify(
+        `No auth is configured for ${pair.provider}/${pair.model}; permission asks will defer to the prompt until it is.`,
+        "warning",
+      );
+    }
+  }
+
+  /** The no-argument TUI form: mount the picker; apply a selection. */
+  async function pick(ctx: CommandContextLike): Promise<void> {
+    const runtime = runtimeOf(ctx.modelRegistry);
+    if (!runtime) {
+      ctx.ui.notify(
+        `The model picker is unavailable in this pi version. Usage: ${USAGE}`,
+        "warning",
+      );
+      return;
+    }
+    const currentModel = currentJudge(ctx).model;
+    await ctx.ui.custom<void>((tui, _theme, _keybindings, done) =>
+      buildPicker({
+        tui,
+        currentModel,
+        runtime,
+        scopedModels: ctx.scopedModels,
+        onSelect: (model) => {
+          done();
+          applyModel(model, ctx);
+        },
+        onCancel: () => done(),
+      }),
     );
   }
 
@@ -184,7 +303,11 @@ export function createPermissionModelCommand(
   async function handler(args: string, ctx: CommandContextLike): Promise<void> {
     const text = args.trim();
     if (text === "") {
-      printJudge(ctx);
+      if (ctx.mode !== "tui") {
+        printJudge(ctx);
+      } else if (canWrite(ctx)) {
+        await pick(ctx);
+      }
       return;
     }
     if (text === SESSION_FORM) {
@@ -209,14 +332,7 @@ export function createPermissionModelCommand(
       );
       return;
     }
-    const hasAuth = ctx.modelRegistry.hasConfiguredAuth(model);
-    persist(pair, ctx);
-    if (!hasAuth) {
-      ctx.ui.notify(
-        `No auth is configured for ${pair.provider}/${pair.model}; permission asks will defer to the prompt until it is.`,
-        "warning",
-      );
-    }
+    applyModel(model, ctx);
   }
 
   return {

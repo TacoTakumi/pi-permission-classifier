@@ -49,6 +49,7 @@ import {
   COMMAND_NAME,
   type CommandRegistryLike,
   createPermissionModelCommand,
+  type PickerSeam,
 } from "./command";
 import {
   getGlobalConfigPath,
@@ -89,6 +90,8 @@ export interface ClassifierDependencies {
   complete?: CompleteFn;
   /** Persist a judge pair to the global config; both `undefined` removes it. */
   writeJudge?: (provider: string | undefined, model: string | undefined) => void;
+  /** Builds the /permission-model picker; the default mounts pi's selector. */
+  buildPicker?: PickerSeam;
 }
 
 function warn(message: string): void {
@@ -176,6 +179,9 @@ export function createClassifierExtension(
       getConfig: () => config,
       getOverride: () => override,
       getRegistry: () => registry,
+      ...(dependencies.buildPicker
+        ? { buildPicker: dependencies.buildPicker }
+        : {}),
       globalConfigExists: () => globalConfigExists(getAgentDir()),
       globalConfigPath: () => getGlobalConfigPath(getAgentDir()),
       projectConfigPath: getProjectConfigPath,
