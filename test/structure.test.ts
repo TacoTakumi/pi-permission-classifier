@@ -119,6 +119,14 @@ describe("operator docs", () => {
     }
   });
 
+  it("tells the operator to list the classifier before pi-permission-system (REQ-18)", () => {
+    const flat = readme.replace(/\s+/g, " ");
+    expect(flat).toContain(
+      "List `pi-permission-classifier` before `pi-permission-system` in `packages`",
+    );
+    expect(flat).toContain("first agent turn");
+  });
+
   it("the project guide lists the command and judge modules in Layout (REQ-24)", () => {
     const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
     expect(guide).toContain("src/command.ts");

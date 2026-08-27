@@ -38,11 +38,22 @@ and installing it grants it no authority until you name it in the chain.
 
 2. Register the package with pi. In `~/.pi/agent/settings.json`, add the
    package directory to the `packages` list (path relative to
-   `~/.pi/agent`, or absolute):
+   `~/.pi/agent`, or absolute). List `pi-permission-classifier` before
+   `pi-permission-system` in `packages`:
 
        "packages": [
-         "../../pi-permission-classifier"
+         "../../pi-permission-classifier",
+         "<path to pi-permission-system>"
        ]
+
+   Order matters: pi runs `session_start` handlers in package order, and
+   `pi-permission-system` emits its `permissions:ready` event from its own
+   `session_start`. With the classifier listed first, the link and the
+   `permission-classifier` footer entry are in place at startup. Listed
+   after it, the classifier misses that first ready event and registers
+   at the next one, so the link and the footer entry appear only after the
+   first agent turn (asks are still reviewed, since they happen inside
+   agent turns).
 
 3. Activate the chain link. In
    `~/.pi/agent/extensions/pi-permission-system/config.json`, add:
