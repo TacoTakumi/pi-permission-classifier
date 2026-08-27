@@ -658,6 +658,32 @@ describe("/permission-model command wiring (REQ-01, REQ-17, REQ-20)", () => {
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
+
+  it("a rejected typed pick writes nothing and the next ask keeps the configured judge", async () => {
+    const complete = allowingComplete();
+    const writeJudge = vi.fn();
+    const loadConfig = vi.fn<() => LoadConfigResult>(() => CONFIG_QN_RESULT);
+    const pi = makeFakePi();
+    start(pi, { complete, loadConfig, writeJudge });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+
+    await pi.commands.get("permission-model")?.handler("nope/x", ctx);
+
+    expect(writeJudge).not.toHaveBeenCalled();
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("nope/x"),
+      "error",
+    );
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
 });
 
 describe("picker selection through the extension (REQ-09, REQ-11)", () => {
