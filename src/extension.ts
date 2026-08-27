@@ -45,7 +45,12 @@ import {
   type PermissionsReadyEvent,
 } from "@gotgenes/pi-permission-system";
 
-import { type LoadConfigResult, loadClassifierConfig } from "./config-loader";
+import { COMMAND_NAME, createPermissionModelCommand } from "./command";
+import {
+  type LoadConfigResult,
+  loadClassifierConfig,
+  writeGlobalJudge,
+} from "./config-loader";
 import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
@@ -75,6 +80,8 @@ const FLAG_NAME = "permission-model";
 export interface ClassifierDependencies {
   loadConfig?: (cwd: string) => LoadConfigResult;
   complete?: CompleteFn;
+  /** Persist a judge pair to the global config; both `undefined` removes it. */
+  writeJudge?: (provider: string | undefined, model: string | undefined) => void;
 }
 
 function warn(message: string): void {
@@ -95,6 +102,10 @@ export function createClassifierExtension(
   const complete: CompleteFn =
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
+  const writeJudge =
+    dependencies.writeJudge ??
+    ((provider: string | undefined, model: string | undefined) =>
+      writeGlobalJudge(getAgentDir(), provider, model));
 
   pi.registerFlag(FLAG_NAME, {
     description:
@@ -151,6 +162,22 @@ export function createClassifierExtension(
       formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)),
     );
   }
+
+  pi.registerCommand(
+    COMMAND_NAME,
+    createPermissionModelCommand({
+      getConfig: () => config,
+      getOverride: () => override,
+      writeJudge,
+      reload: (cwd) => loadConfig(cwd),
+      apply: (next) => {
+        // An explicit choice replaces a flag override for the rest of the session.
+        config = next;
+        override = undefined;
+        refreshStatus();
+      },
+    }),
+  );
 
   function warnUnreachableOnce(): void {
     if (warnedUnreachable) {
