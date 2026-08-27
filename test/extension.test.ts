@@ -12,7 +12,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LoadConfigResult } from "#src/config-loader";
-import { createClassifierExtension } from "#src/extension";
+import {
+  type ClassifierDependencies,
+  createClassifierExtension,
+} from "#src/extension";
 import piPermissionClassifier from "#src/index";
 import type { CompleteFn } from "#src/model-review";
 import { assistantToolCall } from "#test/fixtures/assistant-message";
@@ -40,15 +43,25 @@ interface FakePi {
     events: { on: ReturnType<typeof vi.fn>; emit: ReturnType<typeof vi.fn> };
     registerFlag: ReturnType<typeof vi.fn>;
     getFlag: ReturnType<typeof vi.fn>;
+    registerCommand: ReturnType<typeof vi.fn>;
   };
+  commands: Map<string, RegisteredCommandOptions>;
+}
+
+interface RegisteredCommandOptions {
+  description?: string;
+  getArgumentCompletions?: (prefix: string) => unknown;
+  handler: (args: string, ctx: unknown) => Promise<void>;
 }
 
 function makeFakePi(): FakePi {
   const lifecycle = new Map<string, (event: unknown, ctx: unknown) => void>();
   const events = new Map<string, (data: unknown) => void>();
+  const commands = new Map<string, RegisteredCommandOptions>();
   return {
     lifecycle,
     events,
+    commands,
     api: {
       on: vi.fn(
         (name: string, handler: (event: unknown, ctx: unknown) => void) => {
@@ -64,6 +77,11 @@ function makeFakePi(): FakePi {
       },
       registerFlag: vi.fn(),
       getFlag: vi.fn(() => undefined),
+      registerCommand: vi.fn(
+        (name: string, options: RegisteredCommandOptions) => {
+          commands.set(name, options);
+        },
+      ),
     },
   };
 }
@@ -106,8 +124,9 @@ function ctxWithModel() {
         ok: true as const,
         apiKey: "sk-test",
       })),
+      hasConfiguredAuth: vi.fn(() => true),
     },
-    ui: { setStatus: vi.fn() },
+    ui: { setStatus: vi.fn(), notify: vi.fn() },
   };
 }
 
@@ -162,11 +181,16 @@ const READY_EVENT_NO_ID = { sessionId: null, adjudicatesLocally: true };
 
 function start(
   pi: FakePi,
-  overrides: { loadConfig?: () => LoadConfigResult; complete?: CompleteFn } = {},
+  overrides: {
+    loadConfig?: () => LoadConfigResult;
+    complete?: CompleteFn;
+    writeJudge?: ClassifierDependencies["writeJudge"];
+  } = {},
 ) {
   createClassifierExtension(pi.api as never, {
     loadConfig: overrides.loadConfig ?? (() => CONFIG_RESULT),
     complete: overrides.complete ?? vi.fn(),
+    writeJudge: overrides.writeJudge ?? vi.fn(),
   });
 }
 
@@ -467,9 +491,10 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const complete = allowingComplete();
     const loadConfig = vi.fn(() => CONFIG_QN_RESULT);
+    const writeJudge = vi.fn();
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("p/m");
-    start(pi, { complete, loadConfig });
+    start(pi, { complete, loadConfig, writeJudge });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -480,6 +505,7 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
     expect(loadConfig).toHaveBeenCalledTimes(1);
+    expect(writeJudge).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -505,9 +531,10 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
   it("an unknown flag value warns once and the config judge applies", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const complete = allowingComplete();
+    const writeJudge = vi.fn();
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("nope/x");
-    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT, writeJudge });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -515,6 +542,7 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("nope/x");
+    expect(writeJudge).not.toHaveBeenCalled();
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
@@ -538,6 +566,50 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
   });
 });
 
+describe("/permission-model command wiring (REQ-01, REQ-17, REQ-20)", () => {
+  it("registers the command once with a description, completion hook, and handler", () => {
+    const pi = makeFakePi();
+    start(pi);
+    expect(pi.api.registerCommand).toHaveBeenCalledTimes(1);
+    expect(pi.api.registerCommand).toHaveBeenCalledWith(
+      "permission-model",
+      expect.objectContaining({
+        description: expect.any(String),
+        getArgumentCompletions: expect.any(Function),
+        handler: expect.any(Function),
+      }),
+    );
+  });
+
+  it("a typed choice writes global, replaces the flag override, refreshes the status, and judges the next ask", async () => {
+    const complete = allowingComplete();
+    const writeJudge = vi.fn();
+    const loadConfig = vi
+      .fn<() => LoadConfigResult>()
+      .mockReturnValueOnce(CONFIG_RESULT)
+      .mockReturnValue(CONFIG_QN_RESULT);
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("p/m");
+    start(pi, { complete, loadConfig, writeJudge });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:p/m");
+
+    await pi.commands.get("permission-model")?.handler("q/n", ctx);
+
+    expect(writeJudge).toHaveBeenCalledTimes(1);
+    expect(writeJudge).toHaveBeenCalledWith("q", "n");
+    expect(loadConfig).toHaveBeenCalledTimes(2);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.any(String), "info");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
+});
+
 describe("default export", () => {
   it("wires the extension lifecycle handlers", () => {
     const pi = makeFakePi();
@@ -546,6 +618,7 @@ describe("default export", () => {
       "permission-model",
       expect.objectContaining({ type: "string" }),
     );
+    expect(pi.commands.has("permission-model")).toBe(true);
     expect(pi.lifecycle.has("session_start")).toBe(true);
     expect(pi.lifecycle.has("model_select")).toBe(true);
     expect(pi.lifecycle.has("session_shutdown")).toBe(true);
