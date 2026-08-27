@@ -22,6 +22,12 @@ defer. More prompting, never less.
   active in the same session (the classifier resolves the permission service
   through the session-keyed locator introduced in 27.0.0; with an older
   version it warns once and registers nothing)
+- pi 0.84.3 or newer for the searchable `/permission-model` picker, declared
+  as the `@earendil-works/pi-coding-agent >=0.84.3` peer dependency: the
+  selector component that picker mounts changed constructor shape in 0.84.3,
+  so on an older pi the command errors before the picker mounts - nothing is
+  written, the judge keeps reviewing, and the typed and `session` forms still
+  work. Everything else needs only the permission-system floor above.
 - Node 22 or newer
 - No build step: pi loads `src/index.ts` directly
 
@@ -184,9 +190,13 @@ change it:
   picker (the same list as `/model`, scoped models included) with the
   current judge preselected. Pick a model to make it the judge; cancel to
   change nothing. Outside the TUI (rpc, json, print modes) the command
-  prints the current judge and the usage line instead. If your pi version
-  does not expose the registry runtime the picker needs, the command warns
-  that the picker degraded and offers a plain list of `provider/id` labels.
+  prints the current judge and the usage line instead. The searchable picker
+  needs pi 0.84.3 or newer (`@earendil-works/pi-coding-agent >=0.84.3`): its
+  constructor changed in 0.84.3, so on an older pi the command errors before
+  the picker mounts, writes nothing, and leaves the judge on its previous
+  rule - loud and safe, not a silent fallback. If your pi version does not
+  expose the registry runtime the picker needs, the command warns that the
+  picker degraded and offers a plain list of `provider/id` labels.
 - `/permission-model <provider>/<id>` sets the judge by reference. The pair
   must be in pi's model registry: an unknown pair is rejected and nothing
   changes. A known model without configured auth is accepted with a
