@@ -107,6 +107,32 @@ describe("operator docs", () => {
     expect(readme).toMatch(/operator|you run|run yourself|steps the user runs/i);
   });
 
+  it("documents the judge picker, the launch flag, and the status states (REQ-24)", () => {
+    for (const claim of [
+      "/permission-model",
+      "--permission-model",
+      "judge:session",
+      "(unresolved)",
+      "shadow",
+    ]) {
+      expect(readme).toContain(claim);
+    }
+  });
+
+  it("the project guide lists the command and judge modules in Layout (REQ-24)", () => {
+    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
+    expect(guide).toContain("src/command.ts");
+    expect(guide).toContain("src/judge.ts");
+  });
+
+  it("README.md and CLAUDE.md are ASCII only", () => {
+    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
+    // eslint-disable-next-line no-control-regex
+    expect(readme).not.toMatch(/[^\x00-\x7F]/);
+    // eslint-disable-next-line no-control-regex
+    expect(guide).not.toMatch(/[^\x00-\x7F]/);
+  });
+
   it("ships a config example that validates against the schema", () => {
     const example = JSON.parse(
       readFileSync(join(ROOT, "config", "config.example.json"), "utf-8"),
