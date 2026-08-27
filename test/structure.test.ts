@@ -28,6 +28,17 @@ function importsOf(source: string): string[] {
   return [...source.matchAll(/from "([^"]+)"/g)].map((match) => match[1]!);
 }
 
+/** Numeric `major.minor.patch >= floor`, without a semver dependency. */
+function atLeast(version: string, floor: [number, number, number]): boolean {
+  const parts = version.split(".").map((part) => Number(part) || 0);
+  for (let index = 0; index < floor.length; index++) {
+    const got = parts[index] ?? 0;
+    const want = floor[index]!;
+    if (got !== want) return got > want;
+  }
+  return true;
+}
+
 describe("no path-based allow capping in link code (REQ-07)", () => {
   it.each(["reviewer.ts", "model-review.ts", "breaker.ts", "prompt.ts"])(
     "%s decides without filesystem or cwd inspection",
@@ -75,12 +86,29 @@ describe("no output channels beyond the seams (REQ-15)", () => {
   });
 });
 
-describe("manifest (REQ-16)", () => {
+describe("manifest (REQ-16, REQ-25)", () => {
+  const manifest = JSON.parse(
+    readFileSync(join(ROOT, "package.json"), "utf-8"),
+  ) as {
+    pi?: { extensions?: string[] };
+    peerDependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+
   it("declares the pi extension entry pointing at TypeScript source", () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, "package.json"), "utf-8"),
-    ) as { pi?: { extensions?: string[] } };
     expect(manifest.pi?.extensions).toEqual(["./src/index.ts"]);
+  });
+
+  it("declares the pi floor the searchable picker's constructor needs (REQ-25)", () => {
+    expect(manifest.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe(
+      ">=0.84.3",
+    );
+    // The dev pin the typings were checked against must satisfy that floor.
+    const pinned = (
+      manifest.devDependencies?.["@earendil-works/pi-coding-agent"] ?? ""
+    ).replace(/^[~^v>=]*/, "");
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(atLeast(pinned, [0, 84, 3])).toBe(true);
   });
 });
 
@@ -105,6 +133,28 @@ describe("operator docs", () => {
     expect(readme).toContain("settings.json");
     expect(readme).toContain("authorizerChain");
     expect(readme).toMatch(/operator|you run|run yourself|steps the user runs/i);
+  });
+
+  it("states the pi 0.84.3 picker floor in Requirements and the picker paragraph (REQ-25)", () => {
+    const flat = readme.replace(/\s+/g, " ");
+    const requirements = readme.slice(
+      readme.indexOf("## Requirements"),
+      readme.indexOf("## Setup"),
+    );
+    const picker = readme
+      .slice(readme.indexOf("with no argument opens"))
+      .split("\n- ")[0]!;
+
+    const flatRequirements = requirements.replace(/\s+/g, " ");
+    const flatPicker = picker.replace(/\s+/g, " ");
+    for (const section of [flatRequirements, flatPicker]) {
+      expect(section).toContain("0.84.3 or newer");
+      // Stated as loud and safe: the command fails before the picker mounts.
+      expect(section).toContain("before the picker mounts");
+    }
+    expect(flat).toContain("@earendil-works/pi-coding-agent >=0.84.3");
+    // Degradation is reserved for the runtime-shape case, not the version floor.
+    expect(flat).toMatch(/does not expose\s+the registry runtime/);
   });
 
   it("documents the judge picker, the launch flag, and the status states (REQ-24)", () => {
