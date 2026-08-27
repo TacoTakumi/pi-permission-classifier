@@ -84,25 +84,19 @@ export interface CommandRegistryLike {
   getAvailable(): Model<any>[];
 }
 
-/** The slice of pi's command context the handler reads. */
+/**
+ * The slice of pi's command context the handler reads. `ui` is pi's own type
+ * projected with `Pick`, so a pi signature change to `notify`, `select` or
+ * `custom` is a compile error here instead of a runtime failure in the picker
+ * (a hand copy would be compared bivariantly and drift silently).
+ */
 export interface CommandContextLike {
   cwd: string;
   mode: "tui" | "rpc" | "json" | "print";
   model: Model<any> | undefined;
   modelRegistry: CommandRegistryLike;
   scopedModels: readonly ScopedModel[];
-  ui: {
-    notify(message: string, type?: "info" | "warning" | "error"): void;
-    select(title: string, options: string[]): Promise<string | undefined>;
-    custom<T>(
-      factory: (
-        tui: PickerTui,
-        theme: unknown,
-        keybindings: unknown,
-        done: (result: T) => void,
-      ) => PickerComponent,
-    ): Promise<T>;
-  };
+  ui: Pick<ExtensionUIContext, "notify" | "select" | "custom">;
 }
 
 /** Everything the picker component is built from. */
