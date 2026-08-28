@@ -19,7 +19,7 @@
  * `model_select`, so with no config override the judge is always the model
  * the session is actually running.
  *
- * Once the link registers, the footer status `permission-classifier` names
+ * Once the link registers, the footer status `zz-permission-classifier` names
  * the effective judge (see `judge.ts`); it follows `model_select` and is
  * cleared at `session_shutdown`. No status is set when the link does not
  * register.
@@ -79,8 +79,9 @@ import {
 /** The operator-facing chain-link name referenced from `authorizerChain`. */
 const LINK_NAME = "classifier";
 
-/** The footer status key naming the effective judge. */
-const STATUS_KEY = "permission-classifier";
+/** The footer status key naming the effective judge. pi sorts extension
+ * statuses by key on one footer line; the `zz-` prefix keeps this entry last. */
+const STATUS_KEY = "zz-permission-classifier";
 
 /** The launch flag carrying a session-only judge override. */
 const FLAG_NAME = "permission-model";

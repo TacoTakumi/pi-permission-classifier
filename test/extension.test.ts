@@ -157,7 +157,7 @@ function ctxWithModel() {
   };
 }
 
-const STATUS_KEY = "permission-classifier";
+const STATUS_KEY = "zz-permission-classifier";
 
 const CONFIG_PM_RESULT: LoadConfigResult = {
   config: { ...CONFIG_RESULT.config!, provider: "p", model: "m" },

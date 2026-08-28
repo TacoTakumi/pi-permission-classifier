@@ -55,7 +55,7 @@ and installing it grants it no authority until you name it in the chain.
    Order matters: pi runs `session_start` handlers in package order, and
    `pi-permission-system` emits its `permissions:ready` event from its own
    `session_start`. With the classifier listed first, the link and the
-   `permission-classifier` footer entry are in place at startup. Listed
+   `zz-permission-classifier` footer entry are in place at startup. Listed
    after it, the classifier misses that first ready event and registers
    at the next one, so the link and the footer entry appear only after the
    first agent turn (asks are still reviewed, since they happen inside
@@ -273,7 +273,9 @@ the rest of that session.
 ### The status bar entry
 
 Once the link registers, the footer shows the effective judge under the
-key `permission-classifier`, in one of three states:
+key `zz-permission-classifier`, in one of three states (pi sorts extension
+statuses by key on one footer line; the `zz-` prefix keeps the judge entry
+last, at the end of that line):
 
 - `judge:<provider>/<id>` - a configured or flag-set judge
 - `judge:session` - the session's active model judges
