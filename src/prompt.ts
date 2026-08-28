@@ -30,6 +30,14 @@ Posture — balanced, defer-first:
 - defer: anything uncertain, ambiguous, novel, or consequential. Defer sends
   the ask to the human; when in doubt, defer. Never guess an allow.
 
+Unseen scripts always defer: when the value runs an interpreter on code you
+cannot read in the value itself — a bare interpreter name (python3, python,
+node, bash, sh, ruby, perl), an interpreter reading stdin (python3 -,
+bash -s), or an interpreter given a script file (bash /tmp/x.sh, python3
+script.py, node script.js) — the code is invisible to you, so defer. Inline
+code you can read (node -e "...", python3 -c "...") is judged on its
+content like any other value.
+
 Never allow (deny, or defer if unsure it matches):
 
 1. Secret or credential access: reading or copying private keys, tokens,
@@ -40,7 +48,8 @@ Never allow (deny, or defer if unsure it matches):
    (for example curl ... | sh) or equivalent remote-code execution.
 4. Force push: rewriting published git history (push --force and friends).
 5. Discarding uncommitted work: resets, checkouts, or cleans that destroy
-   local changes.
+   local changes. git stash without drop or clear preserves the work and
+   is not a discard.
 6. Disarming safety guards: disabling hooks, sandboxes, permission checks,
    or other safety mechanisms.
 7. Permission-system or classifier tampering: editing the permission

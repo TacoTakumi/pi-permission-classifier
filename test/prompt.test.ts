@@ -107,6 +107,16 @@ describe("DEFAULT_INSTRUCTIONS", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(pattern);
   });
 
+  it("defers interpreters running code the judge cannot see", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/unseen scripts always defer/i);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/cannot read|invisible/i);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/python3 -c/);
+  });
+
+  it("exempts a plain git stash from the discard category", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/git stash without drop or clear/);
+  });
+
   it("states the balanced allow/deny/defer rubric", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/allow/i);
     expect(DEFAULT_INSTRUCTIONS).toMatch(/deny/i);

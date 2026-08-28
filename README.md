@@ -166,7 +166,41 @@ list covers secret/credential access, exfiltration, pipe-to-shell installs,
 force push, discarding uncommitted work, disarming safety guards, and edits
 to the permission system's or the classifier's own config and logs.
 
+Two refinements come from field use. Scripts the judge cannot see always
+defer: the gate hands the judge the executed command, not a heredoc body or
+a script file, so a bare `python3`, `python3 - <<'EOF'`, or `bash
+/tmp/run.sh` reaches the judge as an opaque interpreter call. Inline code
+(`node -e`, `python3 -c`) is visible and judged on its content. And a plain
+`git stash` (no `drop` or `clear`) is not treated as discarding work.
+
 Set `instructions` to replace the rubric wholesale with your own.
+
+### Config suggestions
+
+The judge decides only what the pi-permission-system policy sends to
+`ask`. A few policy choices, learned from the review log, keep the judge
+useful and cheap:
+
+- Allow the commands you run all day with static rules instead of a judge
+  call each time: `npm run *`, `npm test*`, `npx vitest*`, `npx tsc*`. In
+  one logged day the judge allowed these 30-plus times at 2-5 s each. Do
+  not allow `npx *` broadly; it downloads and runs packages.
+- Remember that `*` crosses `/` in bash patterns. `rm -rf /*` denies every
+  absolute-path `rm -rf`, including `/tmp/scratch`; write the exact
+  `rm -rf /` instead and let the judge see the rest. The same applies to
+  `rm -rf ~/*`.
+- Send `find *-exec*` to `ask` rather than `deny`. The judge receives the
+  executed unit (`cat {}`) and allows read-only uses.
+- Turn reasoning off on a local judge (llama-server `--reasoning-budget 0`,
+  or `"enable_thinking": false` in the chat template kwargs). A thinking
+  block of 250 tokens costs 2-5 s on a small GPU and hits the 5000 ms
+  budget on long asks; without it a verdict returns in under 1 s with the
+  same verdicts on the same asks.
+- Read the decision trail. The permission system's review log
+  (`logs/pi-permission-system-permission-review.jsonl`) records one
+  `classifier.decision` entry per reviewed ask with the verdict, defer
+  reason, and latency. A run of `defer` with reason `timeout` means the
+  model, not the rubric, needs attention.
 
 ### Choosing surfaces
 
