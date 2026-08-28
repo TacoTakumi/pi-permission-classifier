@@ -308,13 +308,20 @@ export function createPermissionModelCommand(
 
   /** The degraded picker: a plain list of `provider/id` labels. */
   async function pickFromList(ctx: CommandContextLike): Promise<void> {
+    const labels = ctx.modelRegistry
+      .getAvailable()
+      .map((model) => `${model.provider}/${model.id}`);
+    if (labels.length === 0) {
+      ctx.ui.notify(
+        "No models are available to pick from. Nothing changed.",
+        "warning",
+      );
+      return;
+    }
     ctx.ui.notify(
       "The model picker degraded to a plain list: this pi version does not expose the registry runtime the searchable selector needs.",
       "warning",
     );
-    const labels = ctx.modelRegistry
-      .getAvailable()
-      .map((model) => `${model.provider}/${model.id}`);
     const chosen = await ctx.ui.select("Permission judge model", labels);
     // Labels are built as provider/id above, so the parse cannot fail.
     const pair = chosen === undefined ? undefined : parseJudgePair(chosen);

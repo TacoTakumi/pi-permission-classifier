@@ -497,6 +497,21 @@ describe("degraded picker without a runtime shape (REQ-10, REQ-22)", () => {
     expect(state.config).toEqual(before);
   });
 
+  it("with no available models notifies a warning instead of opening an empty list (T-23)", async () => {
+    const { state, deps } = makeDeps(CONFIG_QN);
+    const before = structuredClone(state.config);
+    const ctx = makeCtx("tui", { runtime: false });
+    ctx.modelRegistry.getAvailable.mockReturnValue([]);
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(ctx.ui.custom).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["warning"]);
+    expect(notifyOf(ctx, "warning")).toMatch(/no models are available/i);
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+  });
+
   it("a runtime without getAvailableSnapshot counts as no runtime", async () => {
     const { deps } = makeDeps(CONFIG_QN);
     const ctx = makeCtx("tui", { runtime: false });
