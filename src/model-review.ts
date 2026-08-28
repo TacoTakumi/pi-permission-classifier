@@ -165,6 +165,16 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
       headers: inputs.headers,
       toolChoice: forcedToolChoice(inputs.model.api),
     });
+    // pi-ai resolves (not rejects) with the partial message on abort, so a
+    // deadline hit surfaces here as a reply with no tool call. Read the
+    // signal first so the trail says `timeout`, and the breaker counts it.
+    if (controller.signal.aborted) {
+      return {
+        verdict: { kind: "defer" },
+        deferReason: "timeout",
+        latencyMs: Date.now() - startedAt,
+      };
+    }
     return readToolCallOutcome(reply, Date.now() - startedAt);
   } catch {
     return {

@@ -215,4 +215,30 @@ describe("reviewAsk", () => {
     expect(outcome.verdict).toEqual({ kind: "defer" });
     expect(outcome.deferReason).toBe("timeout");
   });
+
+  it("reports timeout, not no-tool-call, when the aborted call resolves with a partial reply", async () => {
+    vi.useFakeTimers();
+    // pi-ai's `complete` resolves with the partial message on abort rather
+    // than rejecting; the partial reply carries thinking text and no tool call.
+    const complete: CompleteFn = vi.fn(
+      (_model, _context, options) =>
+        new Promise<AssistantMessage>((resolve) => {
+          options?.signal?.addEventListener("abort", () => {
+            resolve(assistantText("Let me think about this ask..."));
+          });
+        }),
+    );
+    const config = classifierConfigSchema.parse({ timeoutMs: 1000 });
+    const promise = reviewAsk({
+      details: askDetails(),
+      config,
+      model: MODEL,
+      complete,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    const outcome = await promise;
+    expect(outcome.verdict).toEqual({ kind: "defer" });
+    expect(outcome.deferReason).toBe("timeout");
+    expect(outcome.rawReply).toBeUndefined();
+  });
 });
