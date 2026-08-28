@@ -1,6 +1,6 @@
 {
   "name": "pi-permission-classifier",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Auto-classifier Authorizer chain link for pi-permission-system: a light model reviews each ask and returns allow, deny, or defer",
   "type": "module",
   "license": "MIT",
