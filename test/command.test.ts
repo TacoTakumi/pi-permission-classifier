@@ -19,7 +19,11 @@ const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
 const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
 
-const EMPTY_CONFIG: ClassifierConfig = { surfaces: ["bash"], timeoutMs: 5000 };
+const EMPTY_CONFIG: ClassifierConfig = {
+  surfaces: ["bash"],
+  timeoutMs: 5000,
+  contextBudgetBytes: 8192,
+};
 const CONFIG_QN: ClassifierConfig = { ...EMPTY_CONFIG, provider: "q", model: "n" };
 
 const GLOBAL_PATH = "/agent/extensions/pi-permission-classifier/config.json";

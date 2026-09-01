@@ -5,6 +5,16 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-31
+
+### Added
+
+- `contextBudgetBytes` config field: a positive integer capping the
+  extracted full-command context in UTF-8 bytes, default `8192`. It
+  merges like every other field (project overrides global). An ask whose
+  context exceeds the budget defers before any model call; context is
+  never truncated to fit.
+
 ## [0.3.0] - 2026-08-28
 
 ### Added

@@ -29,6 +29,7 @@ const CONFIG_RESULT: LoadConfigResult = {
   config: {
     surfaces: ["bash", "mcp", "skill", "tool", "read", "write", "edit"],
     timeoutMs: 5000,
+    contextBudgetBytes: 8192,
   },
   issues: [],
   projectSetsJudge: false,

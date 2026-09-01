@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLASSIFIER_EXTENSION_ID,
   classifierConfigSchema,
+  DEFAULT_CONTEXT_BUDGET_BYTES,
   DEFAULT_SURFACES,
   DEFAULT_TIMEOUT_MS,
 } from "#src/config-schema";
@@ -20,6 +21,7 @@ describe("classifierConfigSchema", () => {
       "edit",
     ]);
     expect(parsed.timeoutMs).toBe(5000);
+    expect(parsed.contextBudgetBytes).toBe(8192);
     expect(parsed.provider).toBeUndefined();
     expect(parsed.model).toBeUndefined();
     expect(parsed.instructions).toBeUndefined();
@@ -36,6 +38,7 @@ describe("classifierConfigSchema", () => {
       "edit",
     ]);
     expect(DEFAULT_TIMEOUT_MS).toBe(5000);
+    expect(DEFAULT_CONTEXT_BUDGET_BYTES).toBe(8192);
   });
 
   it("rejects a provider without a model", () => {
@@ -78,6 +81,19 @@ describe("classifierConfigSchema", () => {
     const result = classifierConfigSchema.safeParse({ timeoutMs });
     expect(result.success).toBe(false);
   });
+
+  it("accepts a positive integer contextBudgetBytes override", () => {
+    const parsed = classifierConfigSchema.parse({ contextBudgetBytes: 2048 });
+    expect(parsed.contextBudgetBytes).toBe(2048);
+  });
+
+  it.each([0, -1, 1.5, "8192"])(
+    "rejects contextBudgetBytes %p",
+    (contextBudgetBytes) => {
+      const result = classifierConfigSchema.safeParse({ contextBudgetBytes });
+      expect(result.success).toBe(false);
+    },
+  );
 });
 
 describe("extension id", () => {
