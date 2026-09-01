@@ -9,9 +9,7 @@ import type {
 } from "@gotgenes/pi-permission-system";
 import {
   publishPermissionsService,
-  publishRootPermissionsService,
   unpublishPermissionsService,
-  unpublishRootPermissionsService,
 } from "@gotgenes/pi-permission-system";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -361,10 +359,10 @@ describe("createClassifierExtension", () => {
   });
 
   it("warns once per session and registers nothing on a keyed locator miss", () => {
-    // Only the deprecated root slot is populated — the classifier must not
-    // resolve it, so this is a locator miss for the session key.
-    const rootService = makeService();
-    publishRootPermissionsService(rootService);
+    // Only a foreign session key is populated — the classifier must resolve
+    // its own session's service or none, so this is a locator miss.
+    const otherService = makeService();
+    publishPermissionsService("other-session", otherService);
     try {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const pi = makeFakePi();
@@ -372,11 +370,11 @@ describe("createClassifierExtension", () => {
       pi.lifecycle.get("session_start")?.({}, ctxWithModel());
       pi.events.get(READY_CHANNEL)?.(READY_EVENT);
       pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-      expect(rootService.registerAuthorizer).not.toHaveBeenCalled();
+      expect(otherService.registerAuthorizer).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]?.[0]).toMatch(/27\.0\.0/);
     } finally {
-      unpublishRootPermissionsService(rootService);
+      unpublishPermissionsService("other-session", otherService);
     }
   });
 
