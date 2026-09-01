@@ -10,8 +10,10 @@
  *      surfaces anyway, so the classifier never attempts them),
  *   3. the surface is in the effective reviewed set (else defer, silently —
  *      not our surface),
- *   4. the judge model and its auth resolve (else defer, recorded),
- *   5. the model reviews the ask facts and its verdict is returned uncapped.
+ *   4. the extracted full-command context fits `contextBudgetBytes` (else
+ *      defer, recorded — over-budget context is never rendered, REQ-07),
+ *   5. the judge model and its auth resolve (else defer, recorded),
+ *   6. the model reviews the ask facts and its verdict is returned uncapped.
  *
  * Every failure path defers — more prompting, never less (ADR 0007
  * invariant). Each reviewed ask writes exactly one `classifier.decision`
@@ -29,6 +31,7 @@ import type {
 
 import { CircuitBreaker } from "./breaker";
 import type { ClassifierConfig } from "./config-schema";
+import { extractFullCommandContext, type FullCommandContext } from "./context";
 import { type CompleteFn, reviewAsk } from "./model-review";
 
 /** Surfaces the engine caps to defer; the classifier never even asks. */
@@ -46,7 +49,8 @@ type PreModelDeferReason =
   | "no-config"
   | "model-unresolved"
   | "auth-failed"
-  | "breaker-open";
+  | "breaker-open"
+  | "context-over-budget";
 
 /** Model-call outcomes that count against the circuit breaker. */
 const BREAKER_FAILURE_REASONS = new Set(["timeout", "call-failed"]);
@@ -105,6 +109,7 @@ export function createClassifierReviewer(
       // rejecting instead of returning ok:false, a malformed details bag,
       // even the log itself — the ask defers (more prompting, never less).
       try {
+        const context = extractFullCommandContext(details.payload);
         log.review(DECISION_EVENT, {
           requestId: details.requestId,
           surface: gateSurfaceOf(details) ?? null,
@@ -114,6 +119,7 @@ export function createClassifierReviewer(
           latencyMs: null,
           verdict: "defer",
           deferReason: "internal-error",
+          ...contextFields(false, context),
         });
       } catch {
         // The log failed too; there is nothing left to record on.
@@ -132,6 +138,7 @@ async function decide(
   const { requestId } = details;
   const surface = gateSurfaceOf(details);
   const value = details.payload.request.value;
+  const context = extractFullCommandContext(details.payload);
 
   const config = deps.getConfig();
   if (!config) {
@@ -141,6 +148,7 @@ async function decide(
       value,
       modelId: null,
       deferReason: "no-config",
+      context,
     });
   }
 
@@ -168,6 +176,21 @@ async function decide(
     return { kind: "defer" };
   }
 
+  // The budget gate (REQ-07): an over-budget full command is never rendered,
+  // not even truncated — the ask defers to the human with the measurements on
+  // record. Decided before the breaker and model stages: it is a property of
+  // the ask and the config alone.
+  if (context !== null && context.bytes > config.contextBudgetBytes) {
+    return deferWith(log, {
+      requestId,
+      surface,
+      value,
+      modelId: null,
+      deferReason: "context-over-budget",
+      context,
+    });
+  }
+
   if (breaker.isOpen()) {
     return deferWith(log, {
       requestId,
@@ -175,6 +198,7 @@ async function decide(
       value,
       modelId: null,
       deferReason: "breaker-open",
+      context,
     });
   }
 
@@ -193,6 +217,7 @@ async function decide(
           ? `${config.provider}/${config.model}`
           : null,
       deferReason: "model-unresolved",
+      context,
     });
   }
   const modelId = `${model.provider}/${model.id}`;
@@ -205,6 +230,7 @@ async function decide(
       value,
       modelId,
       deferReason: "auth-failed",
+      context,
     });
   }
 
@@ -215,6 +241,7 @@ async function decide(
     complete: deps.complete,
     apiKey: auth.apiKey,
     headers: auth.headers,
+    context,
   });
   if (
     outcome.deferReason !== undefined &&
@@ -240,6 +267,7 @@ async function decide(
     latencyMs: outcome.latencyMs,
     verdict: outcome.verdict.kind,
     deferReason: outcome.deferReason ?? null,
+    ...contextFields(context !== null, context),
   });
   // Returned uncapped: the engine envelope, not this link, owns any
   // downgrade (REQ-07).
@@ -259,6 +287,7 @@ function deferWith(
     value: string;
     modelId: string | null;
     deferReason: PreModelDeferReason;
+    context: FullCommandContext | null;
   },
 ): AuthorizerVerdict {
   log.review(DECISION_EVENT, {
@@ -270,8 +299,29 @@ function deferWith(
     latencyMs: null,
     verdict: "defer",
     deferReason: entry.deferReason,
+    ...contextFields(false, entry.context),
   });
   return { kind: "defer" };
+}
+
+/**
+ * The three context fields every decision entry carries (REQ-08). Only the
+ * measurements are logged — bytes and a hash prefix — never the text, so the
+ * review log stays free of command content beyond the gated value itself.
+ */
+function contextFields(
+  included: boolean,
+  context: FullCommandContext | null,
+): {
+  contextIncluded: boolean;
+  contextBytes: number | null;
+  contextHash: string | null;
+} {
+  return {
+    contextIncluded: included,
+    contextBytes: context?.bytes ?? null,
+    contextHash: context?.hash12 ?? null,
+  };
 }
 
 /**
