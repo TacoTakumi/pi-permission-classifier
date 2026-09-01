@@ -91,8 +91,14 @@ and installing it grants it no authority until you name it in the chain.
        ~/.pi/agent/extensions/pi-permission-system/logs/pi-permission-system-permission-review.jsonl
 
    Each entry records request id, surface, value, model id, latency,
-   verdict, and defer reason. Enable `debugLog` in the permission system
-   config to also capture raw model replies and short-circuit traces.
+   verdict, defer reason, and three context fields: `contextIncluded`
+   (true only when a full command was rendered to the judge),
+   `contextBytes` (its UTF-8 byte length, null when absent), and
+   `contextHash` (first 12 hex chars of its sha256, null when absent).
+   The full-command text itself is never logged. An over-budget context
+   defers with reason `context-over-budget` before any model call.
+   Enable `debugLog` in the permission system config to also capture raw
+   model replies and short-circuit traces.
 
 To disable, remove `classifier` from `authorizerChain` (or remove the
 package entry). The previous prompting behavior returns immediately.

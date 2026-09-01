@@ -9,11 +9,25 @@ this project adheres to
 
 ### Added
 
+- The judge now sees the enclosing full command of a gated bash unit:
+  the bash payload's `full command` evidence entry renders in its own
+  delimited data block in the review prompt, and the ask's nested
+  execution context (command substitution, process substitution,
+  subshell) renders as a fact line. Absent either, the prompt is
+  unchanged. No other evidence, annotation, or preview reaches the
+  judge.
 - `contextBudgetBytes` config field: a positive integer capping the
   extracted full-command context in UTF-8 bytes, default `8192`. It
   merges like every other field (project overrides global). An ask whose
   context exceeds the budget defers before any model call; context is
   never truncated to fit.
+- `context-over-budget` defer reason: an over-budget full command defers
+  pre-model and is never rendered, not even truncated.
+- Three context fields on every `classifier.decision` entry:
+  `contextIncluded` (true only when context was rendered to the judge),
+  `contextBytes` (UTF-8 byte length, null when absent), and
+  `contextHash` (first 12 hex chars of sha256, null when absent). The
+  full-command text is never written to the review log.
 
 ### Changed
 
