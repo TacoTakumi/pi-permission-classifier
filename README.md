@@ -111,6 +111,7 @@ Config files (project overrides global, shallow merge):
 | `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | `bash, mcp, skill, tool, read, write, edit` | The reviewed surfaces. A configured array replaces the default. `path` and `external_directory` are never reviewed. |
 | `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
+| `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer). An ask whose context exceeds the budget defers before any model call; context is never truncated to fit. |
 
 A malformed or invalid config file means the link registers nothing and pi
 logs a warning - the gate falls back to normal prompting.

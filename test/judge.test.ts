@@ -13,7 +13,11 @@ const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>
 const CONFIG_MODEL = { provider: "q", id: "n" } as Model<any>;
 const OVERRIDE_MODEL = { provider: "p", id: "m" } as Model<any>;
 
-const EMPTY_CONFIG: ClassifierConfig = { surfaces: ["bash"], timeoutMs: 5000 };
+const EMPTY_CONFIG: ClassifierConfig = {
+  surfaces: ["bash"],
+  timeoutMs: 5000,
+  contextBudgetBytes: 8192,
+};
 const CONFIG_QN: ClassifierConfig = {
   ...EMPTY_CONFIG,
   provider: "q",

@@ -156,6 +156,20 @@ describe("loadClassifierConfig", () => {
     expect(result.config?.timeoutMs).toBe(250);
   });
 
+  it("lets a project contextBudgetBytes override the global one", () => {
+    writeConfig(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({ contextBudgetBytes: 4096 }),
+    );
+    writeConfig(
+      getProjectConfigPath(cwd),
+      JSON.stringify({ contextBudgetBytes: 1024 }),
+    );
+    const result = loadClassifierConfig({ cwd, agentDir });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.contextBudgetBytes).toBe(1024);
+  });
+
   it("skips malformed JSON with an issue naming the file and never throws", () => {
     const globalPath = getGlobalConfigPath(agentDir);
     writeConfig(globalPath, "{ not json");
