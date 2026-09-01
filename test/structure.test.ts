@@ -74,6 +74,41 @@ describe("no path-based allow capping in link code (REQ-07)", () => {
   });
 });
 
+/**
+ * Whether `source` reads a payload `evidence` member in any code form: member
+ * access, optional or bracket access, a `"evidence"` string key, or a
+ * destructuring read — so a new access cannot hide behind `const { evidence }`.
+ */
+function readsEvidence(source: string): boolean {
+  const forms = [
+    /\.evidence(?![\w$])/, // payload.evidence, payload?.evidence
+    /["'`]evidence["'`]/, // payload["evidence"], key = "evidence"
+    /\{[^{}]*\bevidence\b[^{}]*\}\s*=[^=]/, // const { evidence } = payload
+  ];
+  return forms.some((form) => form.test(source));
+}
+
+describe("scoped evidence read (REQ-03)", () => {
+  it("only context.ts reads payload evidence, pinned to the bash full-command entry", () => {
+    for (const name of LINK_FILES) {
+      const source = src(name);
+      if (name === "context.ts") {
+        expect(readsEvidence(source), "context.ts must read evidence").toBe(
+          true,
+        );
+        // The pin: the one read admits only the bash kind and the
+        // designated label.
+        expect(source).toContain('payload.kind !== "bash"');
+        expect(source).toContain('"full command"');
+      } else {
+        expect(readsEvidence(source), `${name} reads payload evidence`).toBe(
+          false,
+        );
+      }
+    }
+  });
+});
+
 describe("no output channels beyond the seams (REQ-15)", () => {
   it("only config-loader touches the filesystem, and nothing opens the network", () => {
     for (const name of LINK_FILES) {
