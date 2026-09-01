@@ -168,11 +168,17 @@ force push, discarding uncommitted work, disarming safety guards, and edits
 to the permission system's or the classifier's own config and logs.
 
 Two refinements come from field use. Scripts the judge cannot see always
-defer: the gate hands the judge the executed command, not a heredoc body or
-a script file, so a bare `python3`, `python3 - <<'EOF'`, or `bash
-/tmp/run.sh` reaches the judge as an opaque interpreter call. Inline code
-(`node -e`, `python3 -c`) is visible and judged on its content. And a plain
-`git stash` (no `drop` or `clear`) is not treated as discarding work.
+defer: a bare `python3` or `bash /tmp/run.sh` reaches the judge as an
+opaque interpreter call. Inline code (`node -e`, `python3 -c`) is visible
+and judged on its content. And a plain `git stash` (no `drop` or `clear`)
+is not treated as discarding work.
+
+When the ask carries the enclosing full command (a gated unit inside a
+larger command line), the judge reads all of it and allows only when every
+part is clearly benign. An interpreter body visible in the full command -
+a heredoc body or text piped to stdin - counts as inline code and is
+judged on its content; an interpreter run on a script file stays unseen
+and defers.
 
 Set `instructions` to replace the rubric wholesale with your own.
 

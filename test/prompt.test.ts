@@ -217,6 +217,26 @@ describe("DEFAULT_INSTRUCTIONS", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/git stash without drop or clear/);
   });
 
+  it("grounds allow in the whole visible full command (REQ-05)", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/full command/);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/read all of it/i);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/every part is clearly benign/i);
+  });
+
+  it("judges an interpreter body visible in the full command as inline code", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/heredoc/i);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(
+      /visible (in|inside) the full command/i,
+    );
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/inline code/i);
+  });
+
+  it("keeps an interpreter run on a script file unseen and deferring", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(
+      /script file (stays|remains) unseen[^.]*defer/i,
+    );
+  });
+
   it("states the balanced allow/deny/defer rubric", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/allow/i);
     expect(DEFAULT_INSTRUCTIONS).toMatch(/deny/i);
