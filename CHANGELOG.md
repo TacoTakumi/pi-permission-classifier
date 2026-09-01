@@ -15,6 +15,14 @@ this project adheres to
   context exceeds the budget defers before any model call; context is
   never truncated to fit.
 
+### Changed
+
+- The default rubric grounds allow in the whole visible command: when a
+  full command is shown the judge reads all of it and allows only when
+  every part is clearly benign. An interpreter body visible in the full
+  command (heredoc or stdin) is judged as inline code; an interpreter
+  run on a script file stays unseen and defers.
+
 ## [0.3.0] - 2026-08-28
 
 ### Added
