@@ -5,6 +5,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-05
+
+### Changed
+
+- The classifier judges every surface except `path` and
+  `external_directory`, whatever the surface name. The reviewed-surface
+  list and its `bash, mcp, skill, tool, read, write, edit` default are
+  gone, so surfaces added by other extensions (for example `clearthen`)
+  are judged instead of silently deferred.
+- The `surfaces` config field is accepted but ignored. A global or
+  project file that sets it still loads, and pi logs one warning naming
+  the file at config load. `config/config.example.json` drops the field.
+
 ## [0.4.0] - 2026-08-31
 
 ### Added

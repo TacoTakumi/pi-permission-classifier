@@ -74,8 +74,9 @@ and installing it grants it no authority until you name it in the chain.
        mkdir -p ~/.pi/agent/extensions/pi-permission-classifier
        echo '{}' > ~/.pi/agent/extensions/pi-permission-classifier/config.json
 
-   `{}` means: judge with the session's active model, review the default
-   surfaces, 5000 ms timeout, built-in rubric. See `config/config.example.json`
+   `{}` means: judge with the session's active model, judge every surface
+   except `path` and `external_directory`, 5000 ms timeout, built-in
+   rubric. See `config/config.example.json`
    for a version with a dedicated judge model, or pick one later from
    inside pi with `/permission-model` (see "Choosing the judge model").
 
@@ -115,7 +116,7 @@ Config files (project overrides global, shallow merge):
 | `provider` | unset | Judge model provider. Set together with `model`; with neither set, the session's active model judges. |
 | `model` | unset | Judge model id, resolved from the session model registry. Set together with `provider`. |
 | `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
-| `surfaces` | `bash, mcp, skill, tool, read, write, edit` | The reviewed surfaces. A configured array replaces the default. `path` and `external_directory` are never reviewed. |
+| `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface except `path` and `external_directory` is judged. A file that sets it logs one warning at load: `This field is ignored: every surface except path and external_directory is judged.` |
 | `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
 | `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer). An ask whose context exceeds the budget defers before any model call; context is never truncated to fit. |
 
@@ -215,15 +216,16 @@ useful and cheap:
   reason, and latency. A run of `defer` with reason `timeout` means the
   model, not the rubric, needs attention.
 
-### Choosing surfaces
+### Which surfaces are judged
 
-Including `read`/`write`/`edit` lets the model auto-allow file access
-inside the working tree when the per-tool rule falls to `ask`. Your
-cross-cutting `path` and `external_directory` rules still apply, and the
-engine downgrades any link allow on those two surfaces to defer, so the
-classifier can never approve access outside the working directory or to a
-path your policy denies. Remove the three file tools from `surfaces` for a
-more conservative posture.
+The classifier judges every surface except `path` and `external_directory`,
+whatever the surface name, including surfaces added by other extensions.
+There is no surface list to maintain. Your cross-cutting `path` and
+`external_directory` rules still apply, and the engine downgrades any link
+allow on those two surfaces to defer, so the classifier can never approve
+access outside the working directory or to a path your policy denies. To
+keep a tool out of the judge's hands, route it to `allow` or `deny` in the
+permission system policy instead of `ask`.
 
 ## Choosing the judge model
 
@@ -300,8 +302,9 @@ cleared at session shutdown. No entry means the link did not register.
 
 ## How it works
 
-- The classifier only sees asks your policy routed to `ask`, and only on
-  the configured surfaces. Anything else is untouched.
+- The classifier only sees asks your policy routed to `ask`, on every
+  surface except `path` and `external_directory`. Anything else is
+  untouched.
 - For each reviewed ask it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
   provenance) into a prompt. Tool results and file contents never reach
