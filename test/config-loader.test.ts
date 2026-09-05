@@ -125,11 +125,11 @@ describe("loadClassifierConfig", () => {
   it("loads a valid global config", () => {
     writeConfig(
       getGlobalConfigPath(agentDir),
-      JSON.stringify({ surfaces: ["bash"], timeoutMs: 250 }),
+      JSON.stringify({ instructions: "be strict", timeoutMs: 250 }),
     );
     const result = loadClassifierConfig({ cwd, agentDir });
     expect(result.issues).toEqual([]);
-    expect(result.config?.surfaces).toEqual(["bash"]);
+    expect(result.config?.instructions).toBe("be strict");
     expect(result.config?.timeoutMs).toBe(250);
   });
 
@@ -144,16 +144,67 @@ describe("loadClassifierConfig", () => {
   it("lets project config override global config", () => {
     writeConfig(
       getGlobalConfigPath(agentDir),
-      JSON.stringify({ surfaces: ["bash"], timeoutMs: 250 }),
+      JSON.stringify({ instructions: "global", timeoutMs: 250 }),
     );
     writeConfig(
       getProjectConfigPath(cwd),
-      JSON.stringify({ surfaces: ["mcp", "skill"] }),
+      JSON.stringify({ instructions: "project" }),
     );
     const result = loadClassifierConfig({ cwd, agentDir });
     expect(result.issues).toEqual([]);
-    expect(result.config?.surfaces).toEqual(["mcp", "skill"]);
+    expect(result.config?.instructions).toBe("project");
     expect(result.config?.timeoutMs).toBe(250);
+  });
+
+  describe("ignored surfaces field", () => {
+    it("reports one issue naming the global file and still returns the config", () => {
+      const globalPath = getGlobalConfigPath(agentDir);
+      writeConfig(
+        globalPath,
+        JSON.stringify({ surfaces: ["bash"], timeoutMs: 250 }),
+      );
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.config?.timeoutMs).toBe(250);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0]).toMatchObject({
+        path: "surfaces",
+        sourcePath: globalPath,
+      });
+      expect(result.issues[0]?.message).toMatch(/ignored/);
+    });
+
+    it("reports one issue naming the project file when only it sets the field", () => {
+      const projectPath = getProjectConfigPath(cwd);
+      writeConfig(getGlobalConfigPath(agentDir), "{}");
+      writeConfig(projectPath, JSON.stringify({ surfaces: ["mcp"] }));
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.config).toBeDefined();
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0]).toMatchObject({
+        path: "surfaces",
+        sourcePath: projectPath,
+      });
+    });
+
+    it("reports one issue per layer that sets the field", () => {
+      writeConfig(
+        getGlobalConfigPath(agentDir),
+        JSON.stringify({ surfaces: ["bash"] }),
+      );
+      writeConfig(getProjectConfigPath(cwd), JSON.stringify({ surfaces: ["mcp"] }));
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.config).toBeDefined();
+      expect(result.issues.map((issue) => issue.sourcePath)).toEqual([
+        getGlobalConfigPath(agentDir),
+        getProjectConfigPath(cwd),
+      ]);
+    });
+
+    it("reports nothing when no layer sets the field", () => {
+      writeConfig(getGlobalConfigPath(agentDir), JSON.stringify({ timeoutMs: 1 }));
+      const result = loadClassifierConfig({ cwd, agentDir });
+      expect(result.issues).toEqual([]);
+    });
   });
 
   it("lets a project contextBudgetBytes override the global one", () => {
@@ -333,7 +384,8 @@ describe("writeGlobalJudge (REQ-12)", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     writeGlobalJudge(agentDir, "openai", "gpt-5");
     const result = loadClassifierConfig({ cwd: join(root, "project"), agentDir });
-    expect(result.issues).toEqual([]);
+    // The preserved surfaces field is accepted but reported as ignored.
+    expect(result.issues.map((issue) => issue.path)).toEqual(["surfaces"]);
     expect(result.config?.provider).toBe("openai");
     expect(result.config?.model).toBe("gpt-5");
     expect(result.config?.timeoutMs).toBe(750);

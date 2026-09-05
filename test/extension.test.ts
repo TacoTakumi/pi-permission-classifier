@@ -283,6 +283,31 @@ describe("createClassifierExtension", () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it("warns once about an ignored surfaces field and still registers", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () => ({
+        config: CONFIG_RESULT.config,
+        issues: [
+          {
+            path: "surfaces",
+            message: "This field is ignored: every surface is judged.",
+            sourcePath: "/project/.pi/extensions/pi-permission-classifier/config.json",
+          },
+        ],
+        projectSetsJudge: false,
+      }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/surfaces/);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/ignored/);
+  });
+
   it("judges with the session model captured at session_start", async () => {
     const complete = vi.fn<CompleteFn>(async () =>
       assistantToolCall({ verdict: "allow" }),

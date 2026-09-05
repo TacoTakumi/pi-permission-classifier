@@ -97,6 +97,31 @@ function setsJudge(layer: Record<string, unknown> | undefined): boolean {
 }
 
 /**
+ * Fields the schema still accepts but nothing reads. A layer that sets one
+ * gets an issue naming the file, so the operator learns the field does
+ * nothing; the config itself still loads.
+ */
+const IGNORED_FIELDS: Record<string, string> = {
+  surfaces:
+    "This field is ignored: every surface except path and external_directory is judged.",
+};
+
+function reportIgnoredFields(
+  layer: Record<string, unknown> | undefined,
+  sourcePath: string,
+  issues: ConfigIssue[],
+): void {
+  if (layer === undefined) {
+    return;
+  }
+  for (const [field, message] of Object.entries(IGNORED_FIELDS)) {
+    if (field in layer) {
+      issues.push({ path: field, message, sourcePath });
+    }
+  }
+}
+
+/**
  * Read and JSON-parse a layer. Returns `undefined` when the file is absent;
  * records an issue and returns `undefined` when it is present but malformed.
  */
@@ -140,7 +165,9 @@ function readLayer(
  * When neither file exists, returns `{ config: undefined, issues: [] }` — the
  * normal not-configured state, reported without noise. When a present config is
  * invalid, returns `{ config: undefined }` with the validation issues, each
- * naming the layer file(s) that fed the merge.
+ * naming the layer file(s) that fed the merge. A layer that sets an accepted
+ * but ignored field (`surfaces`) adds one issue naming that file while the
+ * config still loads.
  */
 export function loadClassifierConfig(options: {
   cwd: string;
@@ -158,6 +185,9 @@ export function loadClassifierConfig(options: {
   if (global === undefined && project === undefined) {
     return { config: undefined, issues, projectSetsJudge };
   }
+
+  reportIgnoredFields(global, globalPath, issues);
+  reportIgnoredFields(project, projectPath, issues);
 
   // Shallow merge: project scalars and arrays replace global wholesale.
   const merged = { ...(global ?? {}), ...(project ?? {}) };
