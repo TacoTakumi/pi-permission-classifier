@@ -2,7 +2,7 @@
  * The zod source of truth for the classifier extension config.
  *
  * The config carries the model mechanism (provider/model override,
- * instructions, reviewed surfaces, timeout); the chain policy half
+ * instructions, timeout, context budget); the chain policy half
  * (`authorizerChain`, the delegation envelope) lives in
  * `@gotgenes/pi-permission-system`.
  */
@@ -23,21 +23,6 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_CONTEXT_BUDGET_BYTES = 8192;
 
 /**
- * Surfaces the classifier reviews when config sets none. `path` and
- * `external_directory` are deliberately absent: the engine caps any link
- * `allow` on those surfaces to `defer`, so the classifier never attempts them.
- */
-export const DEFAULT_SURFACES: readonly string[] = [
-  "bash",
-  "mcp",
-  "skill",
-  "tool",
-  "read",
-  "write",
-  "edit",
-];
-
-/**
  * Operator-owned config for the auto-classifier reviewer. An absent config
  * file means no registration (fail-safe); an empty object means the defaults
  * below. `provider`/`model` come together or not at all — with neither, the
@@ -48,7 +33,10 @@ export const classifierConfigSchema = z
     provider: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
     instructions: z.string().min(1).optional(),
-    surfaces: z.array(z.string().min(1)).default([...DEFAULT_SURFACES]),
+    // Accepted for backward compatibility and never read: the reviewer
+    // judges every surface except path and external_directory. Kept so an
+    // older config file still parses.
+    surfaces: z.array(z.string().min(1)).optional(),
     timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
     contextBudgetBytes: z
       .number()

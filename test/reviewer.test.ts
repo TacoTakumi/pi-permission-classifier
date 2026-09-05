@@ -89,12 +89,12 @@ describe("surface gating", () => {
 
   it("ignores a config surfaces array: every surface is judged", async () => {
     const complete = completeReporting({ verdict: "allow" });
-    const config = classifierConfigSchema.parse({ surfaces: ["mcp"] });
+    const config = classifierConfigSchema.parse({ surfaces: ["bash"] });
     const authorize = createClassifierReviewer(
       makeDeps({ complete, getConfig: () => config }),
     );
     const verdict = await authorize(
-      askDetails({ surface: "bash" }),
+      askDetails({ surface: "clearthen" }),
       QUERY,
       fakeLog(),
     );
