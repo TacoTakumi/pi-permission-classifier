@@ -137,7 +137,7 @@ describe("loadClassifierConfig", () => {
     writeConfig(getGlobalConfigPath(agentDir), "{}");
     const result = loadClassifierConfig({ cwd, agentDir });
     expect(result.issues).toEqual([]);
-    expect(result.config?.surfaces).toContain("bash");
+    expect(result.config?.surfaces).toBeUndefined();
     expect(result.config?.timeoutMs).toBe(5000);
   });
 

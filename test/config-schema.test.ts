@@ -4,22 +4,13 @@ import {
   CLASSIFIER_EXTENSION_ID,
   classifierConfigSchema,
   DEFAULT_CONTEXT_BUDGET_BYTES,
-  DEFAULT_SURFACES,
   DEFAULT_TIMEOUT_MS,
 } from "#src/config-schema";
 
 describe("classifierConfigSchema", () => {
   it("fills defaults on an empty config", () => {
     const parsed = classifierConfigSchema.parse({});
-    expect(parsed.surfaces).toEqual([
-      "bash",
-      "mcp",
-      "skill",
-      "tool",
-      "read",
-      "write",
-      "edit",
-    ]);
+    expect(parsed.surfaces).toBeUndefined();
     expect(parsed.timeoutMs).toBe(5000);
     expect(parsed.contextBudgetBytes).toBe(8192);
     expect(parsed.provider).toBeUndefined();
@@ -28,15 +19,6 @@ describe("classifierConfigSchema", () => {
   });
 
   it("exposes the defaults as constants", () => {
-    expect(DEFAULT_SURFACES).toEqual([
-      "bash",
-      "mcp",
-      "skill",
-      "tool",
-      "read",
-      "write",
-      "edit",
-    ]);
     expect(DEFAULT_TIMEOUT_MS).toBe(5000);
     expect(DEFAULT_CONTEXT_BUDGET_BYTES).toBe(8192);
   });
@@ -60,9 +42,15 @@ describe("classifierConfigSchema", () => {
     expect(parsed.model).toBe("claude-haiku");
   });
 
-  it("replaces the default surfaces with a configured array", () => {
-    const parsed = classifierConfigSchema.parse({ surfaces: ["bash", "mcp"] });
-    expect(parsed.surfaces).toEqual(["bash", "mcp"]);
+  it("accepts an optional surfaces array without applying any default", () => {
+    const parsed = classifierConfigSchema.parse({ surfaces: ["bash"] });
+    expect(parsed.surfaces).toEqual(["bash"]);
+    expect(classifierConfigSchema.parse({}).surfaces).toBeUndefined();
+  });
+
+  it("rejects an empty string inside surfaces", () => {
+    const result = classifierConfigSchema.safeParse({ surfaces: [""] });
+    expect(result.success).toBe(false);
   });
 
   it("accepts an optional instructions string", () => {
