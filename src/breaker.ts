@@ -28,12 +28,20 @@ export class CircuitBreaker {
   private consecutiveFailures = 0;
   private openedAt: number | undefined;
 
+  /**
+   * Milliseconds of cooldown left: 0 while closed or once the cooldown has
+   * elapsed, else the time until the next ask may try the model again.
+   */
+  remainingMs(): number {
+    if (this.openedAt === undefined) {
+      return 0;
+    }
+    return Math.max(0, BREAKER_COOLDOWN_MS - (Date.now() - this.openedAt));
+  }
+
   /** Whether asks should short-circuit right now (open and cooling down). */
   isOpen(): boolean {
-    return (
-      this.openedAt !== undefined &&
-      Date.now() - this.openedAt < BREAKER_COOLDOWN_MS
-    );
+    return this.remainingMs() > 0;
   }
 
   /**
