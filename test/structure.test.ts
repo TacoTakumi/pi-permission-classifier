@@ -263,6 +263,19 @@ describe("operator docs", () => {
     expect(guide).toContain("src/judge.ts");
   });
 
+  it("the project guide lists the health module and its test in Layout", () => {
+    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
+    expect(guide).toContain("src/health.ts");
+    expect(guide).toContain("test/health.test.ts");
+  });
+
+  it("documents the three footer health suffix states", () => {
+    const flat = readme.replace(/\s+/g, " ");
+    expect(flat).toMatch(/\| <reason> x<N>/);
+    expect(flat).toMatch(/\| defers x<N>/);
+    expect(flat).toMatch(/\| breaker open <S>s/);
+  });
+
   it("README.md and CLAUDE.md are ASCII only", () => {
     const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
     // eslint-disable-next-line no-control-regex
@@ -280,6 +293,26 @@ describe("operator docs", () => {
   });
 });
 
+describe("fail-safe: no failure maps to deny", () => {
+  it("the config schema exposes no field named after deny or failure", () => {
+    const fields = Object.keys(classifierConfigSchema.parse({}));
+    // Every declared field, read from the schema source so an optional field
+    // with no default (absent from the parsed object) is checked too.
+    const declared = [...src("config-schema.ts").matchAll(/^\s+(\w+): z\./gm)].map(
+      (match) => match[1]!,
+    );
+    expect(declared).toContain("surfaces");
+    for (const field of [...fields, ...declared]) {
+      expect(field).not.toMatch(/deny|failure/i);
+    }
+  });
+
+  it("the reviewer never returns deny from a defer site", () => {
+    const source = src("reviewer.ts");
+    expect(source).not.toMatch(/kind:\s*"deny"/);
+  });
+});
+
 describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
   it("covers every module under src/, command and judge included", () => {
     // LINK_FILES is read from src/, so both assertions fail when a module is
@@ -290,8 +323,12 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
     expect(LINK_FILES).toContain("judge.ts");
   });
 
-  it("the command and judge modules import no node: builtins", () => {
-    for (const name of ["command.ts", "judge.ts"]) {
+  it("covers the health module", () => {
+    expect(LINK_FILES).toContain("health.ts");
+  });
+
+  it("the command, judge, and health modules import no node: builtins", () => {
+    for (const name of ["command.ts", "judge.ts", "health.ts"]) {
       const nodeBuiltins = importsOf(src(name)).filter((imported) =>
         imported.startsWith("node:"),
       );

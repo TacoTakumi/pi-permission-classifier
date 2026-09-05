@@ -300,6 +300,27 @@ last, at the end of that line):
 The entry follows `/permission-model` changes and `/model` switches and is
 cleared at session shutdown. No entry means the link did not register.
 
+The judge text carries a health suffix once something went wrong this
+session. It refreshes after every decision, so the footer is the quickest
+read on how often the dialog fell back and why:
+
+- no suffix - no failure defers yet and the breaker is closed
+- ` | <reason> x<N>` - the last decision was a failure defer with that
+  reason (`timeout`, `call-failed`, `context-over-budget`, `no-config`,
+  `model-unresolved`, `auth-failed`, `no-tool-call`,
+  `unrecognized-verdict`, `internal-error`); N is the session's failure
+  defer count
+- ` | defers x<N>` - a later model verdict cleared the reason; the count
+  stays for the session
+- ` | breaker open <S>s` - the circuit breaker is cooling down, S is the
+  remaining whole seconds, counted down once per second; this state wins
+  over the others while it lasts
+
+Model verdicts are not health events: an allow clears the pending reason,
+a deny changes nothing, and neither shows in the footer. The judge's own
+defer verdict counts as a model verdict. Everything resets at session
+shutdown.
+
 ## How it works
 
 - The classifier only sees asks your policy routed to `ask`, on every

@@ -7,6 +7,15 @@ this project adheres to
 
 ## [0.5.0] - 2026-09-05
 
+### Added
+
+- Judge health in the footer. The `zz-permission-classifier` entry
+  appends ` | <reason> x<N>` after a failure defer, ` | defers x<N>`
+  once a later model verdict cleared the reason, and
+  ` | breaker open <S>s` while the circuit breaker cools down, refreshed
+  once per second. Model allow and deny verdicts never show. The record
+  resets at session shutdown.
+
 ### Changed
 
 - The classifier judges every surface except `path` and
