@@ -74,39 +74,32 @@ function decisionEntry(log: ReturnType<typeof fakeLog>) {
 }
 
 describe("surface gating", () => {
-  it("defers an off-list surface with no model call", async () => {
-    const complete = completeReporting({ verdict: "allow" });
-    const authorize = createClassifierReviewer(makeDeps({ complete }));
-    const log = fakeLog();
-    const verdict = await authorize(
-      askDetails({ surface: "fetch" }),
-      QUERY,
-      log,
-    );
-    expect(verdict).toEqual({ kind: "defer" });
-    expect(complete).not.toHaveBeenCalled();
-    expect(decisionEntry(log)).toBeUndefined();
-  });
+  it.each(["bash", "tool", "mcp", "clearthen", "some-arbitrary-surface"])(
+    "sends a %s ask to the model and returns its verdict",
+    async (surface) => {
+      const complete = completeReporting({ verdict: "allow" });
+      const authorize = createClassifierReviewer(makeDeps({ complete }));
+      const log = fakeLog();
+      const verdict = await authorize(askDetails({ surface }), QUERY, log);
+      expect(verdict).toEqual({ kind: "allow" });
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(decisionEntry(log)).toMatchObject({ surface, verdict: "allow" });
+    },
+  );
 
-  it("lets a config surfaces array replace the default set", async () => {
+  it("ignores a config surfaces array: every surface is judged", async () => {
     const complete = completeReporting({ verdict: "allow" });
     const config = classifierConfigSchema.parse({ surfaces: ["mcp"] });
     const authorize = createClassifierReviewer(
       makeDeps({ complete, getConfig: () => config }),
     );
-    const offList = await authorize(
+    const verdict = await authorize(
       askDetails({ surface: "bash" }),
       QUERY,
       fakeLog(),
     );
-    expect(offList).toEqual({ kind: "defer" });
-    expect(complete).not.toHaveBeenCalled();
-    const onList = await authorize(
-      askDetails({ surface: "mcp" }),
-      QUERY,
-      fakeLog(),
-    );
-    expect(onList).toEqual({ kind: "allow" });
+    expect(verdict).toEqual({ kind: "allow" });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   it.each(["path", "external_directory"])(
@@ -114,6 +107,7 @@ describe("surface gating", () => {
     async (gateSurface) => {
       const complete = completeReporting({ verdict: "allow" });
       const authorize = createClassifierReviewer(makeDeps({ complete }));
+      const log = fakeLog();
       const verdict = await authorize(
         askDetails(
           { surface: "read" },
@@ -126,10 +120,11 @@ describe("surface gating", () => {
           },
         ),
         QUERY,
-        fakeLog(),
+        log,
       );
       expect(verdict).toEqual({ kind: "defer" });
       expect(complete).not.toHaveBeenCalled();
+      expect(decisionEntry(log)).toBeUndefined();
     },
   );
 

@@ -7,13 +7,12 @@
  *   1. a config is loaded (else defer, recorded),
  *   2. the gate-authoritative surface is determinable and neither `path` nor
  *      `external_directory` (else defer — the engine caps any allow on those
- *      surfaces anyway, so the classifier never attempts them),
- *   3. the surface is in the effective reviewed set (else defer, silently —
- *      not our surface),
- *   4. the extracted full-command context fits `contextBudgetBytes` (else
+ *      surfaces anyway, so the classifier never attempts them); every other
+ *      surface, whatever its name, is judged,
+ *   3. the extracted full-command context fits `contextBudgetBytes` (else
  *      defer, recorded — over-budget context is never rendered, REQ-07),
- *   5. the judge model and its auth resolve (else defer, recorded),
- *   6. the model reviews the ask facts and its verdict is returned uncapped.
+ *   4. the judge model and its auth resolve (else defer, recorded),
+ *   5. the model reviews the ask facts and its verdict is returned uncapped.
  *
  * Every failure path defers — more prompting, never less (ADR 0007
  * invariant). Each reviewed ask writes exactly one `classifier.decision`
@@ -167,15 +166,6 @@ async function decide(
     });
     return { kind: "defer" };
   }
-  if (!config.surfaces.includes(surface)) {
-    log.debug(SHORT_CIRCUIT_EVENT, {
-      requestId,
-      surface,
-      reason: "off-list-surface",
-    });
-    return { kind: "defer" };
-  }
-
   // The budget gate (REQ-07): an over-budget full command is never rendered,
   // not even truncated — the ask defers to the human with the measurements on
   // record. Decided before the breaker and model stages: it is a property of
