@@ -1,6 +1,7 @@
 import type { AuthorizerLog, PermissionQuery } from "@gotgenes/pi-permission-system";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { BREAKER_COOLDOWN_MS, CircuitBreaker } from "#src/breaker";
 import { classifierConfigSchema } from "#src/config-schema";
 import type { CompleteFn } from "#src/model-review";
 import {
@@ -166,5 +167,38 @@ describe("circuit breaker", () => {
     await authorize(askDetails(), QUERY, log);
     expect(complete).toHaveBeenCalledTimes(3);
     expect(lastDecision(log)?.deferReason).toBe("breaker-open");
+  });
+
+  describe("remainingMs", () => {
+    it("is 0 while closed", () => {
+      const breaker = new CircuitBreaker();
+      expect(breaker.remainingMs()).toBe(0);
+      expect(breaker.isOpen()).toBe(false);
+    });
+
+    it("is the cooldown minus elapsed while open, then 0 after it", () => {
+      const breaker = new CircuitBreaker();
+      const log = fakeLog();
+      for (let i = 0; i < 3; i += 1) {
+        breaker.recordFailure(log, `r${i}`);
+      }
+      expect(breaker.remainingMs()).toBe(BREAKER_COOLDOWN_MS);
+      expect(breaker.isOpen()).toBe(true);
+      vi.advanceTimersByTime(12_500);
+      expect(breaker.remainingMs()).toBe(BREAKER_COOLDOWN_MS - 12_500);
+      vi.advanceTimersByTime(BREAKER_COOLDOWN_MS - 12_500);
+      expect(breaker.remainingMs()).toBe(0);
+      expect(breaker.isOpen()).toBe(false);
+    });
+
+    it("is 0 again after a success closes the breaker", () => {
+      const breaker = new CircuitBreaker();
+      const log = fakeLog();
+      for (let i = 0; i < 3; i += 1) {
+        breaker.recordFailure(log, `r${i}`);
+      }
+      breaker.recordSuccess(log, "r3");
+      expect(breaker.remainingMs()).toBe(0);
+    });
   });
 });
