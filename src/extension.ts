@@ -60,10 +60,12 @@ import {
   loadClassifierConfig,
   writeGlobalJudge,
 } from "./config-loader";
+import { CircuitBreaker } from "./breaker";
 import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
 } from "./config-schema";
+import { formatHealthSuffix, SessionHealth } from "./health";
 import {
   formatJudgeStatus,
   type JudgePair,
@@ -136,6 +138,9 @@ export function createClassifierExtension(
   let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
   let warnedUnreachable = false;
+  /** Per-session judge health and breaker; both start fresh at shutdown. */
+  const health = new SessionHealth();
+  let breaker = new CircuitBreaker();
 
   /**
    * The config the reviewer judges with: the merged config, with the
@@ -168,14 +173,19 @@ export function createClassifierExtension(
     return undefined;
   }
 
-  /** Name the effective judge in the footer; a no-op until the link registers. */
+  /**
+   * Name the effective judge in the footer with the session health suffix;
+   * a no-op until the link registers. Refreshed on judge changes and after
+   * every reviewer outcome.
+   */
   function refreshStatus(): void {
     if (!dispose) {
       return;
     }
     ui?.setStatus(
       STATUS_KEY,
-      formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)),
+      formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
+        formatHealthSuffix(health, breaker.remainingMs()),
     );
   }
 
@@ -251,6 +261,11 @@ export function createClassifierExtension(
       getSessionModel: () => sessionModel,
       getRegistry: () => registry,
       complete,
+      breaker,
+      onOutcome: (outcome) => {
+        health.record(outcome);
+        refreshStatus();
+      },
     });
     dispose = service.registerAuthorizer(LINK_NAME, authorize);
     refreshStatus();
@@ -268,5 +283,7 @@ export function createClassifierExtension(
     ui = undefined;
     override = undefined;
     warnedUnreachable = false;
+    health.reset();
+    breaker = new CircuitBreaker();
   });
 }
