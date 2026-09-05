@@ -420,6 +420,131 @@ describe("createClassifierExtension", () => {
   });
 });
 
+describe("footer health suffix", () => {
+  const failingComplete = () =>
+    vi.fn<CompleteFn>(async () => {
+      throw new Error("model unavailable");
+    });
+  const denyingComplete = () =>
+    vi.fn<CompleteFn>(async () =>
+      assistantToolCall({ verdict: "deny", reason: "no" }),
+    );
+  const fakeLog = () => ({ review: vi.fn(), debug: vi.fn() });
+
+  function lastStatus(ctx: ReturnType<typeof ctxWithModel>) {
+    return ctx.ui.setStatus.mock.calls.at(-1)?.[1];
+  }
+
+  it("appends the failure reason and count after a failed review", async () => {
+    const pi = makeFakePi();
+    start(pi, { complete: failingComplete() });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(lastStatus(ctx)).toBe("judge:session");
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | call-failed x1");
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | call-failed x2");
+  });
+
+  it("shows timeout after a review that ran out of time", async () => {
+    const pi = makeFakePi();
+    const complete = vi.fn<CompleteFn>(
+      (_model, _context, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    start(pi, {
+      complete,
+      loadConfig: () => ({
+        ...CONFIG_RESULT,
+        config: { ...CONFIG_RESULT.config!, timeoutMs: 20 },
+      }),
+    });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | timeout x1");
+  });
+
+  it("keeps the count and drops the reason after a following allow", async () => {
+    const complete = failingComplete();
+    const pi = makeFakePi();
+    start(pi, { complete });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    complete.mockImplementation(async () => assistantToolCall({ verdict: "allow" }));
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | defers x1");
+  });
+
+  it("leaves the reason in place after a following deny", async () => {
+    const complete = failingComplete();
+    const pi = makeFakePi();
+    start(pi, { complete });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    complete.mockImplementation(async () =>
+      assistantToolCall({ verdict: "deny", reason: "no" }),
+    );
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | call-failed x1");
+  });
+
+  it("shows no suffix for a deny with no failures", async () => {
+    const pi = makeFakePi();
+    start(pi, { complete: denyingComplete() });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session");
+  });
+
+  it("shows breaker open with the remaining seconds once the breaker trips", async () => {
+    const pi = makeFakePi();
+    start(pi, { complete: failingComplete() });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    for (let i = 0; i < 3; i += 1) {
+      await lastAuthorizer()(askDetails(), {}, fakeLog());
+    }
+    expect(lastStatus(ctx)).toBe("judge:session | breaker open 60s");
+  });
+
+  it("starts a fresh session with no suffix after session_shutdown", async () => {
+    const pi = makeFakePi();
+    start(pi, { complete: failingComplete() });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(lastStatus(ctx)).toBe("judge:session | call-failed x1");
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    const next = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, next);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(lastStatus(next)).toBe("judge:session");
+  });
+});
+
 describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
   it("sets judge:session when the link registers with an empty config", () => {
     const pi = makeFakePi();
