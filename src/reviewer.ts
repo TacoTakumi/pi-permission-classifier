@@ -31,6 +31,7 @@ import type {
 import { CircuitBreaker } from "./breaker";
 import type { ClassifierConfig } from "./config-schema";
 import { extractFullCommandContext, type FullCommandContext } from "./context";
+import type { HealthOutcome } from "./health";
 import { type CompleteFn, reviewAsk } from "./model-review";
 
 /** Surfaces the engine caps to defer; the classifier never even asks. */
@@ -87,6 +88,26 @@ export interface ClassifierReviewerDeps {
   complete: CompleteFn;
   /** The shared circuit breaker (REQ-11); the reviewer makes its own when absent. */
   breaker?: CircuitBreaker;
+  /**
+   * Outcome seam: called once per `classifier.decision` entry with the
+   * verdict and defer reason, after the entry is logged. Never called for
+   * the surface short-circuits, which write no entry. The reviewer knows
+   * nothing about what listens; the extension folds it into session health.
+   */
+  onOutcome?: (outcome: HealthOutcome) => void;
+}
+
+/**
+ * Report an outcome through the seam, if any. A throwing listener is
+ * swallowed: health is observability, and it must never change a verdict or
+ * add a second decision entry.
+ */
+function report(deps: ClassifierReviewerDeps, outcome: HealthOutcome): void {
+  try {
+    deps.onOutcome?.(outcome);
+  } catch {
+    // The listener failed; the decision stands as logged.
+  }
 }
 
 /**
@@ -123,6 +144,7 @@ export function createClassifierReviewer(
       } catch {
         // The log failed too; there is nothing left to record on.
       }
+      report(deps, { verdict: "defer", deferReason: "internal-error" });
       return { kind: "defer" };
     }
   };
@@ -141,7 +163,7 @@ async function decide(
 
   const config = deps.getConfig();
   if (!config) {
-    return deferWith(log, {
+    return deferWith(deps, log, {
       requestId,
       surface: surface ?? null,
       value,
@@ -171,7 +193,7 @@ async function decide(
   // record. Decided before the breaker and model stages: it is a property of
   // the ask and the config alone.
   if (context !== null && context.bytes > config.contextBudgetBytes) {
-    return deferWith(log, {
+    return deferWith(deps, log, {
       requestId,
       surface,
       value,
@@ -182,7 +204,7 @@ async function decide(
   }
 
   if (breaker.isOpen()) {
-    return deferWith(log, {
+    return deferWith(deps, log, {
       requestId,
       surface,
       value,
@@ -198,7 +220,7 @@ async function decide(
       ? registry?.find(config.provider, config.model)
       : deps.getSessionModel();
   if (!registry || !model) {
-    return deferWith(log, {
+    return deferWith(deps, log, {
       requestId,
       surface,
       value,
@@ -214,7 +236,7 @@ async function decide(
 
   const auth = await registry.getApiKeyAndHeaders(model);
   if (!auth.ok) {
-    return deferWith(log, {
+    return deferWith(deps, log, {
       requestId,
       surface,
       value,
@@ -259,6 +281,15 @@ async function decide(
     deferReason: outcome.deferReason ?? null,
     ...contextFields(context !== null, context),
   });
+  report(
+    deps,
+    outcome.verdict.kind === "defer"
+      ? {
+          verdict: "defer",
+          deferReason: outcome.deferReason ?? "unrecognized-verdict",
+        }
+      : { verdict: outcome.verdict.kind },
+  );
   // Returned uncapped: the engine envelope, not this link, owns any
   // downgrade (REQ-07).
   return outcome.verdict;
@@ -270,6 +301,7 @@ async function decide(
  * record, not a silent absence.
  */
 function deferWith(
+  deps: ClassifierReviewerDeps,
   log: AuthorizerLog,
   entry: {
     requestId: string;
@@ -291,6 +323,7 @@ function deferWith(
     deferReason: entry.deferReason,
     ...contextFields(false, entry.context),
   });
+  report(deps, { verdict: "defer", deferReason: entry.deferReason });
   return { kind: "defer" };
 }
 
