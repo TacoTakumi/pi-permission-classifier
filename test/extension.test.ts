@@ -545,6 +545,97 @@ describe("footer health suffix", () => {
   });
 });
 
+describe("breaker countdown", () => {
+  const fakeLog = () => ({ review: vi.fn(), debug: vi.fn() });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Trip the breaker with three failed reviews; returns the ctx and complete. */
+  async function openBreaker(pi: FakePi) {
+    const complete = vi.fn<CompleteFn>(async () => {
+      throw new Error("model unavailable");
+    });
+    start(pi, { complete });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    for (let i = 0; i < 3; i += 1) {
+      await lastAuthorizer()(askDetails(), {}, fakeLog());
+    }
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | breaker open 60s",
+    );
+    ctx.ui.setStatus.mockClear();
+    return { ctx, complete };
+  }
+
+  it("refreshes the remaining seconds once per second while open", async () => {
+    const pi = makeFakePi();
+    const { ctx } = await openBreaker(pi);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | breaker open 59s",
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | breaker open 58s",
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops after the cooldown ends and leaves no timer", async () => {
+    const pi = makeFakePi();
+    const { ctx } = await openBreaker(pi);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | call-failed x3",
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    ctx.ui.setStatus.mockClear();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("closes cleanly when the post-cooldown review succeeds", async () => {
+    const pi = makeFakePi();
+    const { ctx, complete } = await openBreaker(pi);
+    await vi.advanceTimersByTimeAsync(60_000);
+    complete.mockImplementation(async () => assistantToolCall({ verdict: "allow" }));
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | defers x3",
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops at session_shutdown with no further status writes", async () => {
+    const pi = makeFakePi();
+    const { ctx } = await openBreaker(pi);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(vi.getTimerCount()).toBe(0);
+    ctx.ui.setStatus.mockClear();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+});
+
 describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
   it("sets judge:session when the link registers with an empty config", () => {
     const pi = makeFakePi();

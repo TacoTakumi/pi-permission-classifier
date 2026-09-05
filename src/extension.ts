@@ -88,6 +88,9 @@ const STATUS_KEY = "zz-permission-classifier";
 /** The launch flag carrying a session-only judge override. */
 const FLAG_NAME = "permission-model";
 
+/** Footer refresh period while the breaker counts down, in milliseconds. */
+const COUNTDOWN_TICK_MS = 1000;
+
 /** Injectable seams; production defaults read the filesystem and call the model. */
 export interface ClassifierDependencies {
   /** The pi agent dir holding the global config; defaults to `getAgentDir()`. */
@@ -141,6 +144,8 @@ export function createClassifierExtension(
   /** Per-session judge health and breaker; both start fresh at shutdown. */
   const health = new SessionHealth();
   let breaker = new CircuitBreaker();
+  /** The once-per-second footer refresh while the breaker cools down. */
+  let countdown: ReturnType<typeof setInterval> | undefined;
 
   /**
    * The config the reviewer judges with: the merged config, with the
@@ -187,6 +192,36 @@ export function createClassifierExtension(
       formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
         formatHealthSuffix(health, breaker.remainingMs()),
     );
+  }
+
+  function stopCountdown(): void {
+    if (countdown !== undefined) {
+      clearInterval(countdown);
+      countdown = undefined;
+    }
+  }
+
+  /**
+   * Keep the breaker countdown in step with the breaker: start one interval
+   * when the breaker is open, stop it once the cooldown has elapsed (the tick
+   * that reaches zero repaints without the breaker suffix) or the breaker
+   * closed. The interval never keeps the process alive.
+   */
+  function syncCountdown(): void {
+    if (breaker.remainingMs() === 0) {
+      stopCountdown();
+      return;
+    }
+    if (countdown !== undefined) {
+      return;
+    }
+    countdown = setInterval(() => {
+      refreshStatus();
+      if (breaker.remainingMs() === 0) {
+        stopCountdown();
+      }
+    }, COUNTDOWN_TICK_MS);
+    countdown.unref?.();
   }
 
   pi.registerCommand(
@@ -265,6 +300,7 @@ export function createClassifierExtension(
       onOutcome: (outcome) => {
         health.record(outcome);
         refreshStatus();
+        syncCountdown();
       },
     });
     dispose = service.registerAuthorizer(LINK_NAME, authorize);
@@ -283,6 +319,7 @@ export function createClassifierExtension(
     ui = undefined;
     override = undefined;
     warnedUnreachable = false;
+    stopCountdown();
     health.reset();
     breaker = new CircuitBreaker();
   });
