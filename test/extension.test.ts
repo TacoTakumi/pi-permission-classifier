@@ -623,6 +623,25 @@ describe("breaker countdown", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("keeps a single interval when more asks arrive while open", async () => {
+    const pi = makeFakePi();
+    const { ctx } = await openBreaker(pi);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await lastAuthorizer()(askDetails(), {}, fakeLog());
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | breaker open 59s",
+    );
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+      STATUS_KEY,
+      "judge:session | breaker open 58s",
+    );
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   it("stops at session_shutdown with no further status writes", async () => {
     const pi = makeFakePi();
     const { ctx } = await openBreaker(pi);
