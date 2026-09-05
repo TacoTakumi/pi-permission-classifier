@@ -184,7 +184,18 @@ describe("operator docs", () => {
       expect(readme).toContain(field);
     }
     expect(readme).toContain("5000");
-    expect(readme).toMatch(/bash, mcp, skill, tool, read, write, edit/);
+    expect(readme).not.toMatch(/bash, mcp, skill, tool, read, write, edit/);
+  });
+
+  it("describes surfaces as ignored and every surface as judged", () => {
+    const surfacesRow = readme
+      .split("\n")
+      .find((line) => line.startsWith("| `surfaces`"));
+    expect(surfacesRow).toMatch(/ignored/);
+    expect(readme).not.toContain("### Choosing surfaces");
+    expect(readme.replace(/\s+/g, " ")).toMatch(
+      /every surface except `path` and `external_directory`/,
+    );
   });
 
   it("documents the two install steps as operator actions", () => {
