@@ -313,6 +313,15 @@ describe("fail-safe: no failure maps to deny", () => {
   });
 });
 
+describe("health reaches the footer only through the seam", () => {
+  it("the reviewer imports nothing from the extension and calls no setStatus", () => {
+    const source = src("reviewer.ts");
+    expect(importsOf(source)).not.toContain("./extension");
+    expect(source).not.toContain("setStatus");
+    expect(source).not.toMatch(/\bui\b/);
+  });
+});
+
 describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
   it("covers every module under src/, command and judge included", () => {
     // LINK_FILES is read from src/, so both assertions fail when a module is
@@ -327,8 +336,8 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
     expect(LINK_FILES).toContain("health.ts");
   });
 
-  it("the command, judge, and health modules import no node: builtins", () => {
-    for (const name of ["command.ts", "judge.ts", "health.ts"]) {
+  it("the command and judge modules import no node: builtins", () => {
+    for (const name of ["command.ts", "judge.ts"]) {
       const nodeBuiltins = importsOf(src(name)).filter((imported) =>
         imported.startsWith("node:"),
       );

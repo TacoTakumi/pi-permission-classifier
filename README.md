@@ -306,7 +306,7 @@ read on how often the dialog fell back and why:
 
 - no suffix - no failure defers yet and the breaker is closed
 - ` | <reason> x<N>` - the last decision was a failure defer with that
-  reason (`timeout`, `call-failed`, `context-over-budget`, `no-config`,
+  reason (`timeout`, `call-failed`, `context-over-budget`, `breaker-open`,
   `model-unresolved`, `auth-failed`, `no-tool-call`,
   `unrecognized-verdict`, `internal-error`); N is the session's failure
   defer count

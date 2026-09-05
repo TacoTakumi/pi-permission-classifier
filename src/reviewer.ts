@@ -270,6 +270,13 @@ async function decide(
       rawReply: outcome.rawReply,
     });
   }
+  // One reason for both the decision entry and the health seam, so the two
+  // can never disagree. Set on every defer model-review produces; the
+  // fallback only guards the type.
+  const deferReason =
+    outcome.verdict.kind === "defer"
+      ? (outcome.deferReason ?? "unrecognized-verdict")
+      : null;
   log.review(DECISION_EVENT, {
     requestId,
     surface,
@@ -278,16 +285,13 @@ async function decide(
     modelId,
     latencyMs: outcome.latencyMs,
     verdict: outcome.verdict.kind,
-    deferReason: outcome.deferReason ?? null,
+    deferReason,
     ...contextFields(context !== null, context),
   });
   report(
     deps,
     outcome.verdict.kind === "defer"
-      ? {
-          verdict: "defer",
-          deferReason: outcome.deferReason ?? "unrecognized-verdict",
-        }
+      ? { verdict: "defer", deferReason: deferReason ?? "unrecognized-verdict" }
       : { verdict: outcome.verdict.kind },
   );
   // Returned uncapped: the engine envelope, not this link, owns any
