@@ -8,6 +8,7 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 
 import { classifierConfigSchema } from "#src/config-schema";
+import type { HealthOutcome } from "#src/health";
 import type { CompleteFn } from "#src/model-review";
 import {
   type ClassifierReviewerDeps,
@@ -350,6 +351,116 @@ describe("failure paths", () => {
     const verdict = await authorize(askDetails(), QUERY, log);
     expect(verdict).toEqual({ kind: "defer" });
     expect(decisionEntry(log)?.deferReason).toBe("call-failed");
+  });
+});
+
+describe("outcome seam", () => {
+  function onOutcomeSpy() {
+    return vi.fn<(outcome: HealthOutcome) => void>();
+  }
+
+  it("reports a model allow once", async () => {
+    const onOutcome = onOutcomeSpy();
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete: completeReporting({ verdict: "allow" }), onOutcome }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({ verdict: "allow" });
+  });
+
+  it("reports a model deny once", async () => {
+    const onOutcome = onOutcomeSpy();
+    const authorize = createClassifierReviewer(
+      makeDeps({
+        complete: completeReporting({ verdict: "deny", reason: "no" }),
+        onOutcome,
+      }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({ verdict: "deny" });
+  });
+
+  it("reports a model-call defer with its reason", async () => {
+    const onOutcome = onOutcomeSpy();
+    const complete: CompleteFn = vi.fn(async () => {
+      throw new Error("model unavailable");
+    });
+    const authorize = createClassifierReviewer(makeDeps({ complete, onOutcome }));
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({
+      verdict: "defer",
+      deferReason: "call-failed",
+    });
+  });
+
+  it("reports a pre-model defer with its reason", async () => {
+    const onOutcome = onOutcomeSpy();
+    const authorize = createClassifierReviewer(
+      makeDeps({ getConfig: () => undefined, onOutcome }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({
+      verdict: "defer",
+      deferReason: "no-config",
+    });
+  });
+
+  it("reports the internal-error backstop defer", async () => {
+    const onOutcome = onOutcomeSpy();
+    const registry: ModelRegistryLike = {
+      find: vi.fn(),
+      getApiKeyAndHeaders: vi.fn(async () => {
+        throw new Error("registry blew up");
+      }),
+    };
+    const authorize = createClassifierReviewer(
+      makeDeps({ getRegistry: () => registry, onOutcome }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({
+      verdict: "defer",
+      deferReason: "internal-error",
+    });
+  });
+
+  it.each([
+    ["undeterminable", askDetails({}, { surface: null })],
+    [
+      "excluded",
+      askDetails(
+        { surface: "read" },
+        {
+          accessIntent: {
+            surface: "path",
+            matchValues: ["/tmp/x"],
+            boundaryValue: "/tmp/x",
+          },
+        },
+      ),
+    ],
+  ])("never reports an %s surface short-circuit", async (_label, details) => {
+    const onOutcome = onOutcomeSpy();
+    const authorize = createClassifierReviewer(makeDeps({ onOutcome }));
+    await authorize(details, QUERY, fakeLog());
+    expect(onOutcome).not.toHaveBeenCalled();
+  });
+
+  it("returns the model verdict and writes one decision entry when the seam throws", async () => {
+    const onOutcome = vi.fn(() => {
+      throw new Error("footer blew up");
+    });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete: completeReporting({ verdict: "allow" }), onOutcome }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "allow" });
+    expect(decisionEntry(log)?.verdict).toBe("allow");
   });
 });
 
