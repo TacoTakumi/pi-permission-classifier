@@ -618,3 +618,157 @@ describe("full-command context (REQ-07, REQ-08)", () => {
     }
   });
 });
+
+describe("guidance seam", () => {
+  const INCLUDED = {
+    path: "/home/op/.pi/agent/AGENTS.md",
+    content: "curl -O downloads are routine here",
+    bytes: 34,
+    hash12: "0123456789ab",
+    isGlobal: true,
+  };
+  const DROPPED_CAP = {
+    path: "/work/big/AGENTS.md",
+    bytes: 16_385,
+    reason: "over-file-cap" as const,
+  };
+  const DROPPED_UNTRUSTED = {
+    path: "/work/repo/AGENTS.md",
+    bytes: 40,
+    reason: "untrusted" as const,
+  };
+
+  function guidanceSeam() {
+    return vi.fn(() => ({
+      included: [INCLUDED],
+      dropped: [DROPPED_CAP, DROPPED_UNTRUSTED],
+    }));
+  }
+
+  it("calls the seam exactly once per ask before the model stage", async () => {
+    const getGuidance = guidanceSeam();
+    const order: string[] = [];
+    const complete: CompleteFn = vi.fn(async () => {
+      order.push("model");
+      return assistantToolCall({ verdict: "allow" });
+    });
+    getGuidance.mockImplementation(() => {
+      order.push("guidance");
+      return { included: [INCLUDED], dropped: [] };
+    });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getGuidance }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getGuidance).toHaveBeenCalledTimes(2);
+    expect(order).toEqual(["guidance", "model", "guidance", "model"]);
+  });
+
+  it("feeds the included content into the prompt the model sees", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getGuidance: guidanceSeam() }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    const context = (complete as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as {
+      messages: { content: string }[];
+    };
+    expect(context.messages[0]?.content).toContain(INCLUDED.content);
+    expect(context.messages[0]?.content).toContain(
+      `Operator guidance from ${INCLUDED.path}:`,
+    );
+  });
+
+  it("logs both guidance lists on the decision entry without content", async () => {
+    const authorize = createClassifierReviewer(
+      makeDeps({
+        complete: completeReporting({ verdict: "allow" }),
+        getGuidance: guidanceSeam(),
+      }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    const entry = decisionEntry(log);
+    expect(entry).toMatchObject({
+      verdict: "allow",
+      guidanceIncluded: [
+        { path: INCLUDED.path, bytes: INCLUDED.bytes, hash12: INCLUDED.hash12 },
+      ],
+      guidanceDropped: [DROPPED_CAP, DROPPED_UNTRUSTED],
+    });
+    expect(JSON.stringify(entry)).not.toContain(INCLUDED.content);
+  });
+
+  it("logs two empty lists when there are no files", async () => {
+    const authorize = createClassifierReviewer(
+      makeDeps({
+        complete: completeReporting({ verdict: "allow" }),
+        getGuidance: () => ({ included: [], dropped: [] }),
+      }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    expect(decisionEntry(log)).toMatchObject({
+      guidanceIncluded: [],
+      guidanceDropped: [],
+    });
+  });
+
+  it("logs two empty lists when no seam is wired", async () => {
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete: completeReporting({ verdict: "allow" }) }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    expect(decisionEntry(log)).toMatchObject({
+      guidanceIncluded: [],
+      guidanceDropped: [],
+    });
+  });
+
+  it("defers with guidance-load-failed and no model call when the seam throws", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
+    const authorize = createClassifierReviewer(
+      makeDeps({
+        complete,
+        onOutcome,
+        getGuidance: () => {
+          throw new Error("disk exploded");
+        },
+      }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(decisionEntry(log)).toMatchObject({
+      modelCalled: false,
+      verdict: "defer",
+      deferReason: "guidance-load-failed",
+      guidanceIncluded: [],
+      guidanceDropped: [],
+    });
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith({
+      verdict: "defer",
+      deferReason: "guidance-load-failed",
+    });
+  });
+
+  it("does not call the seam on a pre-model defer", async () => {
+    const getGuidance = guidanceSeam();
+    const authorize = createClassifierReviewer(
+      makeDeps({ getConfig: () => undefined, getGuidance }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    expect(getGuidance).not.toHaveBeenCalled();
+    expect(decisionEntry(log)).toMatchObject({
+      deferReason: "no-config",
+      guidanceIncluded: [],
+      guidanceDropped: [],
+    });
+  });
+});

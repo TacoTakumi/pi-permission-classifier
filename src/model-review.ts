@@ -20,6 +20,7 @@ import type { AuthorizerVerdict, PromptPermissionDetails } from "@gotgenes/pi-pe
 
 import type { ClassifierConfig } from "./config-schema";
 import type { FullCommandContext } from "./context";
+import type { IncludedGuidance } from "./guidance";
 import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "./prompt";
 
 /** The reason used for a deny when the model omits its own. */
@@ -106,6 +107,8 @@ export interface ReviewAskInputs {
   headers?: Record<string, string | null>;
   /** Budget-gated full-command context; absent renders the value-only prompt. */
   context?: FullCommandContext | null;
+  /** Selected guidance files, rendered after the preamble; absent renders none. */
+  guidance?: readonly IncludedGuidance[];
 }
 
 /**
@@ -157,7 +160,11 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
       messages: [
         {
           role: "user",
-          content: renderReviewPrompt(inputs.details, inputs.context ?? null),
+          content: renderReviewPrompt(
+            inputs.details,
+            inputs.context ?? null,
+            inputs.guidance ?? [],
+          ),
           timestamp: Date.now(),
         },
       ],

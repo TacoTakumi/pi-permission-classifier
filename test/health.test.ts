@@ -62,6 +62,11 @@ describe("formatHealthSuffix", () => {
     [{ count: 0, lastFailureReason: undefined }, 0, ""],
     [{ count: 1, lastFailureReason: "timeout" }, 0, " | timeout x1"],
     [{ count: 3, lastFailureReason: "call-failed" }, 0, " | call-failed x3"],
+    [
+      { count: 1, lastFailureReason: "guidance-load-failed" },
+      0,
+      " | guidance-load-failed x1",
+    ],
     [{ count: 2, lastFailureReason: undefined }, 0, " | defers x2"],
     [{ count: 0, lastFailureReason: undefined }, 60_000, " | breaker open 60s"],
     [{ count: 3, lastFailureReason: "timeout" }, 59_001, " | breaker open 60s"],
