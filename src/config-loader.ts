@@ -6,6 +6,11 @@
  * (never fatal), and an invalid merged config yields `{ config: undefined }` so
  * the extension registers no link — a config error degrades to no
  * auto-decision, never to a wrong one (more prompting, never less).
+ *
+ * The project layer is trust-gated: in an untrusted project it is not even
+ * read, so a project file cannot replace the rubric or pick the judge before
+ * the operator has trusted the directory. The caller passes the trust state
+ * at each load, so a reload after the trust dialog picks the layer up.
  */
 
 import {
@@ -161,6 +166,9 @@ function readLayer(
  * Both scopes are supplied by the caller: the extension resolves `agentDir`
  * from the SDK's `getAgentDir()` (which honors `PI_CODING_AGENT_DIR`) and `cwd`
  * from the session context, so this module reads no process globals of its own.
+ * `projectTrusted` is the session's trust state at this load: when false the
+ * project file is skipped unread and the global layer alone applies, with
+ * `projectSetsJudge` false.
  *
  * When neither file exists, returns `{ config: undefined, issues: [] }` — the
  * normal not-configured state, reported without noise. When a present config is
@@ -172,14 +180,15 @@ function readLayer(
 export function loadClassifierConfig(options: {
   cwd: string;
   agentDir: string;
+  projectTrusted: boolean;
 }): LoadConfigResult {
-  const { cwd, agentDir } = options;
+  const { cwd, agentDir, projectTrusted } = options;
   const issues: ConfigIssue[] = [];
 
   const globalPath = getGlobalConfigPath(agentDir);
   const projectPath = getProjectConfigPath(cwd);
   const global = readLayer(globalPath, issues);
-  const project = readLayer(projectPath, issues);
+  const project = projectTrusted ? readLayer(projectPath, issues) : undefined;
   const projectSetsJudge = setsJudge(project);
 
   if (global === undefined && project === undefined) {

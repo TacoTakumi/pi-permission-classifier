@@ -108,7 +108,8 @@ const COUNTDOWN_TICK_MS = 1000;
 export interface ClassifierDependencies {
   /** The pi agent dir holding the global config; defaults to `getAgentDir()`. */
   agentDir?: () => string;
-  loadConfig?: (cwd: string) => LoadConfigResult;
+  /** Load the layered config; the project layer applies only when trusted. */
+  loadConfig?: (cwd: string, projectTrusted: boolean) => LoadConfigResult;
   complete?: CompleteFn;
   /** Persist a judge pair to the global config; both `undefined` removes it. */
   writeJudge?: (provider: string | undefined, model: string | undefined) => void;
@@ -133,7 +134,8 @@ export function createClassifierExtension(
   const agentDir = dependencies.agentDir ?? getAgentDir;
   const loadConfig =
     dependencies.loadConfig ??
-    ((cwd: string) => loadClassifierConfig({ cwd, agentDir: agentDir() }));
+    ((cwd: string, projectTrusted: boolean) =>
+      loadClassifierConfig({ cwd, agentDir: agentDir(), projectTrusted }));
   const complete: CompleteFn =
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
@@ -179,6 +181,16 @@ export function createClassifierExtension(
   }
 
   /**
+   * The project's trust state right now, from the session context. A pi
+   * without the trust query, or no context yet, counts as untrusted.
+   */
+  function projectTrusted(ctx: ExtensionContext | undefined = session): boolean {
+    return typeof ctx?.isProjectTrusted === "function"
+      ? ctx.isProjectTrusted()
+      : false;
+  }
+
+  /**
    * Load and select this ask's guidance. Called by the reviewer once per
    * judged ask; every read here is live — the disk walk, the agent dir, and
    * the trust query — so nothing decided at ready can go stale. Throws
@@ -190,11 +202,11 @@ export function createClassifierExtension(
     }
     const dir = agentDir();
     const files = loadGuidance({ cwd: session.cwd, agentDir: dir });
-    const trusted =
-      typeof session.isProjectTrusted === "function"
-        ? session.isProjectTrusted()
-        : false;
-    return selectGuidance(files, findGlobalGuidancePath(files, dir), trusted);
+    return selectGuidance(
+      files,
+      findGlobalGuidancePath(files, dir),
+      projectTrusted(session),
+    );
   }
 
   /** Read the launch flag; a value the registry does not know is ignored. */
@@ -274,7 +286,7 @@ export function createClassifierExtension(
       globalConfigPath: () => getGlobalConfigPath(agentDir()),
       projectConfigPath: getProjectConfigPath,
       writeJudge,
-      reload: (cwd) => loadConfig(cwd),
+      reload: (cwd) => loadConfig(cwd, projectTrusted()),
       apply: (next) => {
         // An explicit choice replaces a flag override for the rest of the session.
         config = next;
@@ -297,7 +309,7 @@ export function createClassifierExtension(
   }
 
   pi.on("session_start", (_event, ctx) => {
-    const result = loadConfig(ctx.cwd);
+    const result = loadConfig(ctx.cwd, projectTrusted(ctx));
     config = result.config;
     sessionModel = ctx.model;
     registry = ctx.modelRegistry;
