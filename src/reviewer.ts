@@ -148,8 +148,11 @@ export function createClassifierReviewer(
   const breaker = deps.breaker ?? new CircuitBreaker();
 
   return async (details, _query, log) => {
+    // What the guidance stage selected, so the backstop entry below can say
+    // what the judge actually saw even when a later stage threw.
+    const trail = { guidance: EMPTY_GUIDANCE };
     try {
-      return await decide(deps, breaker, details, log);
+      return await decide(deps, breaker, details, log, trail);
     } catch {
       // The unconditional backstop: whatever threw — an injected seam
       // rejecting instead of returning ok:false, a malformed details bag,
@@ -166,7 +169,7 @@ export function createClassifierReviewer(
           verdict: "defer",
           deferReason: "internal-error",
           ...contextFields(false, context),
-          ...guidanceFields(EMPTY_GUIDANCE),
+          ...guidanceFields(trail.guidance),
         });
       } catch {
         // The log failed too; there is nothing left to record on.
@@ -182,6 +185,7 @@ async function decide(
   breaker: CircuitBreaker,
   details: PromptPermissionDetails,
   log: AuthorizerLog,
+  trail: { guidance: GuidanceSelection },
 ): Promise<AuthorizerVerdict> {
   const { requestId } = details;
   const surface = gateSurfaceOf(details);
@@ -280,6 +284,7 @@ async function decide(
   let guidance: GuidanceSelection;
   try {
     guidance = deps.getGuidance?.() ?? EMPTY_GUIDANCE;
+    trail.guidance = guidance;
   } catch {
     return deferWith(deps, log, {
       requestId,
