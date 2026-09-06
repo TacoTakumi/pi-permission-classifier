@@ -187,7 +187,60 @@ a heredoc body or text piped to stdin - counts as inline code and is
 judged on its content; an interpreter run on a script file stays unseen
 and defers.
 
+Two more lines cover the asks that guidance files most often need to
+raise. Network fetches: downloading from any host, localhost included, is
+allow when the fetched bytes are only written to files inside the project
+tree or /tmp and nothing executes them; a fetch that feeds a shell or
+interpreter is the pipe-to-shell never-allow item, and any other
+destination or use defers. Cleanup deletes: a plain `rm` of named files or
+build output inside the project tree or /tmp is cleanup, not discarding
+work; a delete that reaches outside those places, removes tracked changes,
+or uses paths the judge cannot resolve defers.
+
+The rubric ends with one line on guidance files (next section): they
+describe what is normal for this operator and project, can move a verdict
+toward allow or deny within the rubric, and never override the never-allow
+list.
+
 Set `instructions` to replace the rubric wholesale with your own.
+
+### Guidance files
+
+The judge reads the same context files the agent does: the global
+`AGENTS.md` (or `CLAUDE.md` fallback) in the pi agent dir, and the project
+files pi finds from the session cwd up through its ancestors (override
+names and worktree shadowing included, because the classifier calls pi's
+own context-file loader). Write the lines that describe what is normal
+here, for example "downloads into ./vendor and cleanup of build/ are
+routine in this repo", and the judge sees them verbatim.
+
+- Files are read from disk on every judged ask. An edit takes effect on
+  the next ask; there is no cache and no reload command.
+- Trust gating: the global file always reaches the judge. Project files
+  reach it only while pi reports the project trusted, read at the moment
+  of each ask. In an untrusted directory the judge sees the global file
+  alone, and the classifier's own project config layer
+  (`.pi/extensions/pi-permission-classifier/config.json`) is not read
+  either, so a project `instructions` string cannot replace the rubric
+  before you trust the directory.
+- Caps: a file over 16 KiB (UTF-8 bytes) is dropped whole, never
+  truncated. Files accumulate in loader order (global first, then root
+  down to cwd), and once the running total would pass 32 KiB that file and
+  every later one are dropped whole.
+- Rendering: each included file appears in its own delimited data block
+  after the ask facts, labelled `Operator guidance from <path>` for the
+  global file or `Project guidance from <path>` for a project file, under
+  a one-sentence header on what guidance may and may not do. Guidance is
+  data to the judge, not instructions, and the seven never-allow items
+  stay outside its reach.
+- Logging: every `classifier.decision` entry carries `guidanceIncluded`
+  (one `{path, bytes, hash12}` per rendered file) and `guidanceDropped`
+  (one `{path, bytes, reason}` per excluded file, reason one of
+  `over-file-cap`, `over-total-cap`, `untrusted`). File content is never
+  logged.
+- Failure: if the loader throws, the ask defers with reason
+  `guidance-load-failed`, recorded on the decision entry and shown in the
+  footer health suffix like any other failure defer.
 
 ### Config suggestions
 
@@ -218,14 +271,17 @@ useful and cheap:
 
 ### Which surfaces are judged
 
-The classifier judges every surface except `path` and `external_directory`,
-whatever the surface name, including surfaces added by other extensions.
-There is no surface list to maintain. Your cross-cutting `path` and
-`external_directory` rules still apply, and the engine downgrades any link
-allow on those two surfaces to defer, so the classifier can never approve
-access outside the working directory or to a path your policy denies. To
-keep a tool out of the judge's hands, route it to `allow` or `deny` in the
-permission system policy instead of `ask`.
+The classifier judges every surface except the `path` and
+`external_directory` families, whatever the surface name, including
+surfaces added by other extensions. A family is the bare name plus its
+directional members: `path`, `path_read`, `path_write`,
+`external_directory`, `external_directory_read`,
+`external_directory_write`. There is no surface list to maintain. Your
+cross-cutting `path` and `external_directory` rules still apply, and the
+engine downgrades any link allow on those families to defer, so the
+classifier can never approve access outside the working directory or to a
+path your policy denies. To keep a tool out of the judge's hands, route it
+to `allow` or `deny` in the permission system policy instead of `ask`.
 
 ## Choosing the judge model
 
@@ -324,12 +380,13 @@ shutdown.
 ## How it works
 
 - The classifier only sees asks your policy routed to `ask`, on every
-  surface except `path` and `external_directory`. Anything else is
-  untouched.
+  surface except the `path` and `external_directory` families. Anything
+  else is untouched.
 - For each reviewed ask it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
-  provenance) into a prompt. Tool results and file contents never reach
-  the judge, and the judged value is delimited as data, not instructions.
+  provenance) into a prompt, followed by the guidance files selected for
+  this ask. Tool results and file contents never reach the judge, and the
+  judged value and the guidance are delimited as data, not instructions.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
   The call is aborted after `timeoutMs`.
