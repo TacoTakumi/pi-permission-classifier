@@ -224,7 +224,7 @@ const READY_EVENT_NO_ID = { sessionId: null, adjudicatesLocally: true };
 function start(
   pi: FakePi,
   overrides: {
-    loadConfig?: () => LoadConfigResult;
+    loadConfig?: ClassifierDependencies["loadConfig"];
     complete?: CompleteFn;
     writeJudge?: ClassifierDependencies["writeJudge"];
     buildPicker?: ClassifierDependencies["buildPicker"];
@@ -1064,6 +1064,7 @@ describe("guidance wiring", () => {
       const { ctx, authorize } = registered(complete, () => [
         { path: "/project/AGENTS.md", content: PROJECT_CONTENT },
       ]);
+      ctx.isProjectTrusted.mockClear();
       for (const trusted of sequence) {
         ctx.isProjectTrusted.mockReturnValue(trusted);
         await authorize(askDetails(), {}, log());
@@ -1128,5 +1129,39 @@ describe("guidance wiring", () => {
     expect(entryLog.review.mock.calls[0]?.[1]).toMatchObject({
       deferReason: "guidance-load-failed",
     });
+  });
+});
+
+describe("config trust gate wiring", () => {
+  it("loads with the session trust state and reloads with the state at reload time", async () => {
+    const loadConfig = vi
+      .fn<NonNullable<ClassifierDependencies["loadConfig"]>>()
+      .mockReturnValue(CONFIG_RESULT);
+    const pi = makeFakePi();
+    start(pi, { loadConfig, writeJudge: vi.fn() });
+    publishForSession();
+    const ctx = ctxWithModel();
+    ctx.isProjectTrusted.mockReturnValue(false);
+    ctx.modelRegistry.find.mockImplementation(findKnown);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(loadConfig).toHaveBeenLastCalledWith("/project", false);
+
+    ctx.isProjectTrusted.mockReturnValue(true);
+    await pi.commands.get("permission-model")?.handler("q/n", ctx);
+
+    expect(loadConfig).toHaveBeenCalledTimes(2);
+    expect(loadConfig).toHaveBeenLastCalledWith("/project", true);
+  });
+
+  it("treats a session context without a trust query as untrusted", () => {
+    const loadConfig = vi
+      .fn<NonNullable<ClassifierDependencies["loadConfig"]>>()
+      .mockReturnValue(CONFIG_RESULT);
+    const pi = makeFakePi();
+    start(pi, { loadConfig });
+    const { isProjectTrusted: _absent, ...legacyCtx } = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, legacyCtx);
+    expect(loadConfig).toHaveBeenLastCalledWith("/project", false);
   });
 });

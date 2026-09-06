@@ -117,7 +117,7 @@ describe("loadClassifierConfig", () => {
   }
 
   it("returns no config and no issues when neither scope exists", () => {
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.config).toBeUndefined();
     expect(result.issues).toEqual([]);
   });
@@ -127,7 +127,7 @@ describe("loadClassifierConfig", () => {
       getGlobalConfigPath(agentDir),
       JSON.stringify({ instructions: "be strict", timeoutMs: 250 }),
     );
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.issues).toEqual([]);
     expect(result.config?.instructions).toBe("be strict");
     expect(result.config?.timeoutMs).toBe(250);
@@ -135,7 +135,7 @@ describe("loadClassifierConfig", () => {
 
   it("fills schema defaults for an empty global config object", () => {
     writeConfig(getGlobalConfigPath(agentDir), "{}");
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.issues).toEqual([]);
     expect(result.config?.surfaces).toBeUndefined();
     expect(result.config?.timeoutMs).toBe(5000);
@@ -150,7 +150,7 @@ describe("loadClassifierConfig", () => {
       getProjectConfigPath(cwd),
       JSON.stringify({ instructions: "project" }),
     );
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.issues).toEqual([]);
     expect(result.config?.instructions).toBe("project");
     expect(result.config?.timeoutMs).toBe(250);
@@ -163,7 +163,7 @@ describe("loadClassifierConfig", () => {
         globalPath,
         JSON.stringify({ surfaces: ["bash"], timeoutMs: 250 }),
       );
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.config?.timeoutMs).toBe(250);
       expect(result.issues).toHaveLength(1);
       expect(result.issues[0]).toMatchObject({
@@ -177,7 +177,7 @@ describe("loadClassifierConfig", () => {
       const projectPath = getProjectConfigPath(cwd);
       writeConfig(getGlobalConfigPath(agentDir), "{}");
       writeConfig(projectPath, JSON.stringify({ surfaces: ["mcp"] }));
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.config).toBeDefined();
       expect(result.issues).toHaveLength(1);
       expect(result.issues[0]).toMatchObject({
@@ -192,7 +192,7 @@ describe("loadClassifierConfig", () => {
         JSON.stringify({ surfaces: ["bash"] }),
       );
       writeConfig(getProjectConfigPath(cwd), JSON.stringify({ surfaces: ["mcp"] }));
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.config).toBeDefined();
       expect(result.issues.map((issue) => issue.sourcePath)).toEqual([
         getGlobalConfigPath(agentDir),
@@ -202,7 +202,7 @@ describe("loadClassifierConfig", () => {
 
     it("reports nothing when no layer sets the field", () => {
       writeConfig(getGlobalConfigPath(agentDir), JSON.stringify({ timeoutMs: 1 }));
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.issues).toEqual([]);
     });
   });
@@ -216,7 +216,7 @@ describe("loadClassifierConfig", () => {
       getProjectConfigPath(cwd),
       JSON.stringify({ contextBudgetBytes: 1024 }),
     );
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.issues).toEqual([]);
     expect(result.config?.contextBudgetBytes).toBe(1024);
   });
@@ -224,7 +224,7 @@ describe("loadClassifierConfig", () => {
   it("skips malformed JSON with an issue naming the file and never throws", () => {
     const globalPath = getGlobalConfigPath(agentDir);
     writeConfig(globalPath, "{ not json");
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.config).toBeUndefined();
     expect(result.issues).toHaveLength(1);
     expect(result.issues[0]?.sourcePath).toBe(globalPath);
@@ -233,7 +233,7 @@ describe("loadClassifierConfig", () => {
   it("rejects a non-object config file with a sourced issue", () => {
     const globalPath = getGlobalConfigPath(agentDir);
     writeConfig(globalPath, JSON.stringify(["not", "an", "object"]));
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.config).toBeUndefined();
     expect(result.issues).toHaveLength(1);
     expect(result.issues[0]?.sourcePath).toBe(globalPath);
@@ -242,7 +242,7 @@ describe("loadClassifierConfig", () => {
   it("yields no config plus a sourced issue for a schema-invalid config", () => {
     const globalPath = getGlobalConfigPath(agentDir);
     writeConfig(globalPath, JSON.stringify({ provider: "anthropic" }));
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.config).toBeUndefined();
     expect(result.issues.length).toBeGreaterThan(0);
     expect(result.issues[0]?.sourcePath).toContain(globalPath);
@@ -251,15 +251,66 @@ describe("loadClassifierConfig", () => {
   it("still validates the surviving layer when the other is malformed", () => {
     writeConfig(getGlobalConfigPath(agentDir), "{ not json");
     writeConfig(getProjectConfigPath(cwd), JSON.stringify({ timeoutMs: 100 }));
-    const result = loadClassifierConfig({ cwd, agentDir });
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.config?.timeoutMs).toBe(100);
     expect(result.issues).toHaveLength(1);
+  });
+
+  describe("project trust gate", () => {
+    beforeEach(() => {
+      writeConfig(
+        getGlobalConfigPath(agentDir),
+        JSON.stringify({ instructions: "global rubric", timeoutMs: 250 }),
+      );
+      writeConfig(
+        getProjectConfigPath(cwd),
+        JSON.stringify({
+          instructions: "project rubric",
+          provider: "p",
+          model: "m",
+          surfaces: ["bash"],
+        }),
+      );
+    });
+
+    it("withholds the project layer when the project is untrusted", () => {
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: false });
+      expect(result.config?.instructions).toBe("global rubric");
+      expect(result.config?.timeoutMs).toBe(250);
+      expect(result.config?.provider).toBeUndefined();
+      expect(result.config?.model).toBeUndefined();
+      expect(result.projectSetsJudge).toBe(false);
+      expect(result.issues).toEqual([]);
+    });
+
+    it("never reads the project file when the project is untrusted", () => {
+      writeConfig(getProjectConfigPath(cwd), "{ not json");
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: false });
+      expect(result.issues).toEqual([]);
+      expect(result.config?.instructions).toBe("global rubric");
+    });
+
+    it("returns no config for an untrusted project with only a project file", () => {
+      rmSync(getGlobalConfigPath(agentDir));
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: false });
+      expect(result).toEqual({ config: undefined, issues: [], projectSetsJudge: false });
+    });
+
+    it("merges the project layer as before when the project is trusted", () => {
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+      expect(result.config?.instructions).toBe("project rubric");
+      expect(result.config?.timeoutMs).toBe(250);
+      expect(result.config?.provider).toBe("p");
+      expect(result.config?.model).toBe("m");
+      expect(result.projectSetsJudge).toBe(true);
+      expect(result.issues).toHaveLength(1);
+    });
   });
 
   describe("projectSetsJudge (REQ-14)", () => {
     it("is false when no project layer exists", () => {
       writeConfig(getGlobalConfigPath(agentDir), "{}");
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.projectSetsJudge).toBe(false);
     });
 
@@ -269,7 +320,7 @@ describe("loadClassifierConfig", () => {
         JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
       );
       writeConfig(getProjectConfigPath(cwd), JSON.stringify({ timeoutMs: 100 }));
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.config?.provider).toBe("anthropic");
       expect(result.projectSetsJudge).toBe(false);
     });
@@ -280,14 +331,14 @@ describe("loadClassifierConfig", () => {
         getProjectConfigPath(cwd),
         JSON.stringify({ provider: "openai", model: "gpt-5" }),
       );
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.projectSetsJudge).toBe(true);
     });
 
     it("is true when the project layer sets only one of the pair, even if the merge is invalid", () => {
       writeConfig(getGlobalConfigPath(agentDir), "{}");
       writeConfig(getProjectConfigPath(cwd), JSON.stringify({ model: "gpt-5" }));
-      const result = loadClassifierConfig({ cwd, agentDir });
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
       expect(result.config).toBeUndefined();
       expect(result.projectSetsJudge).toBe(true);
     });
@@ -383,7 +434,11 @@ describe("writeGlobalJudge (REQ-12)", () => {
   it("writes a file the loader accepts", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     writeGlobalJudge(agentDir, "openai", "gpt-5");
-    const result = loadClassifierConfig({ cwd: join(root, "project"), agentDir });
+    const result = loadClassifierConfig({
+      cwd: join(root, "project"),
+      agentDir,
+      projectTrusted: true,
+    });
     // The preserved surfaces field is accepted but reported as ignored.
     expect(result.issues.map((issue) => issue.path)).toEqual(["surfaces"]);
     expect(result.config?.provider).toBe("openai");
