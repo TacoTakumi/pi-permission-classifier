@@ -116,7 +116,7 @@ Config files (project overrides global, shallow merge):
 | `provider` | unset | Judge model provider. Set together with `model`; with neither set, the session's active model judges. |
 | `model` | unset | Judge model id, resolved from the session model registry. Set together with `provider`. |
 | `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
-| `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface except `path` and `external_directory` is judged. A file that sets it logs one warning at load: `This field is ignored: every surface except path and external_directory is judged.` |
+| `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
 | `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
 | `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer). An ask whose context exceeds the budget defers before any model call; context is never truncated to fit. |
 
@@ -231,8 +231,11 @@ routine in this repo", and the judge sees them verbatim.
   after the ask facts, labelled `Operator guidance from <path>` for the
   global file or `Project guidance from <path>` for a project file, under
   a one-sentence header on what guidance may and may not do. Guidance is
-  data to the judge, not instructions, and the seven never-allow items
-  stay outside its reach.
+  data to the judge, not instructions. The header and the rubric tell the
+  judge the seven never-allow items are outside its reach, but that is a
+  prompt instruction, not code: a trusted project's file can still steer
+  a model-based verdict, so review what you trust. The engine's own
+  `path` and `external_directory` caps hold regardless.
 - Logging: every `classifier.decision` entry carries `guidanceIncluded`
   (one `{path, bytes, hash12}` per rendered file) and `guidanceDropped`
   (one `{path, bytes, reason}` per excluded file, reason one of

@@ -342,7 +342,7 @@ describe("renderReviewPrompt with guidance", () => {
       guidance()[0]!,
     ]);
 
-    expect(prompt.match(HEADER)).toHaveLength(1);
+    expect([...prompt.matchAll(new RegExp(HEADER.source, "g"))]).toHaveLength(1);
     expect(prompt).toMatch(/normal for this operator and project/);
     expect(prompt).toMatch(/toward allow or deny/);
   });

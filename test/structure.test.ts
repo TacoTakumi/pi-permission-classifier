@@ -423,10 +423,14 @@ describe("guidance discipline", () => {
   });
 
   it("the guidance module stores nothing across asks", () => {
-    // Every top-level binding is a function, a type, or a frozen constant:
-    // no module-level cache can hold a loader result from one ask to the next.
-    const topLevel = src("guidance.ts").match(/^(?:export )?(?:let|var) /gm) ?? [];
-    expect(topLevel).toEqual([]);
+    // Every top-level binding is a function, a type, or a scalar constant:
+    // no mutable binding and no module-level container (Map, Set, array,
+    // object literal) can hold a loader result from one ask to the next.
+    const source = src("guidance.ts");
+    expect(source.match(/^(?:export )?(?:let|var) /gm) ?? []).toEqual([]);
+    expect(
+      source.match(/^(?:export )?const \w+(?:\s*:[^=]+)?\s*=\s*(?:new |\[|\{)/gm) ?? [],
+    ).toEqual([]);
   });
 
   it("the rubric carries the authority line and the two posture lines", () => {
