@@ -5,10 +5,30 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-09-05
+## [0.5.0] - 2026-09-06
 
 ### Added
 
+- Guidance files reach the judge. The classifier reads the global
+  `AGENTS.md` (or `CLAUDE.md`) from the pi agent dir and the project
+  context files pi finds from the session cwd upward, through pi's own
+  context-file loader, on every judged ask, and renders each verbatim in
+  its own labelled data block after the ask facts. A one-sentence header
+  and a matching rubric line say guidance describes what is normal for
+  this operator and project, can move a verdict toward allow or deny, and
+  never overrides the never-allow list. Project files are included only
+  while pi reports the project trusted, read per ask. A file over 16 KiB
+  is dropped whole; once the running total would pass 32 KiB the rest are
+  dropped whole. Every `classifier.decision` entry records
+  `guidanceIncluded` (`{path, bytes, hash12}`) and `guidanceDropped`
+  (`{path, bytes, reason}` with `over-file-cap`, `over-total-cap`, or
+  `untrusted`). A loader failure defers with reason
+  `guidance-load-failed`.
+- Two rubric lines in the defer-first posture: a download from any host,
+  localhost included, is allow when the bytes only land in files inside
+  the project tree or /tmp and nothing executes them; a plain `rm` of
+  named files or build output in those places is cleanup, not discarding
+  work. Anything beyond either line defers.
 - Judge health in the footer. The `zz-permission-classifier` entry
   appends ` | <reason> x<N>` after a failure defer, ` | defers x<N>`
   once a later model verdict cleared the reason, and
@@ -18,11 +38,18 @@ this project adheres to
 
 ### Changed
 
-- The classifier judges every surface except `path` and
-  `external_directory`, whatever the surface name. The reviewed-surface
-  list and its `bash, mcp, skill, tool, read, write, edit` default are
-  gone, so surfaces added by other extensions (for example `clearthen`)
-  are judged instead of silently deferred.
+- The classifier judges every surface except the `path` and
+  `external_directory` families, whatever the surface name. The
+  reviewed-surface list and its `bash, mcp, skill, tool, read, write,
+  edit` default are gone, so surfaces added by other extensions (for
+  example `clearthen`) are judged instead of silently deferred. The
+  exclusion matches a family, so `path_read`, `path_write`,
+  `external_directory_read`, and `external_directory_write` short-circuit
+  to defer before any model call, as the engine caps them anyway.
+- The project config layer
+  (`.pi/extensions/pi-permission-classifier/config.json`) is withheld
+  while the project is untrusted: the global layer alone applies, and a
+  reload after trust is granted picks the project layer up.
 - The `surfaces` config field is accepted but ignored. A global or
   project file that sets it still loads, and pi logs one warning naming
   the file at config load. `config/config.example.json` drops the field.
