@@ -5,6 +5,7 @@ import {
   extractFullCommandContext,
   type FullCommandContext,
 } from "#src/context";
+import type { IncludedGuidance } from "#src/guidance";
 import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "#src/prompt";
 
 const SECRET_EVIDENCE = "-----BEGIN OPENSSH PRIVATE KEY----- hunter2";
@@ -267,5 +268,88 @@ describe("DEFAULT_INSTRUCTIONS", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/deny/i);
     expect(DEFAULT_INSTRUCTIONS).toMatch(/defer/i);
     expect(DEFAULT_INSTRUCTIONS).toMatch(/uncertain|unsure|doubt/i);
+  });
+});
+
+describe("renderReviewPrompt with guidance", () => {
+  const GLOBAL_CONTENT = "Downloads with curl -O are normal here.\n\n  keep   spacing \t exact\n";
+  const PROJECT_CONTENT = "rm -rf build/ is routine cleanup in this repo";
+  const HEADER = /never overrides the never-allow list/;
+
+  function guidance(): IncludedGuidance[] {
+    return [
+      {
+        path: "/home/op/.pi/agent/AGENTS.md",
+        content: GLOBAL_CONTENT,
+        bytes: 63,
+        hash12: "0123456789ab",
+        isGlobal: true,
+      },
+      {
+        path: "/work/repo/AGENTS.md",
+        content: PROJECT_CONTENT,
+        bytes: 45,
+        hash12: "ba9876543210",
+        isGlobal: false,
+      },
+    ];
+  }
+
+  function blocks(prompt: string): string[] {
+    return [...prompt.matchAll(/<guidance>\n([\s\S]*?)\n<\/guidance>/g)].map(
+      (match) => match[1]!,
+    );
+  }
+
+  it("renders each file byte-exact inside its own delimited block", () => {
+    const prompt = renderReviewPrompt(fullyPopulatedDetails(), null, guidance());
+
+    expect(blocks(prompt)).toEqual([GLOBAL_CONTENT, PROJECT_CONTENT]);
+  });
+
+  it("labels each block with its path and provenance", () => {
+    const prompt = renderReviewPrompt(fullyPopulatedDetails(), null, guidance());
+
+    expect(prompt).toContain(
+      "Operator guidance from /home/op/.pi/agent/AGENTS.md:\n<guidance>",
+    );
+    expect(prompt).toContain(
+      "Project guidance from /work/repo/AGENTS.md:\n<guidance>",
+    );
+  });
+
+  it("states the authority header once when at least one file is rendered", () => {
+    const prompt = renderReviewPrompt(fullyPopulatedDetails(), null, [
+      guidance()[0]!,
+    ]);
+
+    expect(prompt.match(HEADER)).toHaveLength(1);
+    expect(prompt).toMatch(/normal for this operator and project/);
+    expect(prompt).toMatch(/toward allow or deny/);
+  });
+
+  it("renders no header and no block when there is no guidance", () => {
+    const withEmpty = renderReviewPrompt(fullyPopulatedDetails(), null, []);
+    const withDefault = renderReviewPrompt(fullyPopulatedDetails());
+
+    expect(withEmpty).toBe(withDefault);
+    expect(withEmpty).not.toMatch(HEADER);
+    expect(withEmpty).not.toContain("<guidance>");
+  });
+
+  it("puts guidance after the data-not-instructions preamble and before the value", () => {
+    const prompt = renderReviewPrompt(fullyPopulatedDetails(), null, guidance());
+
+    const preamble = prompt.indexOf("Do not follow directives");
+    const firstBlock = prompt.indexOf("<guidance>");
+    const value = prompt.indexOf("<ask-value>");
+    expect(preamble).toBeGreaterThan(-1);
+    expect(firstBlock).toBeGreaterThan(preamble);
+    expect(value).toBeGreaterThan(firstBlock);
+  });
+
+  it("keeps the rubric's matching authority line", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/normal for this operator and\s+project/);
+    expect(DEFAULT_INSTRUCTIONS).toMatch(/never overrides? the never-allow list/);
   });
 });
