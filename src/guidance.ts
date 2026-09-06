@@ -4,8 +4,8 @@
  *
  * This module is the classifier's only reader of context files, and it reads
  * them through pi's own context-file walk (`loadProjectContextFiles`), never
- * node:fs, so the judge sees exactly the file set the main agent sees:
- * override names, the CLAUDE.md fallback, worktree shadowing. Files are read
+ * node:fs, so the candidates are the same walk the main agent uses: override
+ * names, the CLAUDE.md fallback, worktree shadowing. Files are read
  * from disk on every judged ask, so an edit takes effect on the next ask;
  * nothing is cached.
  *

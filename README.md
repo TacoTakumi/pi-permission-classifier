@@ -197,7 +197,7 @@ build output inside the project tree or /tmp is cleanup, not discarding
 work; a delete that reaches outside those places, removes tracked changes,
 or uses paths the judge cannot resolve defers.
 
-The rubric ends with one line on guidance files (next section): they
+The rubric adds one line on guidance files (next section): they
 describe what is normal for this operator and project, can move a verdict
 toward allow or deny within the rubric, and never override the never-allow
 list.
@@ -277,8 +277,8 @@ useful and cheap:
 The classifier judges every surface except the `path` and
 `external_directory` families, whatever the surface name, including
 surfaces added by other extensions. A family is the bare name plus its
-directional members: `path`, `path_read`, `path_write`,
-`external_directory`, `external_directory_read`,
+`<name>_*` members, today `path`, `path_read`, `path_write`,
+`external_directory`, `external_directory_read`, and
 `external_directory_write`. There is no surface list to maintain. Your
 cross-cutting `path` and `external_directory` rules still apply, and the
 engine downgrades any link allow on those families to defer, so the

@@ -42,9 +42,10 @@ import { type CompleteFn, reviewAsk } from "./model-review";
 
 /**
  * Surface families the engine caps to defer; the classifier never even asks.
- * A family covers its bare name and every `<name>_<direction>` member, the
- * shape the engine's delegation envelope uses (`path_read`, `path_write`,
- * `external_directory_read`, `external_directory_write`).
+ * A family covers its bare name and every `<name>_*` member, the shape the
+ * engine's delegation envelope uses (`path_read`, `path_write`,
+ * `external_directory_read`, `external_directory_write`); an unknown
+ * member is excluded too, which only ever defers.
  */
 const EXCLUDED_SURFACE_FAMILIES = ["path", "external_directory"] as const;
 

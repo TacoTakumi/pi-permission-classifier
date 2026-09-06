@@ -1097,6 +1097,29 @@ describe("guidance wiring", () => {
     expect(promptOf(complete, 1)).not.toContain("first edition");
   });
 
+  it("never renders an over-cap file's text, even a trusted one", async () => {
+    const complete = allowingComplete();
+    const oversized = `OVERSIZED-MARKER ${"z".repeat(16 * 1024)}`;
+    const { authorize } = registered(complete, () => [
+      { path: "/project/AGENTS.md", content: oversized },
+      { path: "/project/sub/AGENTS.md", content: PROJECT_CONTENT },
+    ]);
+    const entryLog = log();
+    await authorize(askDetails(), {}, entryLog);
+    const prompt = promptOf(complete, 0);
+    expect(prompt).not.toContain("OVERSIZED-MARKER");
+    expect(prompt).toContain(PROJECT_CONTENT);
+    expect(entryLog.review.mock.calls[0]?.[1]).toMatchObject({
+      guidanceDropped: [
+        {
+          path: "/project/AGENTS.md",
+          bytes: Buffer.byteLength(oversized),
+          reason: "over-file-cap",
+        },
+      ],
+    });
+  });
+
   it("logs the dropped project file as untrusted on the decision entry", async () => {
     const complete = allowingComplete();
     const { ctx, authorize } = registered(complete, () => [
