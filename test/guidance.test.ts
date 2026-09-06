@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   findGlobalGuidancePath,
+  GUIDANCE_FILE_CAP_BYTES,
+  GUIDANCE_TOTAL_CAP_BYTES,
   loadGuidanceFromDisk,
   selectGuidance,
 } from "#src/guidance";
@@ -15,6 +17,11 @@ const GLOBAL_PATH = "/home/op/.pi/agent/AGENTS.md";
 const PROJECT_PATH = "/work/repo/AGENTS.md";
 
 const KIB = 1024;
+
+it("caps are 16 KiB per file and 32 KiB in total", () => {
+  expect(GUIDANCE_FILE_CAP_BYTES).toBe(16 * KIB);
+  expect(GUIDANCE_TOTAL_CAP_BYTES).toBe(32 * KIB);
+});
 
 function text(bytes: number): string {
   return "a".repeat(bytes);
@@ -108,12 +115,13 @@ describe("selectGuidance", () => {
     ]);
   });
 
-  it("drops every later file once the total cap is hit, even a small one", () => {
+  it("drops every later file once the total cap is hit, even one that would fit", () => {
     const result = selectGuidance(
       [
-        { path: "/a/AGENTS.md", content: text(16 * KIB) },
-        { path: "/a/b/AGENTS.md", content: text(16 * KIB) },
-        { path: "/a/b/c/AGENTS.md", content: "tiny" },
+        { path: "/a/AGENTS.md", content: text(12 * KIB) },
+        { path: "/a/b/AGENTS.md", content: text(12 * KIB) },
+        { path: "/a/b/c/AGENTS.md", content: text(12 * KIB) },
+        { path: "/a/b/c/d/AGENTS.md", content: "tiny" },
       ],
       GLOBAL_PATH,
       true,
@@ -124,7 +132,25 @@ describe("selectGuidance", () => {
       "/a/b/AGENTS.md",
     ]);
     expect(result.dropped).toEqual([
-      { path: "/a/b/c/AGENTS.md", bytes: 4, reason: "over-total-cap" },
+      { path: "/a/b/c/AGENTS.md", bytes: 12 * KIB, reason: "over-total-cap" },
+      { path: "/a/b/c/d/AGENTS.md", bytes: 4, reason: "over-total-cap" },
+    ]);
+  });
+
+  it("fills the total cap exactly and drops the next byte", () => {
+    const result = selectGuidance(
+      [
+        { path: "/a/AGENTS.md", content: text(GUIDANCE_FILE_CAP_BYTES) },
+        { path: "/a/b/AGENTS.md", content: text(GUIDANCE_FILE_CAP_BYTES) },
+        { path: "/a/b/c/AGENTS.md", content: "x" },
+      ],
+      GLOBAL_PATH,
+      true,
+    );
+
+    expect(result.included).toHaveLength(2);
+    expect(result.dropped).toEqual([
+      { path: "/a/b/c/AGENTS.md", bytes: 1, reason: "over-total-cap" },
     ]);
   });
 

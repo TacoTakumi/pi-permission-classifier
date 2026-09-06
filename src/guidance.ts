@@ -115,6 +115,9 @@ export function selectGuidance(
   const included: IncludedGuidance[] = [];
   const dropped: DroppedGuidance[] = [];
   let total = 0;
+  // Latched on the first overflow: from then on every later file is dropped,
+  // however small, so the prompt never carries a file out of loader order.
+  let totalCapHit = false;
 
   for (const { path, content } of files) {
     const isGlobal = globalPath !== undefined && path === globalPath;
@@ -128,7 +131,8 @@ export function selectGuidance(
       dropped.push({ path, bytes, reason: "over-file-cap" });
       continue;
     }
-    if (total + bytes > GUIDANCE_TOTAL_CAP_BYTES) {
+    if (totalCapHit || total + bytes > GUIDANCE_TOTAL_CAP_BYTES) {
+      totalCapHit = true;
       dropped.push({ path, bytes, reason: "over-total-cap" });
       continue;
     }
