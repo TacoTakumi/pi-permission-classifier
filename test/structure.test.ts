@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { classifierConfigSchema } from "#src/config-schema";
+import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "#src/prompt";
+import { askDetails } from "#test/fixtures/details";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -196,7 +198,7 @@ describe("operator docs", () => {
     expect(surfacesRow).toMatch(/ignored/);
     expect(readme).not.toContain("### Choosing surfaces");
     expect(readme.replace(/\s+/g, " ")).toMatch(
-      /every surface except `path` and `external_directory`/,
+      /every surface except the `path` and `external_directory` families/,
     );
   });
 
@@ -377,5 +379,127 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
     );
     expect(source).not.toContain("SettingsManager");
     expect(source).not.toContain("onSelectAsDefault");
+  });
+});
+
+describe("guidance discipline", () => {
+  it("the guidance module is the only importer of pi's context loader", () => {
+    for (const name of LINK_FILES) {
+      const source = src(name);
+      const importsLoader =
+        /import \{[^}]*loadProjectContextFiles[^}]*\} from "@earendil-works\/pi-coding-agent"/.test(
+          source,
+        );
+      if (name === "guidance.ts") {
+        expect(importsLoader).toBe(true);
+      } else {
+        expect(importsLoader, `${name} imports the context loader`).toBe(false);
+        expect(source, `${name} references the context loader`).not.toContain(
+          "loadProjectContextFiles",
+        );
+      }
+    }
+  });
+
+  it("node:fs stays in config-loader.ts and node:path in config-loader.ts and guidance.ts", () => {
+    const fsImporters = LINK_FILES.filter((name) => /from "node:fs"/.test(src(name)));
+    const pathImporters = LINK_FILES.filter((name) =>
+      /from "node:path"/.test(src(name)),
+    );
+    expect(fsImporters).toEqual(["config-loader.ts"]);
+    expect(pathImporters).toEqual(["config-loader.ts", "guidance.ts"]);
+    for (const name of ["prompt.ts", "command.ts"]) {
+      expect(src(name)).not.toMatch(/node:fs|node:path|readFileSync|process\.cwd/);
+    }
+  });
+
+  it("no link file reads the system prompt", () => {
+    for (const name of LINK_FILES) {
+      expect(
+        referencesMember(src(name), "getSystemPrompt"),
+        `${name} references getSystemPrompt`,
+      ).toBe(false);
+    }
+  });
+
+  it("the guidance module stores nothing across asks", () => {
+    // Every top-level binding is a function, a type, or a frozen constant:
+    // no module-level cache can hold a loader result from one ask to the next.
+    const topLevel = src("guidance.ts").match(/^(?:export )?(?:let|var) /gm) ?? [];
+    expect(topLevel).toEqual([]);
+  });
+
+  it("the rubric carries the authority line and the two posture lines", () => {
+    expect(DEFAULT_INSTRUCTIONS).toMatch(
+      /normal for this operator and\s+project[^.]*toward allow or deny[^.]*never override the never-allow list/,
+    );
+    expect(DEFAULT_INSTRUCTIONS).toContain("Network fetches:");
+    expect(DEFAULT_INSTRUCTIONS).toContain("localhost included");
+    expect(DEFAULT_INSTRUCTIONS).toContain("Cleanup deletes:");
+    expect(DEFAULT_INSTRUCTIONS).toContain("not discarding work");
+  });
+
+  it("the guidance header appears with one file and not with none", () => {
+    const entry = {
+      path: "/home/op/.pi/agent/AGENTS.md",
+      content: "x",
+      bytes: 1,
+      hash12: "000000000000",
+      isGlobal: true,
+    };
+    const header = /never overrides the never-allow list/;
+    expect(renderReviewPrompt(askDetails(), null, [entry])).toMatch(header);
+    expect(renderReviewPrompt(askDetails(), null, [])).not.toMatch(header);
+  });
+
+  describe("docs claims", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+    const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf-8");
+    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
+    const flat = readme.replace(/\s+/g, " ");
+
+    it("README has the guidance section with trust gating, caps, and log fields", () => {
+      expect(readme).toMatch(/^### Guidance files$/m);
+      expect(flat).toMatch(/trust/i);
+      expect(flat).toContain("16 KiB");
+      expect(flat).toContain("32 KiB");
+      expect(flat).toContain("guidanceIncluded");
+      expect(flat).toContain("guidanceDropped");
+      expect(flat).toContain("guidance-load-failed");
+      for (const reason of ["over-file-cap", "over-total-cap", "untrusted"]) {
+        expect(flat).toContain(reason);
+      }
+    });
+
+    it("README documents the two rubric lines and the family exclusion", () => {
+      expect(flat).toMatch(/Network fetches/);
+      expect(flat).toMatch(/Cleanup deletes/);
+      for (const surface of [
+        "path_read",
+        "path_write",
+        "external_directory_read",
+        "external_directory_write",
+      ]) {
+        expect(flat).toContain(surface);
+      }
+    });
+
+    it("CHANGELOG's top heading is a dated version whose Added section mentions guidance", () => {
+      const headings = changelog.match(/^## .*$/gm) ?? [];
+      expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
+      expect(headings[0]).not.toMatch(/unreleased/i);
+      const top = changelog.slice(
+        changelog.indexOf(headings[0]!),
+        headings[1] ? changelog.indexOf(headings[1]) : undefined,
+      );
+      const added = top.slice(top.indexOf("### Added"));
+      expect(added.split("\n### ")[0]).toMatch(/guidance/i);
+    });
+
+    it("CLAUDE.md lists the guidance module and names it as a disk reader", () => {
+      expect(guide).toContain("src/guidance.ts");
+      expect(guide).toContain("test/guidance.test.ts");
+      expect(guide).toMatch(/guidance\.ts[^\n]*\n?[^\n]*(loader|disk)/i);
+    });
   });
 });
