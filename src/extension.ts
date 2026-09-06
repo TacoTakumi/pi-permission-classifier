@@ -19,6 +19,12 @@
  * `model_select`, so with no config override the judge is always the model
  * the session is actually running.
  *
+ * Guidance files are read for every judged ask through the reviewer's
+ * guidance seam: the loader walks the disk with the session cwd and the
+ * agent dir, project trust is read from the session context at that moment
+ * (never cached at ready), and the selection applies the trust gate and the
+ * byte caps. An older pi without a trust query counts as untrusted.
+ *
  * Once the link registers, the footer status `zz-permission-classifier` names
  * the effective judge (see `judge.ts`); it follows `model_select` and is
  * cleared at `session_shutdown`. No status is set when the link does not
@@ -65,6 +71,13 @@ import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
 } from "./config-schema";
+import {
+  findGlobalGuidancePath,
+  type GuidanceLoader,
+  type GuidanceSelection,
+  loadGuidanceFromDisk,
+  selectGuidance,
+} from "./guidance";
 import { formatHealthSuffix, SessionHealth } from "./health";
 import {
   formatJudgeStatus,
@@ -101,6 +114,8 @@ export interface ClassifierDependencies {
   writeJudge?: (provider: string | undefined, model: string | undefined) => void;
   /** Builds the /permission-model picker; the default mounts pi's selector. */
   buildPicker?: PickerSeam;
+  /** Reads the context files from disk; defaults to pi's context-file walk. */
+  loadGuidance?: GuidanceLoader;
 }
 
 function warn(message: string): void {
@@ -126,6 +141,7 @@ export function createClassifierExtension(
     dependencies.writeJudge ??
     ((provider: string | undefined, model: string | undefined) =>
       writeGlobalJudge(agentDir(), provider, model));
+  const loadGuidance = dependencies.loadGuidance ?? loadGuidanceFromDisk;
 
   pi.registerFlag(FLAG_NAME, {
     description:
@@ -138,6 +154,8 @@ export function createClassifierExtension(
   let sessionModel: Model<any> | undefined;
   let registry: (ModelRegistryLike & CommandRegistryLike) | undefined;
   let ui: ExtensionContext["ui"] | undefined;
+  /** The session context, for the per-ask cwd and trust reads. */
+  let session: ExtensionContext | undefined;
   let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
   let warnedUnreachable = false;
@@ -158,6 +176,25 @@ export function createClassifierExtension(
       return config;
     }
     return { ...config, provider: override.provider, model: override.model };
+  }
+
+  /**
+   * Load and select this ask's guidance. Called by the reviewer once per
+   * judged ask; every read here is live — the disk walk, the agent dir, and
+   * the trust query — so nothing decided at ready can go stale. Throws
+   * propagate: the reviewer turns them into a guidance-load-failed defer.
+   */
+  function getGuidance(): GuidanceSelection {
+    if (!session) {
+      throw new Error("no session context to read guidance for");
+    }
+    const dir = agentDir();
+    const files = loadGuidance({ cwd: session.cwd, agentDir: dir });
+    const trusted =
+      typeof session.isProjectTrusted === "function"
+        ? session.isProjectTrusted()
+        : false;
+    return selectGuidance(files, findGlobalGuidancePath(files, dir), trusted);
   }
 
   /** Read the launch flag; a value the registry does not know is ignored. */
@@ -265,6 +302,7 @@ export function createClassifierExtension(
     sessionModel = ctx.model;
     registry = ctx.modelRegistry;
     ui = ctx.ui;
+    session = ctx;
     override = readFlagOverride();
     for (const issue of result.issues) {
       warn(`config issue: ${formatConfigIssue(issue)}`);
@@ -297,6 +335,7 @@ export function createClassifierExtension(
       getRegistry: () => registry,
       complete,
       breaker,
+      getGuidance,
       onOutcome: (outcome) => {
         health.record(outcome);
         refreshStatus();
@@ -317,6 +356,7 @@ export function createClassifierExtension(
     sessionModel = undefined;
     registry = undefined;
     ui = undefined;
+    session = undefined;
     override = undefined;
     warnedUnreachable = false;
     stopCountdown();

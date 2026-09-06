@@ -124,6 +124,7 @@ function ctxWithModel() {
     cwd: "/project",
     mode: "tui" as const,
     model: SESSION_MODEL,
+    isProjectTrusted: vi.fn(() => true),
     modelRegistry: {
       find: vi.fn(),
       getApiKeyAndHeaders: vi.fn(async () => ({
@@ -227,6 +228,7 @@ function start(
     complete?: CompleteFn;
     writeJudge?: ClassifierDependencies["writeJudge"];
     buildPicker?: ClassifierDependencies["buildPicker"];
+    loadGuidance?: ClassifierDependencies["loadGuidance"];
   } = {},
 ) {
   const agentDir = makeAgentDir();
@@ -236,7 +238,9 @@ function start(
     complete: overrides.complete ?? vi.fn(),
     writeJudge: overrides.writeJudge ?? vi.fn(),
     ...(overrides.buildPicker ? { buildPicker: overrides.buildPicker } : {}),
+    loadGuidance: overrides.loadGuidance ?? (() => []),
   });
+  return agentDir;
 }
 
 describe("createClassifierExtension", () => {
@@ -992,5 +996,137 @@ describe("default export", () => {
     expect(pi.lifecycle.has("model_select")).toBe(true);
     expect(pi.lifecycle.has("session_shutdown")).toBe(true);
     expect(pi.events.has(READY_CHANNEL)).toBe(true);
+  });
+});
+
+describe("guidance wiring", () => {
+  const GLOBAL_CONTENT = "operator: curl -O downloads are routine";
+  const PROJECT_CONTENT = "project: rm -rf build/ is routine cleanup";
+
+  function promptOf(complete: ReturnType<typeof allowingComplete>, call: number) {
+    const context = complete.mock.calls[call]?.[1] as {
+      messages: { content: string }[];
+    };
+    return context.messages[0]?.content ?? "";
+  }
+
+  /** Session started and link registered; returns the ctx, authorizer, and agent dir. */
+  function registered(
+    complete: ReturnType<typeof allowingComplete>,
+    loadGuidance: ClassifierDependencies["loadGuidance"],
+  ) {
+    const pi = makeFakePi();
+    const agentDir = start(pi, { complete, loadGuidance });
+    publishForSession();
+    const ctx = ctxWithModel();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    return { ctx, authorize: lastAuthorizer(), agentDir };
+  }
+
+  function log() {
+    return { review: vi.fn(), debug: vi.fn() };
+  }
+
+  it("calls the loader on every judged ask with the session cwd and the agent dir", async () => {
+    const complete = allowingComplete();
+    const loadGuidance = vi.fn(() => []);
+    const { authorize, agentDir } = registered(complete, loadGuidance);
+    await authorize(askDetails(), {}, log());
+    await authorize(askDetails(), {}, log());
+    expect(loadGuidance).toHaveBeenCalledTimes(2);
+    expect(loadGuidance).toHaveBeenCalledWith({ cwd: "/project", agentDir });
+  });
+
+  it("includes the global file whether or not the project is trusted", async () => {
+    const complete = allowingComplete();
+    const { ctx, authorize, agentDir } = registered(complete, ({ agentDir }) => [
+      { path: join(agentDir, "AGENTS.md"), content: GLOBAL_CONTENT },
+      { path: "/project/AGENTS.md", content: PROJECT_CONTENT },
+    ]);
+    ctx.isProjectTrusted.mockReturnValue(false);
+    await authorize(askDetails(), {}, log());
+    const prompt = promptOf(complete, 0);
+    expect(prompt).toContain(
+      `Operator guidance from ${join(agentDir, "AGENTS.md")}:`,
+    );
+    expect(prompt).toContain(GLOBAL_CONTENT);
+    expect(prompt).not.toContain(PROJECT_CONTENT);
+  });
+
+  it.each([
+    ["untrusted then trusted", [false, true]],
+    ["trusted then untrusted", [true, false]],
+  ])(
+    "reads trust per ask: %s flips project inclusion",
+    async (_label, sequence) => {
+      const complete = allowingComplete();
+      const { ctx, authorize } = registered(complete, () => [
+        { path: "/project/AGENTS.md", content: PROJECT_CONTENT },
+      ]);
+      for (const trusted of sequence) {
+        ctx.isProjectTrusted.mockReturnValue(trusted);
+        await authorize(askDetails(), {}, log());
+      }
+      expect(ctx.isProjectTrusted).toHaveBeenCalledTimes(2);
+      sequence.forEach((trusted, index) => {
+        const prompt = promptOf(complete, index);
+        if (trusted) {
+          expect(prompt).toContain("Project guidance from /project/AGENTS.md:");
+          expect(prompt).toContain(PROJECT_CONTENT);
+        } else {
+          expect(prompt).not.toContain(PROJECT_CONTENT);
+        }
+      });
+    },
+  );
+
+  it("renders content changed between asks in the second prompt", async () => {
+    const complete = allowingComplete();
+    let content = "first edition";
+    const { authorize } = registered(complete, () => [
+      { path: "/project/AGENTS.md", content },
+    ]);
+    await authorize(askDetails(), {}, log());
+    content = "second edition";
+    await authorize(askDetails(), {}, log());
+    expect(promptOf(complete, 0)).toContain("first edition");
+    expect(promptOf(complete, 0)).not.toContain("second edition");
+    expect(promptOf(complete, 1)).toContain("second edition");
+    expect(promptOf(complete, 1)).not.toContain("first edition");
+  });
+
+  it("logs the dropped project file as untrusted on the decision entry", async () => {
+    const complete = allowingComplete();
+    const { ctx, authorize } = registered(complete, () => [
+      { path: "/project/AGENTS.md", content: PROJECT_CONTENT },
+    ]);
+    ctx.isProjectTrusted.mockReturnValue(false);
+    const entryLog = log();
+    await authorize(askDetails(), {}, entryLog);
+    expect(entryLog.review.mock.calls[0]?.[1]).toMatchObject({
+      guidanceIncluded: [],
+      guidanceDropped: [
+        {
+          path: "/project/AGENTS.md",
+          bytes: Buffer.byteLength(PROJECT_CONTENT),
+          reason: "untrusted",
+        },
+      ],
+    });
+  });
+
+  it("defers with guidance-load-failed when the loader throws", async () => {
+    const complete = allowingComplete();
+    const { authorize } = registered(complete, () => {
+      throw new Error("unreadable");
+    });
+    const entryLog = log();
+    const verdict = await authorize(askDetails(), {}, entryLog);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(entryLog.review.mock.calls[0]?.[1]).toMatchObject({
+      deferReason: "guidance-load-failed",
+    });
   });
 });

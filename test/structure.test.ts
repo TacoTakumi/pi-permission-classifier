@@ -118,7 +118,9 @@ describe("no output channels beyond the seams (REQ-15)", () => {
       );
       if (name === "config-loader.ts") {
         expect(nodeBuiltins.sort()).toEqual(["node:fs", "node:path"]);
-      } else if (name === "context.ts" || name === "guidance.ts") {
+      } else if (name === "guidance.ts") {
+        expect(nodeBuiltins.sort()).toEqual(["node:crypto", "node:path"]);
+      } else if (name === "context.ts") {
         expect(nodeBuiltins).toEqual(["node:crypto"]);
       } else {
         expect(nodeBuiltins).toEqual([]);
