@@ -108,7 +108,7 @@ function setsJudge(layer: Record<string, unknown> | undefined): boolean {
  */
 const IGNORED_FIELDS: Record<string, string> = {
   surfaces:
-    "This field is ignored: every surface except path and external_directory is judged.",
+    "This field is ignored: every surface outside the path and external_directory families is judged.",
 };
 
 function reportIgnoredFields(

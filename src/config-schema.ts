@@ -34,7 +34,7 @@ export const classifierConfigSchema = z
     model: z.string().min(1).optional(),
     instructions: z.string().min(1).optional(),
     // Accepted for backward compatibility and never read: the reviewer
-    // judges every surface except path and external_directory. Kept so an
+    // judges every surface outside the path and external_directory families. Kept so an
     // older config file still parses.
     surfaces: z.array(z.string().min(1)).optional(),
     timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
