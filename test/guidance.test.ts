@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { selectGuidance } from "#src/guidance";
+import {
+  findGlobalGuidancePath,
+  loadGuidanceFromDisk,
+  selectGuidance,
+} from "#src/guidance";
 
 const GLOBAL_PATH = "/home/op/.pi/agent/AGENTS.md";
 const PROJECT_PATH = "/work/repo/AGENTS.md";
@@ -158,7 +163,18 @@ describe("selectGuidance", () => {
     });
   });
 
-  it("imports no node:fs and no pi context loader", () => {
+  it("treats an undefined global path as no global file", () => {
+    const result = selectGuidance(
+      [{ path: PROJECT_PATH, content: "project rules" }],
+      undefined,
+      false,
+    );
+
+    expect(result.included).toEqual([]);
+    expect(result.dropped[0]?.reason).toBe("untrusted");
+  });
+
+  it("imports no node:fs: disk reads go through pi's loader only", () => {
     const source = readFileSync(
       join(import.meta.dirname, "..", "src", "guidance.ts"),
       "utf-8",
@@ -166,6 +182,86 @@ describe("selectGuidance", () => {
     const imports = [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
 
     expect(imports).not.toContain("node:fs");
-    expect(imports.some((spec) => spec!.includes("coding-agent"))).toBe(false);
+    expect(imports).toContain("@earendil-works/pi-coding-agent");
+  });
+});
+
+describe("findGlobalGuidancePath", () => {
+  it("names the loader entry that lives in the agent dir", () => {
+    const files = [
+      { path: "/home/op/.pi/agent/CLAUDE.md", content: "g" },
+      { path: "/work/repo/AGENTS.md", content: "p" },
+    ];
+
+    expect(findGlobalGuidancePath(files, "/home/op/.pi/agent")).toBe(
+      "/home/op/.pi/agent/CLAUDE.md",
+    );
+    expect(findGlobalGuidancePath(files, "/home/op/.pi/agent/")).toBe(
+      "/home/op/.pi/agent/CLAUDE.md",
+    );
+  });
+
+  it("returns undefined when no entry lives in the agent dir", () => {
+    expect(
+      findGlobalGuidancePath(
+        [{ path: "/work/repo/AGENTS.md", content: "p" }],
+        "/home/op/.pi/agent",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not mistake a nested directory for the agent dir", () => {
+    expect(
+      findGlobalGuidancePath(
+        [{ path: "/home/op/.pi/agent/sub/AGENTS.md", content: "x" }],
+        "/home/op/.pi/agent",
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("loadGuidanceFromDisk", () => {
+  const dirs: string[] = [];
+
+  function scratch(name: string): string {
+    const dir = mkdtempSync(join(tmpdir(), `pi-permission-classifier-${name}-`));
+    dirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the agent dir file first, then ancestors down to cwd", () => {
+    const agentDir = scratch("agent");
+    const root = scratch("root");
+    const cwd = join(root, "nested", "leaf");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(join(agentDir, "AGENTS.md"), "global\n");
+    writeFileSync(join(root, "AGENTS.md"), "root\n");
+    writeFileSync(join(cwd, "AGENTS.md"), "leaf\n");
+
+    const files = loadGuidanceFromDisk({ cwd, agentDir });
+
+    expect(files.map((file) => file.content)).toEqual([
+      "global\n",
+      "root\n",
+      "leaf\n",
+    ]);
+    expect(findGlobalGuidancePath(files, agentDir)).toBe(files[0]?.path);
+  });
+
+  it("returns an empty list when no context file exists anywhere near", () => {
+    const agentDir = scratch("agent");
+    const cwd = scratch("cwd");
+
+    const files = loadGuidanceFromDisk({ cwd, agentDir }).filter(
+      (file) => file.path.startsWith(agentDir) || file.path.startsWith(cwd),
+    );
+
+    expect(files).toEqual([]);
   });
 });

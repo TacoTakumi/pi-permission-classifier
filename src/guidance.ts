@@ -1,11 +1,17 @@
 /**
- * Guidance selection: which context files (the operator's global AGENTS.md
- * and the trusted project's own) reach the judge prompt, and why the rest do
- * not.
+ * Guidance: which context files (the operator's global AGENTS.md and the
+ * trusted project's own) reach the judge prompt, and why the rest do not.
  *
- * This module is pure. It receives the loader's file list already read from
- * disk, decides inclusion, and measures every file for the audit trail. The
- * rules, applied in loader order:
+ * This module is the classifier's only reader of context files, and it reads
+ * them through pi's own context-file walk (`loadProjectContextFiles`), never
+ * node:fs, so the judge sees exactly the file set the main agent sees:
+ * override names, the CLAUDE.md fallback, worktree shadowing. Files are read
+ * from disk on every judged ask, so an edit takes effect on the next ask;
+ * nothing is cached.
+ *
+ * Selection itself is pure. It receives the loader's file list, decides
+ * inclusion, and measures every file for the audit trail. The rules, applied
+ * in loader order:
  *
  * - The global file is always a candidate; every other file is a candidate
  *   only when the project is trusted (dropped as `untrusted` otherwise).
@@ -19,6 +25,9 @@
  */
 
 import { createHash } from "node:crypto";
+import { dirname, resolve } from "node:path";
+
+import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 
 /** Maximum UTF-8 bytes for a single included file. */
 export const GUIDANCE_FILE_CAP_BYTES = 16 * 1024;
@@ -61,16 +70,46 @@ export interface GuidanceSelection {
   readonly dropped: readonly DroppedGuidance[];
 }
 
+/** Where to look: the session cwd and the pi agent dir. */
+export interface GuidanceLoadOptions {
+  readonly cwd: string;
+  readonly agentDir: string;
+}
+
+/** The disk seam: pi's context-file walk, or a test double. */
+export type GuidanceLoader = (
+  options: GuidanceLoadOptions,
+) => readonly GuidanceSource[];
+
+/**
+ * Read the context files from disk through pi's loader: the agent dir file
+ * first (when present), then each ancestor of cwd from the root down to cwd.
+ */
+export const loadGuidanceFromDisk: GuidanceLoader = (options) =>
+  loadProjectContextFiles({ cwd: options.cwd, agentDir: options.agentDir });
+
+/**
+ * The global file among the loader's entries: the one that lives directly in
+ * the agent dir, whatever its name. Undefined when the agent dir holds none.
+ */
+export function findGlobalGuidancePath(
+  files: readonly GuidanceSource[],
+  agentDir: string,
+): string | undefined {
+  const dir = resolve(agentDir);
+  return files.find((file) => dirname(resolve(file.path)) === dir)?.path;
+}
+
 /**
  * Select the guidance files for one ask.
  *
  * `files` is the loader's list in loader order, `globalPath` identifies the
- * operator's global file within it, and `trusted` is the project's trust
- * state for this ask.
+ * operator's global file within it (undefined when there is none), and
+ * `trusted` is the project's trust state for this ask.
  */
 export function selectGuidance(
   files: readonly GuidanceSource[],
-  globalPath: string,
+  globalPath: string | undefined,
   trusted: boolean,
 ): GuidanceSelection {
   const included: IncludedGuidance[] = [];
@@ -78,7 +117,7 @@ export function selectGuidance(
   let total = 0;
 
   for (const { path, content } of files) {
-    const isGlobal = path === globalPath;
+    const isGlobal = globalPath !== undefined && path === globalPath;
     const bytes = Buffer.byteLength(content, "utf8");
 
     if (!isGlobal && !trusted) {
