@@ -788,6 +788,29 @@ describe("guidance seam", () => {
     });
   });
 
+  it("keeps the selected guidance on the backstop entry when a later stage throws", async () => {
+    const authorize = createClassifierReviewer(
+      makeDeps({
+        complete: completeReporting({ verdict: "allow" }),
+        getGuidance: guidanceSeam(),
+      }),
+    );
+    const log = fakeLog();
+    log.review.mockImplementationOnce(() => {
+      throw new Error("log sink down");
+    });
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(log.review).toHaveBeenCalledTimes(2);
+    expect(log.review.mock.calls[1]?.[1]).toMatchObject({
+      deferReason: "internal-error",
+      guidanceIncluded: [
+        { path: INCLUDED.path, bytes: INCLUDED.bytes, hash12: INCLUDED.hash12 },
+      ],
+      guidanceDropped: [DROPPED_CAP, DROPPED_UNTRUSTED],
+    });
+  });
+
   it("does not call the seam on a pre-model defer", async () => {
     const getGuidance = guidanceSeam();
     const authorize = createClassifierReviewer(
