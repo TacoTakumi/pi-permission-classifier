@@ -239,6 +239,25 @@ describe("DEFAULT_INSTRUCTIONS", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/python3 -c/);
   });
 
+  it("allows a fetch from any host whose bytes only land in the project tree or /tmp", () => {
+    expect(DEFAULT_INSTRUCTIONS).toContain(
+      "Network fetches: downloading from any host, localhost included, is\n" +
+        "allow when the fetched bytes are only written to files inside the\n" +
+        "project tree or /tmp and nothing executes them; a fetch that feeds a\n" +
+        "shell or interpreter is the pipe-to-shell item below, and any other\n" +
+        "destination or use defers.",
+    );
+  });
+
+  it("treats a plain rm inside the project tree or /tmp as cleanup", () => {
+    expect(DEFAULT_INSTRUCTIONS).toContain(
+      "Cleanup deletes: a plain rm of named files or build output inside the\n" +
+        "project tree or /tmp is cleanup, not discarding work; a delete that\n" +
+        "reaches outside those places, removes tracked changes, or uses paths\n" +
+        "you cannot resolve defers.",
+    );
+  });
+
   it("exempts a plain git stash from the discard category", () => {
     expect(DEFAULT_INSTRUCTIONS).toMatch(/git stash without drop or clear/);
   });
