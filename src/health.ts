@@ -5,7 +5,8 @@
  * seam; the extension owns the record, appends the suffix to the footer
  * status, and resets the record at session shutdown.
  *
- * Only failure-path defers are health events. A model verdict (allow, deny,
+ * Only failure-path defers are health events (a model call that failed or
+ * timed out, an unresolved model, a guidance load that threw, and the like). A model verdict (allow, deny,
  * or the judge's own defer) is the classifier working as designed: allow and
  * a model defer clear the pending reason, deny changes nothing, and neither
  * ever shows in the footer.

@@ -12,7 +12,10 @@
  *   3. the extracted full-command context fits `contextBudgetBytes` (else
  *      defer, recorded — over-budget context is never rendered, REQ-07),
  *   4. the judge model and its auth resolve (else defer, recorded),
- *   5. the model reviews the ask facts and its verdict is returned uncapped.
+ *   5. the guidance seam selects the operator and trusted-project guidance
+ *      files for this ask (a throw defers, recorded — no model call),
+ *   6. the model reviews the ask facts plus guidance and its verdict is
+ *      returned uncapped.
  *
  * Every failure path defers — more prompting, never less (ADR 0007
  * invariant). Each reviewed ask writes exactly one `classifier.decision`
@@ -31,6 +34,7 @@ import type {
 import { CircuitBreaker } from "./breaker";
 import type { ClassifierConfig } from "./config-schema";
 import { extractFullCommandContext, type FullCommandContext } from "./context";
+import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
 import { type CompleteFn, reviewAsk } from "./model-review";
 
@@ -50,7 +54,8 @@ type PreModelDeferReason =
   | "model-unresolved"
   | "auth-failed"
   | "breaker-open"
-  | "context-over-budget";
+  | "context-over-budget"
+  | "guidance-load-failed";
 
 /** Model-call outcomes that count against the circuit breaker. */
 const BREAKER_FAILURE_REASONS = new Set(["timeout", "call-failed"]);
@@ -88,6 +93,13 @@ export interface ClassifierReviewerDeps {
   complete: CompleteFn;
   /** The shared circuit breaker (REQ-11); the reviewer makes its own when absent. */
   breaker?: CircuitBreaker;
+  /**
+   * Guidance seam: called once per judged ask, right before the model stage,
+   * to load and select the guidance files for this ask (production: pi's
+   * context loader, the trust check, and the selection in src/guidance.ts).
+   * Absent means no guidance. A throw defers the ask (guidance-load-failed).
+   */
+  getGuidance?: () => GuidanceSelection;
   /**
    * Outcome seam: called once per `classifier.decision` entry with the
    * verdict and defer reason, after the entry is logged. Never called for
@@ -140,6 +152,7 @@ export function createClassifierReviewer(
           verdict: "defer",
           deferReason: "internal-error",
           ...contextFields(false, context),
+          ...guidanceFields(EMPTY_GUIDANCE),
         });
       } catch {
         // The log failed too; there is nothing left to record on.
@@ -246,6 +259,24 @@ async function decide(
     });
   }
 
+  // The guidance stage: read from disk for every judged ask so an edit takes
+  // effect on the next ask, and read only now so the cheap short-circuits
+  // above never touch the filesystem. A loader failure is a failure path:
+  // defer, never judge without the guidance the operator expects.
+  let guidance: GuidanceSelection;
+  try {
+    guidance = deps.getGuidance?.() ?? EMPTY_GUIDANCE;
+  } catch {
+    return deferWith(deps, log, {
+      requestId,
+      surface,
+      value,
+      modelId,
+      deferReason: "guidance-load-failed",
+      context,
+    });
+  }
+
   const outcome = await reviewAsk({
     details,
     config,
@@ -254,6 +285,7 @@ async function decide(
     apiKey: auth.apiKey,
     headers: auth.headers,
     context,
+    guidance: guidance.included,
   });
   if (
     outcome.deferReason !== undefined &&
@@ -287,6 +319,7 @@ async function decide(
     verdict: outcome.verdict.kind,
     deferReason,
     ...contextFields(context !== null, context),
+    ...guidanceFields(guidance),
   });
   report(
     deps,
@@ -326,6 +359,7 @@ function deferWith(
     verdict: "defer",
     deferReason: entry.deferReason,
     ...contextFields(false, entry.context),
+    ...guidanceFields(EMPTY_GUIDANCE),
   });
   report(deps, { verdict: "defer", deferReason: entry.deferReason });
   return { kind: "defer" };
@@ -348,6 +382,32 @@ function contextFields(
     contextIncluded: included,
     contextBytes: context?.bytes ?? null,
     contextHash: context?.hash12 ?? null,
+  };
+}
+
+/** No guidance: the render before the seam runs, and after it fails. */
+const EMPTY_GUIDANCE: GuidanceSelection = { included: [], dropped: [] };
+
+/**
+ * The two guidance lists every decision entry carries. Included files are
+ * logged by path, bytes, and hash prefix — never their content — and dropped
+ * files by path, bytes, and the rule that excluded them.
+ */
+function guidanceFields(guidance: GuidanceSelection): {
+  guidanceIncluded: { path: string; bytes: number; hash12: string }[];
+  guidanceDropped: { path: string; bytes: number; reason: string }[];
+} {
+  return {
+    guidanceIncluded: guidance.included.map(({ path, bytes, hash12 }) => ({
+      path,
+      bytes,
+      hash12,
+    })),
+    guidanceDropped: guidance.dropped.map(({ path, bytes, reason }) => ({
+      path,
+      bytes,
+      reason,
+    })),
   };
 }
 
