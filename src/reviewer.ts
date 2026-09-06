@@ -5,10 +5,12 @@
  * The decision runs top to bottom, deferring at the first miss so the cheap
  * gates short-circuit before any model call:
  *   1. a config is loaded (else defer, recorded),
- *   2. the gate-authoritative surface is determinable and neither `path` nor
- *      `external_directory` (else defer — the engine caps any allow on those
- *      surfaces anyway, so the classifier never attempts them); every other
- *      surface, whatever its name, is judged,
+ *   2. the gate-authoritative surface is determinable and outside the `path`
+ *      and `external_directory` families — the bare name or any directional
+ *      member such as `path_read` or `external_directory_write` (else defer —
+ *      the engine caps any allow on those families anyway, so the classifier
+ *      never attempts them); every other surface, whatever its name, is
+ *      judged,
  *   3. the extracted full-command context fits `contextBudgetBytes` (else
  *      defer, recorded — over-budget context is never rendered, REQ-07),
  *   4. the judge model and its auth resolve (else defer, recorded),
@@ -38,8 +40,20 @@ import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
 import { type CompleteFn, reviewAsk } from "./model-review";
 
-/** Surfaces the engine caps to defer; the classifier never even asks. */
-const EXCLUDED_SURFACES = new Set(["path", "external_directory"]);
+/**
+ * Surface families the engine caps to defer; the classifier never even asks.
+ * A family covers its bare name and every `<name>_<direction>` member, the
+ * shape the engine's delegation envelope uses (`path_read`, `path_write`,
+ * `external_directory_read`, `external_directory_write`).
+ */
+const EXCLUDED_SURFACE_FAMILIES = ["path", "external_directory"] as const;
+
+/** Whether `surface` is the bare name or a directional member of an excluded family. */
+function isExcludedSurface(surface: string): boolean {
+  return EXCLUDED_SURFACE_FAMILIES.some(
+    (family) => surface === family || surface.startsWith(`${family}_`),
+  );
+}
 
 /** Review-log event: one positive decision record per reviewed ask. */
 const DECISION_EVENT = "classifier.decision";
@@ -193,7 +207,7 @@ async function decide(
     });
     return { kind: "defer" };
   }
-  if (EXCLUDED_SURFACES.has(surface)) {
+  if (isExcludedSurface(surface)) {
     log.debug(SHORT_CIRCUIT_EVENT, {
       requestId,
       surface,

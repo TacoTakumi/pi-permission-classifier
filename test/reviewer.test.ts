@@ -103,7 +103,14 @@ describe("surface gating", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["path", "external_directory"])(
+  it.each([
+    "path",
+    "path_read",
+    "path_write",
+    "external_directory",
+    "external_directory_read",
+    "external_directory_write",
+  ])(
     "defers when the gate-authoritative surface is %s, over any display surface",
     async (gateSurface) => {
       const complete = completeReporting({ verdict: "allow" });
@@ -126,6 +133,30 @@ describe("surface gating", () => {
       expect(verdict).toEqual({ kind: "defer" });
       expect(complete).not.toHaveBeenCalled();
       expect(decisionEntry(log)).toBeUndefined();
+    },
+  );
+
+  it.each(["path_read", "external_directory_write"])(
+    "defers a %s display surface with no decision entry when no access intent is set",
+    async (surface) => {
+      const complete = completeReporting({ verdict: "allow" });
+      const authorize = createClassifierReviewer(makeDeps({ complete }));
+      const log = fakeLog();
+      const verdict = await authorize(askDetails({ surface }), QUERY, log);
+      expect(verdict).toEqual({ kind: "defer" });
+      expect(complete).not.toHaveBeenCalled();
+      expect(decisionEntry(log)).toBeUndefined();
+    },
+  );
+
+  it.each(["pathology", "external_directory-ish", "xpath_read"])(
+    "still judges a surface that merely resembles an excluded family: %s",
+    async (surface) => {
+      const complete = completeReporting({ verdict: "allow" });
+      const authorize = createClassifierReviewer(makeDeps({ complete }));
+      const verdict = await authorize(askDetails({ surface }), QUERY, fakeLog());
+      expect(verdict).toEqual({ kind: "allow" });
+      expect(complete).toHaveBeenCalledTimes(1);
     },
   );
 
