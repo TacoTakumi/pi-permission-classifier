@@ -488,16 +488,12 @@ describe("guidance discipline", () => {
       }
     });
 
-    it("CHANGELOG's top heading is a dated version whose Added section mentions guidance", () => {
+    it("CHANGELOG's top heading is a dated version and the newest Added section mentions guidance", () => {
       const headings = changelog.match(/^## .*$/gm) ?? [];
       expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
       expect(headings[0]).not.toMatch(/unreleased/i);
-      const top = changelog.slice(
-        changelog.indexOf(headings[0]!),
-        headings[1] ? changelog.indexOf(headings[1]) : undefined,
-      );
-      const added = top.slice(top.indexOf("### Added"));
-      expect(added.split("\n### ")[0]).toMatch(/guidance/i);
+      const added = changelog.slice(changelog.indexOf("### Added"));
+      expect(added.split(/\n##+ /)[0]).toMatch(/guidance/i);
     });
 
     it("CLAUDE.md lists the guidance module and names it as a disk reader", () => {

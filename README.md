@@ -36,20 +36,22 @@ defer. More prompting, never less.
 Everything below is an operator action - the package never enables itself,
 and installing it grants it no authority until you name it in the chain.
 
-1. Get the package and install its dependencies:
+1. Install the package from npm:
 
-       git clone <this repo> ~/pi-permission-classifier
-       cd ~/pi-permission-classifier
-       npm install
+       pi install npm:pi-permission-classifier
 
-2. Register the package with pi. In `~/.pi/agent/settings.json`, add the
-   package directory to the `packages` list (path relative to
-   `~/.pi/agent`, or absolute). List `pi-permission-classifier` before
+   pi installs it under `~/.pi/agent/npm/` and adds
+   `npm:pi-permission-classifier` to the `packages` list in
+   `~/.pi/agent/settings.json`.
+
+2. Check the package order. `pi install` adds the new entry at the end of
+   `packages`, so it can land after `pi-permission-system`. Edit
+   `~/.pi/agent/settings.json` if needed. List `pi-permission-classifier` before
    `pi-permission-system` in `packages`:
 
        "packages": [
-         "../../pi-permission-classifier",
-         "<path to pi-permission-system>"
+         "npm:pi-permission-classifier",
+         "npm:@gotgenes/pi-permission-system"
        ]
 
    Order matters: pi runs `session_start` handlers in package order, and
@@ -60,6 +62,10 @@ and installing it grants it no authority until you name it in the chain.
    at the next one, so the link and the footer entry appear only after the
    first agent turn (asks are still reviewed, since they happen inside
    agent turns).
+
+   To run from a local checkout instead, clone the repository, run
+   `npm install` in it, and put its directory in `packages` (path relative
+   to `~/.pi/agent`, or absolute), in the same position.
 
 3. Activate the chain link. In
    `~/.pi/agent/extensions/pi-permission-system/config.json`, add:
