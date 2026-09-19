@@ -662,7 +662,7 @@ describe("breaker countdown", () => {
   });
 });
 
-describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
+describe("footer status", () => {
   it("sets judge:session when the link registers with an empty config", () => {
     const pi = makeFakePi();
     start(pi);
@@ -788,7 +788,7 @@ describe("footer status (REQ-18, REQ-19, REQ-20, REQ-21)", () => {
   });
 });
 
-describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
+describe("launch flag --permission-model", () => {
   it("registers a string CLI flag named permission-model", () => {
     const pi = makeFakePi();
     start(pi);
@@ -882,7 +882,7 @@ describe("launch flag --permission-model (REQ-15, REQ-16, REQ-22)", () => {
   });
 });
 
-describe("/permission-model command wiring (REQ-01, REQ-17, REQ-20)", () => {
+describe("/permission-model command wiring", () => {
   it("registers the command once with a description, completion hook, and handler", () => {
     const pi = makeFakePi();
     start(pi);
@@ -952,7 +952,7 @@ describe("/permission-model command wiring (REQ-01, REQ-17, REQ-20)", () => {
   });
 });
 
-describe("picker selection through the extension (REQ-09, REQ-11)", () => {
+describe("picker selection through the extension", () => {
   it("writes global, refreshes the status, judges the next ask, and never calls pi.setModel", async () => {
     const complete = allowingComplete();
     const writeJudge = vi.fn();

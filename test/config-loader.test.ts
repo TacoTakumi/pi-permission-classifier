@@ -28,7 +28,7 @@ import {
 
 /**
  * Ordered record of the `node:fs` write-path calls. The mock below wraps them
- * with delegating spies, so the ordering of the atomic write (REQ-12) is
+ * with delegating spies, so the ordering of the atomic write is
  * asserted against the real filesystem instead of a fake one: every call still
  * runs the original implementation.
  */
@@ -82,7 +82,7 @@ function opensForWriting(flag: unknown): boolean {
 
 /**
  * Recorded calls that put bytes straight at one of `paths` — the shape an
- * atomic writer must never produce (REQ-12). Callers reset `fsCalls` first so
+ * atomic writer must never produce. Callers reset `fsCalls` first so
  * only the writer's own calls are in scope.
  */
 function directWriteCalls(paths: unknown[]): FsCall[] {
@@ -307,7 +307,7 @@ describe("loadClassifierConfig", () => {
     });
   });
 
-  describe("projectSetsJudge (REQ-14)", () => {
+  describe("projectSetsJudge", () => {
     it("is false when no project layer exists", () => {
       writeConfig(getGlobalConfigPath(agentDir), "{}");
       const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
@@ -345,7 +345,7 @@ describe("loadClassifierConfig", () => {
   });
 });
 
-describe("globalConfigExists (REQ-08)", () => {
+describe("globalConfigExists", () => {
   let root: string;
   let agentDir: string;
 
@@ -371,7 +371,7 @@ describe("globalConfigExists (REQ-08)", () => {
   });
 });
 
-describe("writeGlobalJudge (REQ-12)", () => {
+describe("writeGlobalJudge", () => {
   let root: string;
   let agentDir: string;
   let globalPath: string;

@@ -1,5 +1,5 @@
 /**
- * The scoped full-command read (REQ-01): the one place in the classifier that
+ * The scoped full-command read: the one place in the classifier that
  * touches payload evidence.
  *
  * A bash gate that intercepts one unit of a larger command attaches the whole

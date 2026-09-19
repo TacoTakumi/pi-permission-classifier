@@ -15,7 +15,7 @@ function src(name: string): string {
 
 /**
  * Every module under `src/`, read from disk rather than listed by hand: a new
- * link file cannot escape the guards below by omission (REQ-23).
+ * link file cannot escape the guards below by omission.
  */
 const LINK_FILES = readdirSync(join(ROOT, "src"))
   .filter((name) => name.endsWith(".ts"))
@@ -62,7 +62,7 @@ function atLeast(version: string, floor: [number, number, number]): boolean {
   return true;
 }
 
-describe("no path-based allow capping in link code (REQ-07)", () => {
+describe("no path-based allow capping in link code", () => {
   it.each(["reviewer.ts", "model-review.ts", "breaker.ts", "prompt.ts"])(
     "%s decides without filesystem or cwd inspection",
     (name) => {
@@ -90,7 +90,7 @@ function readsEvidence(source: string): boolean {
   return forms.some((form) => form.test(source));
 }
 
-describe("scoped evidence read (REQ-03)", () => {
+describe("scoped evidence read", () => {
   it("only context.ts reads payload evidence, pinned to the bash full-command entry", () => {
     for (const name of LINK_FILES) {
       const source = src(name);
@@ -111,7 +111,7 @@ describe("scoped evidence read (REQ-03)", () => {
   });
 });
 
-describe("no output channels beyond the seams (REQ-15)", () => {
+describe("no output channels beyond the seams", () => {
   it("only config-loader touches the filesystem, and nothing opens the network", () => {
     for (const name of LINK_FILES) {
       const imports = importsOf(src(name));
@@ -148,7 +148,7 @@ describe("no output channels beyond the seams (REQ-15)", () => {
   });
 });
 
-describe("manifest (REQ-16, REQ-25)", () => {
+describe("manifest", () => {
   const manifest = JSON.parse(
     readFileSync(join(ROOT, "package.json"), "utf-8"),
   ) as {
@@ -161,7 +161,7 @@ describe("manifest (REQ-16, REQ-25)", () => {
     expect(manifest.pi?.extensions).toEqual(["./src/index.ts"]);
   });
 
-  it("declares the pi floor the searchable picker's constructor needs (REQ-25)", () => {
+  it("declares the pi floor the searchable picker's constructor needs", () => {
     expect(manifest.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe(
       ">=0.84.3",
     );
@@ -208,7 +208,7 @@ describe("operator docs", () => {
     expect(readme).toMatch(/operator|you run|run yourself|steps the user runs/i);
   });
 
-  it("states the pi 0.84.3 picker floor in Requirements and the picker paragraph (REQ-25)", () => {
+  it("states the pi 0.84.3 picker floor in Requirements and the picker paragraph", () => {
     const flat = readme.replace(/\s+/g, " ");
     const requirements = readme.slice(
       readme.indexOf("## Requirements"),
@@ -230,7 +230,7 @@ describe("operator docs", () => {
     expect(flat).toMatch(/does not expose\s+the registry runtime/);
   });
 
-  it("documents the judge picker, the launch flag, and the status states (REQ-24)", () => {
+  it("documents the judge picker, the launch flag, and the status states", () => {
     for (const claim of [
       "/permission-model",
       "--permission-model",
@@ -242,7 +242,7 @@ describe("operator docs", () => {
     }
   });
 
-  it("describes a refused write as bad or missing config, never as an unregistered link (REQ-08)", () => {
+  it("describes a refused write as bad or missing config, never as an unregistered link", () => {
     const flat = readme.replace(/\s+/g, " ");
     expect(flat).toContain("no valid merged config");
     expect(flat).toContain("global config file is absent");
@@ -253,7 +253,7 @@ describe("operator docs", () => {
     expect(refusal).not.toMatch(/link/i);
   });
 
-  it("tells the operator to list the classifier before pi-permission-system (REQ-18)", () => {
+  it("tells the operator to list the classifier before pi-permission-system", () => {
     const flat = readme.replace(/\s+/g, " ");
     expect(flat).toContain(
       "List `pi-permission-classifier` before `pi-permission-system` in `packages`",
@@ -261,7 +261,7 @@ describe("operator docs", () => {
     expect(flat).toContain("first agent turn");
   });
 
-  it("the project guide lists the command and judge modules in Layout (REQ-24)", () => {
+  it("the project guide lists the command and judge modules in Layout", () => {
     const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
     expect(guide).toContain("src/command.ts");
     expect(guide).toContain("src/judge.ts");
@@ -326,7 +326,7 @@ describe("health reaches the footer only through the seam", () => {
   });
 });
 
-describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
+describe("judge model picker guards", () => {
   it("covers every module under src/, command and judge included", () => {
     // LINK_FILES is read from src/, so both assertions fail when a module is
     // renamed away or the directory is not found (an empty list would make
@@ -369,7 +369,7 @@ describe("judge model picker guards (REQ-09, REQ-11, REQ-12, REQ-23)", () => {
     expect(body).not.toMatch(/\bwriteFileSync\s*\(/);
   });
 
-  it("the picker is pi's own selector, built with the 0.84.3 six-argument form (REQ-25)", () => {
+  it("the picker is pi's own selector, built with the 0.84.3 six-argument form", () => {
     const source = src("command.ts");
     expect(source).toMatch(
       /import \{[^}]*ModelSelectorComponent[^}]*\} from "@earendil-works\/pi-coding-agent"/,

@@ -12,7 +12,7 @@
  *      never attempts them); every other surface, whatever its name, is
  *      judged,
  *   3. the extracted full-command context fits `contextBudgetBytes` (else
- *      defer, recorded — over-budget context is never rendered, REQ-07),
+ *      defer, recorded — over-budget context is never rendered),
  *   4. the judge model and its auth resolve (else defer, recorded),
  *   5. the guidance seam selects the operator and trusted-project guidance
  *      files for this ask (a throw defers, recorded — no model call),
@@ -106,7 +106,7 @@ export interface ClassifierReviewerDeps {
   getRegistry: () => ModelRegistryLike | undefined;
   /** The model-completion seam (production: `complete` from `@earendil-works/pi-ai`). */
   complete: CompleteFn;
-  /** The shared circuit breaker (REQ-11); the reviewer makes its own when absent. */
+  /** The shared circuit breaker; the reviewer makes its own when absent. */
   breaker?: CircuitBreaker;
   /**
    * Guidance seam: called once per judged ask, right before the model stage,
@@ -220,7 +220,7 @@ async function decide(
     });
     return { kind: "defer" };
   }
-  // The budget gate (REQ-07): an over-budget full command is never rendered,
+  // The budget gate: an over-budget full command is never rendered,
   // not even truncated — the ask defers to the human with the measurements on
   // record. Decided before the breaker and model stages: it is a property of
   // the ask and the config alone.
@@ -348,7 +348,7 @@ async function decide(
       : { verdict: outcome.verdict.kind },
   );
   // Returned uncapped: the engine envelope, not this link, owns any
-  // downgrade (REQ-07).
+  // downgrade.
   return outcome.verdict;
 }
 
@@ -386,7 +386,7 @@ function deferWith(
 }
 
 /**
- * The three context fields every decision entry carries (REQ-08). Only the
+ * The three context fields every decision entry carries. Only the
  * measurements are logged — bytes and a hash prefix — never the text, so the
  * review log stays free of command content beyond the gated value itself.
  */

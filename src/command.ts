@@ -118,7 +118,7 @@ export type PickerSeam = (request: PickerRequest) => PickerComponent;
  * (tui, currentModel, modelRuntime, scopedModels, onSelect, onCancel; the
  * trailing optional arguments are omitted). The optional set-as-default
  * callback is deliberately not passed, so the selector has no way to rewrite
- * the operator's default model (REQ-11).
+ * the operator's default model.
  */
 export const buildModelSelector: PickerSeam = (request) =>
   new ModelSelectorComponent(

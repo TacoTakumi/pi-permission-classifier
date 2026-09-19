@@ -32,7 +32,7 @@ function registryWith(
   };
 }
 
-describe("resolveJudge precedence (REQ-18)", () => {
+describe("resolveJudge precedence", () => {
   it("prefers the override over config and session", () => {
     const registry = registryWith({ "p/m": OVERRIDE_MODEL, "q/n": CONFIG_MODEL });
     const judge = resolveJudge(
@@ -83,7 +83,7 @@ describe("resolveJudge precedence (REQ-18)", () => {
   });
 });
 
-describe("resolveJudge resolution (REQ-19)", () => {
+describe("resolveJudge resolution", () => {
   it("reports an override pair the registry does not know as unresolved", () => {
     const judge = resolveJudge(
       { provider: "p", model: "m" },
@@ -114,7 +114,7 @@ describe("resolveJudge resolution (REQ-19)", () => {
   });
 });
 
-describe("formatJudgeStatus (REQ-18, REQ-19)", () => {
+describe("formatJudgeStatus", () => {
   it("names a resolved pair as judge:<provider>/<id>", () => {
     expect(
       formatJudgeStatus({

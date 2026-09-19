@@ -1,5 +1,5 @@
 /**
- * Circuit breaker for the judge model call (REQ-11): 3 consecutive failures
+ * Circuit breaker for the judge model call: 3 consecutive failures
  * or timeouts open it for a 60-second cooldown, during which asks defer
  * instantly with no model call. After the cooldown the next ask tries the
  * model again (half-open); a success closes the breaker and resets the
