@@ -131,7 +131,7 @@ function notifyOf(ctx: ReturnType<typeof makeCtx>, type: string): string {
   return String(call?.[0]);
 }
 
-describe("/permission-model registration surface (REQ-01)", () => {
+describe("/permission-model registration surface", () => {
   it("exposes a non-empty description and a completion hook", () => {
     const command = createPermissionModelCommand(makeDeps().deps);
     expect(typeof command.description).toBe("string");
@@ -142,7 +142,7 @@ describe("/permission-model registration surface (REQ-01)", () => {
 });
 
 describe("typed form /permission-model <provider>/<id>", () => {
-  it("writes p/m, reloads through the loader, applies the reloaded config, and notifies info (REQ-02, REQ-13)", async () => {
+  it("writes p/m, reloads through the loader, applies the reloaded config, and notifies info", async () => {
     const { state, reloaded, deps } = makeDeps();
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("p/m", ctx);
@@ -166,7 +166,7 @@ describe("typed form /permission-model <provider>/<id>", () => {
     expect(ctx.modelRegistry.find).toHaveBeenCalledWith("p", "m");
   });
 
-  it("rejects a pair the registry does not know: nothing written, config unchanged, error names the pair (REQ-03, REQ-22)", async () => {
+  it("rejects a pair the registry does not know: nothing written, config unchanged, error names the pair", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
     const before = structuredClone(state.config);
     const ctx = makeCtx();
@@ -188,7 +188,7 @@ describe("typed form /permission-model <provider>/<id>", () => {
     expect(notifyOf(ctx, "error")).toContain("<provider>/<id>");
   });
 
-  it("accepts a known model without auth: writes it and warns that asks defer (REQ-04)", async () => {
+  it("accepts a known model without auth: writes it and warns that asks defer", async () => {
     const { deps } = makeDeps();
     const ctx = makeCtx();
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
@@ -201,7 +201,7 @@ describe("typed form /permission-model <provider>/<id>", () => {
   });
 });
 
-describe("session form /permission-model session (REQ-05)", () => {
+describe("session form /permission-model session", () => {
   it("removes both keys, applies the reloaded config, and the session model judges again", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
     deps.reload.mockReturnValue({
@@ -232,7 +232,7 @@ describe("session form /permission-model session (REQ-05)", () => {
   });
 });
 
-describe("refusal when there is no valid config or no global file (REQ-08)", () => {
+describe("refusal when there is no valid config or no global file", () => {
   it.each(["p/m", "session"])(
     "%j refuses with a warning naming the global path when the link is not registered",
     async (args) => {
@@ -263,7 +263,7 @@ describe("refusal when there is no valid config or no global file (REQ-08)", () 
   );
 });
 
-describe("project layer shadowing the choice (REQ-14)", () => {
+describe("project layer shadowing the choice", () => {
   it("still writes the global file and warns naming the project config path", async () => {
     const { deps } = makeDeps();
     deps.reload.mockReturnValue({
@@ -281,7 +281,7 @@ describe("project layer shadowing the choice (REQ-14)", () => {
   });
 });
 
-describe("write failure (REQ-22)", () => {
+describe("write failure", () => {
   it("leaves the config unchanged, skips the reload, and notifies error", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
     deps.writeJudge.mockImplementation(() => {
@@ -298,7 +298,7 @@ describe("write failure (REQ-22)", () => {
   });
 });
 
-describe("no-argument form outside the TUI (REQ-06)", () => {
+describe("no-argument form outside the TUI", () => {
   it.each(["rpc", "json", "print"] as const)(
     "in %s mode opens no picker and prints the current judge and usage",
     async (mode) => {
@@ -330,7 +330,7 @@ describe("no-argument form outside the TUI (REQ-06)", () => {
   });
 });
 
-describe("argument completion (REQ-07)", () => {
+describe("argument completion", () => {
   it("offers provider/id labels whose label starts with the prefix", () => {
     const { deps } = makeDeps();
     const items = createPermissionModelCommand(deps).getArgumentCompletions(
@@ -382,7 +382,7 @@ describe("argument completion (REQ-07)", () => {
   });
 });
 
-describe("picker in the TUI (REQ-09, REQ-11)", () => {
+describe("picker in the TUI", () => {
   function pickerRequest(deps: ReturnType<typeof makeDeps>["deps"]): PickerRequest {
     return deps.buildPicker.mock.calls[0]![0];
   }
@@ -462,7 +462,7 @@ describe("picker in the TUI (REQ-09, REQ-11)", () => {
   });
 });
 
-describe("degraded picker without a runtime shape (REQ-10, REQ-22)", () => {
+describe("degraded picker without a runtime shape", () => {
   const LABELS = ["anthropic/a", "anthropic/b", "openai/c"];
 
   it("falls back to ui.select over provider/id labels and warns that the picker degraded", async () => {

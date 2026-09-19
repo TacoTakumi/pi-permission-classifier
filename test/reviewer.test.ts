@@ -578,7 +578,7 @@ function promptSentTo(complete: CompleteFn): string {
   return (context as { messages: [{ content: string }] }).messages[0].content;
 }
 
-describe("full-command context (REQ-07, REQ-08)", () => {
+describe("full-command context", () => {
   it("defers an over-budget context before the model with real measurements", async () => {
     const complete = completeReporting({ verdict: "allow" });
     const config = classifierConfigSchema.parse({ contextBudgetBytes: 8 });

@@ -4,7 +4,7 @@
  * The prompt carries the structured request facts — surface, tool names, the
  * decision value, matched pattern, executed unit, nested execution context,
  * requester provenance — plus at most one piece of agent-authored ask text:
- * the extracted full-command context the caller hands in (REQ-02), already
+ * the extracted full-command context the caller hands in, already
  * budget-gated. Tool results, file contents, annotations, and tool-input
  * previews never reach the judge: this module reads no payload evidence
  * itself (src/context.ts is the only evidence reader), and the judge decides
@@ -31,7 +31,7 @@ type BashCommandContext = NonNullable<
 >;
 
 /**
- * The shipped balanced rubric (REQ-14): allow the clearly benign, deny only
+ * The shipped balanced rubric: allow the clearly benign, deny only
  * the hard never-allow list, defer everything uncertain. A config
  * `instructions` string replaces this verbatim.
  */
@@ -103,7 +103,7 @@ function factLine(label: string, value: string | null): string[] {
 }
 
 /**
- * Human wording for the nested-execution-context fact (REQ-09). A closed map:
+ * Human wording for the nested-execution-context fact. A closed map:
  * a value outside it renders no line rather than leaking a raw token.
  */
 const COMMAND_CONTEXT_LABELS: Record<BashCommandContext, string> = {

@@ -17,7 +17,7 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 
 /**
  * Default cap on the extracted full-command context, in UTF-8 bytes. An ask
- * whose context exceeds the budget defers before any model call (REQ-07);
+ * whose context exceeds the budget defers before any model call;
  * context is never truncated to fit.
  */
 export const DEFAULT_CONTEXT_BUDGET_BYTES = 8192;
