@@ -4,6 +4,14 @@
   "description": "Auto-classifier Authorizer chain link for pi-permission-system: a light model reviews each ask and returns allow, deny, or defer",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TacoTakumi/pi-permission-classifier.git"
+  },
+  "homepage": "https://github.com/TacoTakumi/pi-permission-classifier#readme",
+  "bugs": {
+    "url": "https://github.com/TacoTakumi/pi-permission-classifier/issues"
+  },
   "files": [
     "src",
     "config/config.example.json",
