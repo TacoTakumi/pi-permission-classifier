@@ -5,6 +5,16 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-09-19
+
+### Changed
+
+- README setup installs the package from npm with
+  `pi install npm:pi-permission-classifier` and tells you to check that
+  the classifier is listed before `pi-permission-system` in `packages`.
+  A local checkout is still an option.
+- The npm page links to the GitHub repository, README, and issue tracker.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added
