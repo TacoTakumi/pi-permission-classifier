@@ -130,8 +130,8 @@ export type ModelCallDeferReason =
  * The full result of a model review: the verdict plus the observability the
  * decision trail records. `deferReason` is set iff the verdict is `defer`;
  * `rawReply` carries the tool-call arguments as JSON when a tool call arrived,
- * or the assistant text on a `no-tool-call` defer (absent on a timeout/throw
- * before any reply).
+ * the assistant text on a `no-tool-call` defer, or the provider error text on
+ * a `call-failed` error reply (absent on a timeout/throw before any reply).
  */
 export interface ReviewOutcome {
   verdict: AuthorizerVerdict;
@@ -183,6 +183,17 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
         verdict: { kind: "defer" },
         deferReason: "timeout",
         latencyMs: Date.now() - startedAt,
+      };
+    }
+    // pi-ai also resolves (not rejects) on a provider error such as an
+    // HTTP 429 or 503: the reply has no content and carries the error text.
+    // Report it as `call-failed` so the breaker counts it.
+    if (reply.stopReason === "error") {
+      return {
+        verdict: { kind: "defer" },
+        deferReason: "call-failed",
+        latencyMs: Date.now() - startedAt,
+        rawReply: reply.errorMessage,
       };
     }
     return readToolCallOutcome(reply, Date.now() - startedAt);

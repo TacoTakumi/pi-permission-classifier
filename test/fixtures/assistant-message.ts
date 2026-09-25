@@ -45,3 +45,11 @@ export function assistantToolCall(
     { type: "toolCall", id: "call-1", name, arguments: args },
   ]);
 }
+
+/**
+ * The reply pi-ai resolves with on a provider error: no content, stop reason
+ * `error`, and the provider's error text.
+ */
+export function assistantError(errorMessage: string): AssistantMessage {
+  return { ...assistantReply([]), stopReason: "error", errorMessage };
+}
