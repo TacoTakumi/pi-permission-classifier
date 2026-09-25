@@ -5,6 +5,16 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-09-25
+
+### Fixed
+
+- A provider error from the judge model (for example an HTTP 429 or 503)
+  now defers with reason `call-failed` instead of `no-tool-call`. The
+  circuit breaker counts it, so repeated errors open the breaker instead
+  of calling the failing API on every ask. The provider's error text is
+  written to the `classifier.model_reply` debug entry.
+
 ## [0.5.1] - 2026-09-19
 
 ### Changed

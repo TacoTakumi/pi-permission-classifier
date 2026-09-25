@@ -9,6 +9,7 @@ import {
 } from "#src/model-review";
 import { DEFAULT_INSTRUCTIONS } from "#src/prompt";
 import {
+  assistantError,
   assistantText,
   assistantToolCall,
 } from "#test/fixtures/assistant-message";
@@ -103,6 +104,15 @@ describe("reviewAsk", () => {
     expect(outcome.verdict).toEqual({ kind: "defer" });
     expect(outcome.deferReason).toBe("call-failed");
     expect(outcome.rawReply).toBeUndefined();
+  });
+
+  it("defers with reason call-failed and keeps the error text when complete resolves with an error reply", async () => {
+    const error = "429 RESOURCE_EXHAUSTED: quota exceeded";
+    const complete: CompleteFn = vi.fn(async () => assistantError(error));
+    const outcome = await review(complete);
+    expect(outcome.verdict).toEqual({ kind: "defer" });
+    expect(outcome.deferReason).toBe("call-failed");
+    expect(outcome.rawReply).toBe(error);
   });
 
   it("forces a single three-verdict tool with toolChoice any and the rendered facts", async () => {
