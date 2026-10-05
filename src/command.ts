@@ -13,15 +13,15 @@
  *   - `quick <provider>/<id>`: validate through the classifier lookup only
  *     and persist the quick judge pair. A chat model is refused.
  *   - Setting a model never changes the mode.
- *   - no argument in the TUI: mount pi's own searchable model selector
- *     through `ctx.ui.custom`, built from the registry's runtime (reached
- *     behind a shape check, since it is a private field), the session's
- *     scoped models, and the current judge preselected, with no
- *     set-as-default callback so the operator's default model is never
- *     touched. A selection applies exactly like the typed form; a cancel
- *     changes nothing. When the runtime does not have the expected shape (a pi
- *     update moved it), the form degrades to `ctx.ui.select` over
- *     `provider/id` labels from `getAvailable()` with a warning.
+ *   - no argument in the TUI: a two-step picker, each step a list mounted
+ *     through `ctx.ui.custom`. Step 1 picks the mode (quick-then-llm, llm,
+ *     quick, each with a one-line description, the current one marked).
+ *     Step 2 shows only the lists that mode needs, the current model
+ *     preselected: the available classifier models for the quick judge, then
+ *     "Same as the chat model (follows /model)" and the available chat
+ *     models for the LLM judge. Nothing is written until the last step;
+ *     then the mode and the models go out in one write. A cancel at any step
+ *     writes nothing.
  *   - no argument outside the TUI: print the mode, the model of each judge
  *     the mode runs, and the usage line (pi's `ctx.ui.custom` returns
  *     nothing in rpc/json/print modes).
@@ -48,13 +48,8 @@
  */
 
 import type { ClassifierApi, ClassifierModel, Model } from "@earendil-works/pi-ai";
-import {
-  type ExtensionAPI,
-  type ExtensionUIContext,
-  ModelSelectorComponent,
-  type ModelRuntime,
-  type ScopedModel,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
 import {
   formatConfigIssue,
@@ -99,6 +94,8 @@ type ArgumentCompletions = Exclude<
 type PickerFactory = Parameters<ExtensionUIContext["custom"]>[0];
 /** pi's TUI handle, as `ctx.ui.custom` hands it to the factory. */
 export type PickerTui = Parameters<PickerFactory>[0];
+/** pi's theme, as `ctx.ui.custom` hands it to the factory. */
+export type PickerTheme = Parameters<PickerFactory>[1];
 /** What the factory returns: a component, optionally disposable. */
 export type PickerComponent = ReturnType<PickerFactory>;
 
@@ -127,58 +124,75 @@ export interface CommandContextLike {
   mode: "tui" | "rpc" | "json" | "print";
   model: Model<any> | undefined;
   modelRegistry: CommandRegistryLike;
-  scopedModels: readonly ScopedModel[];
   ui: Pick<ExtensionUIContext, "notify" | "select" | "custom">;
 }
 
-/** Everything the picker component is built from. */
+/** One step of the picker: a titled list of values. */
 export interface PickerRequest {
   tui: PickerTui;
-  /** The current judge, preselected in the list; `undefined` when unresolved. */
-  currentModel: Model<any> | undefined;
-  runtime: ModelRuntime;
-  scopedModels: readonly ScopedModel[];
-  onSelect(model: Model<any>): void;
+  theme: PickerTheme;
+  title: string;
+  items: SelectItem[];
+  /** The value preselected in the list, if it is there. */
+  selectedValue: string | undefined;
+  onSelect(value: string): void;
   onCancel(): void;
 }
 
-/** Builds the picker component; injectable so tests never mount a real TUI. */
+/** Builds one picker step; injectable so tests never mount a real TUI. */
 export type PickerSeam = (request: PickerRequest) => PickerComponent;
 
-/**
- * The production picker: pi's own model selector, in its pi 0.84.3 form
- * (tui, currentModel, modelRuntime, scopedModels, onSelect, onCancel; the
- * trailing optional arguments are omitted). The optional set-as-default
- * callback is deliberately not passed, so the selector has no way to rewrite
- * the operator's default model.
- */
-export const buildModelSelector: PickerSeam = (request) =>
-  new ModelSelectorComponent(
-    request.tui,
-    request.currentModel,
-    request.runtime,
-    request.scopedModels,
-    request.onSelect,
-    request.onCancel,
-  );
+/** Rows a list shows before it scrolls. */
+const PICKER_ROWS = 12;
 
 /**
- * The registry's runtime, reached behind a shape check: `runtime` is a
- * private field of `ModelRegistry`, so a pi update that moves or reshapes it
- * yields `undefined` here (and a degraded picker) instead of a crash.
+ * The production picker step: pi-tui's `SelectList` under a title, with the
+ * value, label and one-line description of each item, in the pi theme.
  */
-function runtimeOf(registry: CommandRegistryLike): ModelRuntime | undefined {
-  const runtime = (registry as { runtime?: unknown }).runtime;
-  if (
-    typeof runtime === "object" &&
-    runtime !== null &&
-    typeof (runtime as { getAvailableSnapshot?: unknown })
-      .getAvailableSnapshot === "function"
-  ) {
-    return runtime as ModelRuntime;
+export const buildSelectList: PickerSeam = (request) => {
+  const { theme } = request;
+  const list = new SelectList(request.items, Math.min(request.items.length, PICKER_ROWS), {
+    selectedPrefix: (text) => theme.fg("accent", text),
+    selectedText: (text) => theme.fg("accent", text),
+    description: (text) => theme.fg("muted", text),
+    scrollInfo: (text) => theme.fg("dim", text),
+    noMatch: (text) => theme.fg("warning", text),
+  });
+  const selected = request.items.findIndex((item) => item.value === request.selectedValue);
+  if (selected >= 0) {
+    list.setSelectedIndex(selected);
   }
-  return undefined;
-}
+  list.onSelect = (item) => request.onSelect(item.value);
+  list.onCancel = () => request.onCancel();
+  const container = new Container();
+  container.addChild(new Text(theme.fg("accent", theme.bold(request.title))));
+  container.addChild(list);
+  container.addChild(new Text(theme.fg("dim", "up/down move, enter select, esc cancel")));
+  return {
+    render: (width: number) => container.render(width),
+    invalidate: () => container.invalidate(),
+    handleInput: (data: string) => {
+      list.handleInput(data);
+      request.tui.requestRender();
+    },
+  };
+};
+
+/** Step 1 of the picker, in its fixed order. */
+const MODE_ITEMS: readonly { mode: Mode; description: string }[] = [
+  {
+    mode: "quick-then-llm",
+    description: "The quick judge settles clear cases; the LLM judge reviews the rest.",
+  },
+  { mode: "llm", description: "A chat model reads each ask and reasons about it." },
+  {
+    mode: "quick",
+    description: "A System One decision model answers three fixed questions, fast.",
+  },
+];
+
+/** The LLM list entry that makes the LLM judge follow the chat model. */
+export const CHAT_MODEL_LABEL = "Same as the chat model (follows /model)";
 
 /** Seams the extension supplies; none of them are called on a rejected pick. */
 export interface CommandDependencies {
@@ -204,7 +218,7 @@ export interface CommandDependencies {
    * write set, so a session-only flag value for those fields is dropped.
    */
   apply(config: ClassifierConfig, selection: JudgeSelection): void;
-  /** Builds the picker component; defaults to {@link buildModelSelector}. */
+  /** Builds one picker step; defaults to {@link buildSelectList}. */
   buildPicker?: PickerSeam;
 }
 
@@ -287,7 +301,7 @@ export function createPermissionModelCommand(
     return true;
   }
 
-  const buildPicker = deps.buildPicker ?? buildModelSelector;
+  const buildPicker = deps.buildPicker ?? buildSelectList;
 
   /** The judge the next ask would use. */
   function currentJudge(ctx: CommandContextLike) {
@@ -318,15 +332,20 @@ export function createPermissionModelCommand(
     );
   }
 
-  /** Persist a chat model as the LLM judge; warn when it has no auth. */
-  function applyModel(model: Model<any>, ctx: CommandContextLike): void {
-    const pair = { provider: model.provider, model: model.id };
-    const hasAuth = ctx.modelRegistry.hasConfiguredAuth(model);
-    if (persist({ llm: pair }, ctx) && !hasAuth) {
+  /** Warn after a successful LLM write when the chosen model has no auth. */
+  function warnWithoutAuth(model: Model<any>, ctx: CommandContextLike): void {
+    if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
       ctx.ui.notify(
-        `No auth is configured for ${pair.provider}/${pair.model}; permission asks will defer to the prompt until it is.`,
+        `No auth is configured for ${model.provider}/${model.id}; permission asks will defer to the prompt until it is.`,
         "warning",
       );
+    }
+  }
+
+  /** Persist a chat model as the LLM judge; warn when it has no auth. */
+  function applyModel(model: Model<any>, ctx: CommandContextLike): void {
+    if (persist({ llm: { provider: model.provider, model: model.id } }, ctx)) {
+      warnWithoutAuth(model, ctx);
     }
   }
 
@@ -378,51 +397,111 @@ export function createPermissionModelCommand(
     persist({ mode }, ctx);
   }
 
-  /** The degraded picker: a plain list of `provider/id` labels. */
-  async function pickFromList(ctx: CommandContextLike): Promise<void> {
-    const labels = ctx.modelRegistry
-      .getAvailable()
-      .map((model) => `${model.provider}/${model.id}`);
-    if (labels.length === 0) {
-      ctx.ui.notify(
-        "No models are available to pick from. Nothing changed.",
-        "warning",
-      );
-      return;
-    }
-    ctx.ui.notify(
-      "The model picker degraded to a plain list: this pi version does not expose the registry runtime the searchable selector needs.",
-      "warning",
-    );
-    const chosen = await ctx.ui.select("Permission judge model", labels);
-    // Labels are built as provider/id above, so the parse cannot fail.
-    const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
-    if (pair) {
-      applyPair(pair, ctx);
-    }
-  }
-
-  /** The no-argument TUI form: mount the picker; apply a selection. */
-  async function pick(ctx: CommandContextLike): Promise<void> {
-    const runtime = runtimeOf(ctx.modelRegistry);
-    if (!runtime) {
-      await pickFromList(ctx);
-      return;
-    }
-    const currentModel = currentJudge(ctx).model;
-    await ctx.ui.custom<void>((tui, _theme, _keybindings, done) =>
+  /** Mount one picker step; resolves the chosen value, or `undefined` on cancel. */
+  async function step(
+    ctx: CommandContextLike,
+    title: string,
+    items: SelectItem[],
+    selectedValue: string | undefined,
+  ): Promise<string | undefined> {
+    return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) =>
       buildPicker({
         tui,
-        currentModel,
-        runtime,
-        scopedModels: ctx.scopedModels,
-        onSelect: (model) => {
-          done();
-          applyModel(model, ctx);
-        },
-        onCancel: () => done(),
+        theme,
+        title,
+        items,
+        selectedValue,
+        onSelect: (value) => done(value),
+        onCancel: () => done(undefined),
       }),
     );
+  }
+
+  /**
+   * The no-argument TUI form: pick the mode, then the models it needs, then
+   * write them all at once. Any cancel returns before the write.
+   */
+  async function pick(ctx: CommandContextLike): Promise<void> {
+    const config = deps.getConfig();
+    const currentMode = config?.mode ?? "llm";
+    const chosenMode = await step(
+      ctx,
+      "Permission judge: who judges each ask",
+      MODE_ITEMS.map(({ mode, description }) => ({
+        value: mode,
+        label: mode === currentMode ? `${mode} (current)` : mode,
+        description,
+      })),
+      currentMode,
+    );
+    const mode = modeSchema.safeParse(chosenMode);
+    if (!mode.success) {
+      return;
+    }
+    const selection: JudgeSelection = { mode: mode.data };
+
+    if (mode.data !== "llm") {
+      const labels = (await ctx.modelRegistry.getAvailableOfType("classifier")).map(
+        (model) => `${model.provider}/${model.id}`,
+      );
+      if (labels.length === 0) {
+        ctx.ui.notify(
+          "No classifier models are available for the quick judge. Nothing changed.",
+          "warning",
+        );
+        return;
+      }
+      const current = config?.quickJudge;
+      const chosen = await step(
+        ctx,
+        "Quick judge model",
+        labels.map((label) => ({ value: label, label })),
+        current?.provider !== undefined && current.model !== undefined
+          ? `${current.provider}/${current.model}`
+          : undefined,
+      );
+      // Labels are built as provider/id above, so the parse cannot fail.
+      const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
+      if (!pair) {
+        return;
+      }
+      selection.quick = pair;
+    }
+
+    let llmModel: Model<any> | undefined;
+    if (mode.data !== "quick") {
+      const models = ctx.modelRegistry.getAvailable();
+      const chosen = await step(
+        ctx,
+        "LLM judge model",
+        [
+          { value: CHAT_MODEL, label: CHAT_MODEL_LABEL },
+          ...models.map((model) => {
+            const label = `${model.provider}/${model.id}`;
+            return { value: label, label };
+          }),
+        ],
+        config?.provider !== undefined && config.model !== undefined
+          ? `${config.provider}/${config.model}`
+          : CHAT_MODEL,
+      );
+      if (chosen === undefined) {
+        return;
+      }
+      if (chosen === CHAT_MODEL) {
+        selection.llm = null;
+      } else {
+        llmModel = models.find((model) => `${model.provider}/${model.id}` === chosen);
+        if (!llmModel) {
+          return;
+        }
+        selection.llm = { provider: llmModel.provider, model: llmModel.id };
+      }
+    }
+
+    if (persist(selection, ctx) && llmModel) {
+      warnWithoutAuth(llmModel, ctx);
+    }
   }
 
   /**

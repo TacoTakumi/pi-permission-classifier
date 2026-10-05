@@ -1187,16 +1187,16 @@ describe("/permission-model command wiring", () => {
 });
 
 describe("picker selection through the extension", () => {
-  it("writes global, refreshes the status, judges the next ask, and never calls pi.setModel", async () => {
+  it("writes global once, refreshes the status, judges the next ask, and never calls pi.setModel", async () => {
     const complete = allowingComplete();
     const writeSelection = vi.fn();
     const loadConfig = vi
       .fn<() => LoadConfigResult>()
       .mockReturnValueOnce(CONFIG_RESULT)
       .mockReturnValue(CONFIG_QN_RESULT);
-    let onSelect: ((model: Model<any>) => void) | undefined;
-    const buildPicker = vi.fn((request: { onSelect: (model: Model<any>) => void }) => {
-      onSelect = request.onSelect;
+    const steps: { onSelect: (value: string) => void }[] = [];
+    const buildPicker = vi.fn((request: { onSelect: (value: string) => void }) => {
+      steps.push(request);
       return { render: () => [], handleInput: () => {} };
     });
     const pi = makeFakePi();
@@ -1204,15 +1204,22 @@ describe("picker selection through the extension", () => {
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
+    ctx.modelRegistry.getAvailable.mockReturnValue([QN_MODEL] as never);
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
 
     const pending = pi.commands.get("permission-model")?.handler("", ctx);
-    expect(buildPicker).toHaveBeenCalledTimes(1);
-    onSelect?.(QN_MODEL);
+    await vi.waitFor(() => expect(steps).toHaveLength(1));
+    steps[0]!.onSelect("llm");
+    await vi.waitFor(() => expect(steps).toHaveLength(2));
+    steps[1]!.onSelect("q/n");
     await pending;
 
-    expect(writeSelection).toHaveBeenCalledWith({ llm: { provider: "q", model: "n" } });
+    expect(writeSelection).toHaveBeenCalledTimes(1);
+    expect(writeSelection).toHaveBeenCalledWith({
+      mode: "llm",
+      llm: { provider: "q", model: "n" },
+    });
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
     expect(pi.api.setModel).not.toHaveBeenCalled();
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });

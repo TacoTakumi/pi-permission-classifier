@@ -1,5 +1,6 @@
 import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LoadConfigResult } from "#src/config-loader";
@@ -8,6 +9,7 @@ import {
   type CommandContextLike,
   type CommandDependencies,
   createPermissionModelCommand,
+  buildSelectList,
   type PickerComponent,
   type PickerRequest,
   type PickerSeam,
@@ -487,72 +489,181 @@ describe("argument completion", () => {
   });
 });
 
-describe("picker in the TUI", () => {
-  function pickerRequest(deps: ReturnType<typeof makeDeps>["deps"]): PickerRequest {
-    return deps.buildPicker.mock.calls[0]![0];
+describe("two-step picker in the TUI", () => {
+  /** The request of the n-th mounted step, once the handler has mounted it. */
+  async function stepRequest(
+    deps: ReturnType<typeof makeDeps>["deps"],
+    n: number,
+  ): Promise<PickerRequest> {
+    await vi.waitFor(() => expect(deps.buildPicker.mock.calls.length).toBeGreaterThan(n));
+    return deps.buildPicker.mock.calls[n]![0];
   }
 
-  it("mounts the picker once through ui.custom with the runtime, scoped models, and current judge preselected", async () => {
-    const { deps } = makeDeps(CONFIG_QN);
+  const JEV_LATEST = { ...QUICK_JUDGE, model: "jev-latest" };
+
+  it("step 1 lists the modes in order with descriptions and the current mode marked", async () => {
+    const { deps } = makeDeps({ ...WITH_QUICK, mode: "llm" });
     const ctx = makeCtx("tui");
     const pending = createPermissionModelCommand(deps).handler("", ctx);
-    expect(ctx.ui.custom).toHaveBeenCalledTimes(1);
-    expect(deps.buildPicker).toHaveBeenCalledTimes(1);
-    const request = pickerRequest(deps);
+    const request = await stepRequest(deps, 0);
     expect(request.tui).toBe(FAKE_TUI);
-    expect(request.runtime).toBe(ctx.modelRegistry.runtime);
-    expect(request.scopedModels).toBe(ctx.scopedModels);
-    expect(request.currentModel).toBe(QN_MODEL);
+    expect(request.items.map((item) => item.value)).toEqual(["quick-then-llm", "llm", "quick"]);
+    expect(request.items.map((item) => item.label)).toEqual([
+      "quick-then-llm",
+      "llm (current)",
+      "quick",
+    ]);
+    for (const item of request.items) {
+      expect(item.description).toMatch(/\S/);
+      expect(item.description).not.toContain("\n");
+    }
+    expect(request.selectedValue).toBe("llm");
     request.onCancel();
     await pending;
-    expect(ctx.ui.select).not.toHaveBeenCalled();
   });
 
-  it("preselects the session model when the session model judges", async () => {
-    const { deps } = makeDeps(EMPTY_CONFIG);
+  it("mode llm shows only the LLM list, chat model option first, current pair preselected", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
     const ctx = makeCtx("tui");
     const pending = createPermissionModelCommand(deps).handler("", ctx);
-    expect(pickerRequest(deps).currentModel).toBe(SESSION_MODEL);
-    pickerRequest(deps).onCancel();
+    (await stepRequest(deps, 0)).onSelect("llm");
+    const llm = await stepRequest(deps, 1);
+    expect(llm.title).toMatch(/LLM judge/);
+    expect(llm.items[0]).toEqual({
+      value: "chat-model",
+      label: "Same as the chat model (follows /model)",
+    });
+    expect(llm.items.slice(1).map((item) => item.value)).toEqual([
+      "anthropic/a",
+      "anthropic/b",
+      "openai/c",
+    ]);
+    expect(llm.selectedValue).toBe("q/n");
+    expect(ctx.modelRegistry.getAvailableOfType).not.toHaveBeenCalled();
+    llm.onCancel();
+    await pending;
+    expect(deps.buildPicker).toHaveBeenCalledTimes(2);
+  });
+
+  it("preselects the chat model option when the LLM judge has no pair", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    const pending = createPermissionModelCommand(deps).handler("", makeCtx("tui"));
+    (await stepRequest(deps, 0)).onSelect("llm");
+    const llm = await stepRequest(deps, 1);
+    expect(llm.selectedValue).toBe("chat-model");
+    llm.onCancel();
     await pending;
   });
 
-  it("a selection applies like the typed form", async () => {
-    const { state, reloaded, deps } = makeDeps(CONFIG_QN);
+  it("mode quick shows only the quick list of available classifiers, current preselected", async () => {
+    const { deps } = makeDeps({ ...WITH_QUICK, quickJudge: JEV_LATEST });
     const ctx = makeCtx("tui");
     const pending = createPermissionModelCommand(deps).handler("", ctx);
-    pickerRequest(deps).onSelect(PM_MODEL);
+    (await stepRequest(deps, 0)).onSelect("quick");
+    const quick = await stepRequest(deps, 1);
+    expect(quick.title).toMatch(/Quick judge/);
+    expect(ctx.modelRegistry.getAvailableOfType).toHaveBeenCalledWith("classifier");
+    expect(quick.items.map((item) => item.value)).toEqual([
+      "typesafe/jev-latest",
+      "local/kev-4b-q8",
+    ]);
+    expect(quick.selectedValue).toBe("typesafe/jev-latest");
+    quick.onSelect("local/kev-4b-q8");
+    await pending;
+    expect(deps.buildPicker).toHaveBeenCalledTimes(2);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({
+      mode: "quick",
+      quick: { provider: "local", model: "kev-4b-q8" },
+    });
+  });
+
+  it("mode quick-then-llm shows the quick list, then the LLM list, and writes once", async () => {
+    const { deps, state, reloaded } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui");
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    (await stepRequest(deps, 0)).onSelect("quick-then-llm");
+    const quick = await stepRequest(deps, 1);
+    expect(quick.title).toMatch(/Quick judge/);
+    expect(deps.write).not.toHaveBeenCalled();
+    quick.onSelect("typesafe/jev-latest");
+    const llm = await stepRequest(deps, 2);
+    expect(llm.title).toMatch(/LLM judge/);
+    expect(deps.write).not.toHaveBeenCalled();
+    llm.onSelect("chat-model");
     await pending;
     expect(deps.write).toHaveBeenCalledTimes(1);
-    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
-    expect(deps.reload).toHaveBeenCalledWith("/project");
+    expect(deps.write).toHaveBeenCalledWith({
+      mode: "quick-then-llm",
+      quick: { provider: "typesafe", model: "jev-latest" },
+      llm: null,
+    });
+    expect(deps.reload).toHaveBeenCalledTimes(1);
     expect(state.config).toBe(reloaded.config);
-    expect(notifyTypes(ctx)).toEqual(["info"]);
-    expect(notifyOf(ctx, "info")).toContain("p/m");
+    expect(notifyOf(ctx, "info")).toContain("mode quick-then-llm");
   });
 
-  it("a selection without configured auth is persisted with a warning", async () => {
-    const { deps } = makeDeps(CONFIG_QN);
+  it("an LLM model choice writes its pair", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    const pending = createPermissionModelCommand(deps).handler("", makeCtx("tui"));
+    (await stepRequest(deps, 0)).onSelect("llm");
+    (await stepRequest(deps, 1)).onSelect("anthropic/b");
+    await pending;
+    expect(deps.write).toHaveBeenCalledWith({
+      mode: "llm",
+      llm: { provider: "anthropic", model: "b" },
+    });
+  });
+
+  it("warns after the write when the chosen LLM model has no auth", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    deps.reload.mockReturnValue({
+      config: { ...EMPTY_CONFIG, provider: "anthropic", model: "b" },
+      issues: [],
+      projectSetsJudge: false,
+    });
     const ctx = makeCtx("tui");
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
     const pending = createPermissionModelCommand(deps).handler("", ctx);
-    pickerRequest(deps).onSelect(PM_MODEL);
+    (await stepRequest(deps, 0)).onSelect("llm");
+    (await stepRequest(deps, 1)).onSelect("anthropic/b");
     await pending;
     expect(deps.write).toHaveBeenCalledTimes(1);
-    expect(notifyTypes(ctx)).toContain("warning");
+    expect(notifyTypes(ctx)).toEqual(["info", "warning"]);
+    expect(notifyOf(ctx, "warning")).toMatch(/defer/);
   });
 
-  it("a cancel changes nothing", async () => {
+  it.each([
+    ["step 1", 0, []],
+    ["the quick list", 1, ["quick-then-llm"]],
+    ["the LLM list", 2, ["quick-then-llm", "typesafe/jev-latest"]],
+  ] as const)("a cancel at %s writes nothing", async (_label, cancelAt, choices) => {
     const { state, deps } = makeDeps(CONFIG_QN);
     const before = structuredClone(state.config);
     const ctx = makeCtx("tui");
     const pending = createPermissionModelCommand(deps).handler("", ctx);
-    pickerRequest(deps).onCancel();
+    for (const [index, value] of choices.entries()) {
+      (await stepRequest(deps, index)).onSelect(value);
+    }
+    (await stepRequest(deps, cancelAt)).onCancel();
     await pending;
     expect(deps.write).not.toHaveBeenCalled();
+    expect(deps.reload).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
     expect(ctx.ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("warns and writes nothing when no classifier model is available", async () => {
+    const { deps } = makeDeps(CONFIG_QN);
+    const ctx = makeCtx("tui");
+    ctx.modelRegistry.getAvailableOfType.mockResolvedValue([]);
+    const pending = createPermissionModelCommand(deps).handler("", ctx);
+    (await stepRequest(deps, 0)).onSelect("quick");
+    await pending;
+    expect(deps.buildPicker).toHaveBeenCalledTimes(1);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "warning")).toMatch(/classifier/);
   });
 
   it("refuses before opening the picker when the global file is absent", async () => {
@@ -564,71 +675,6 @@ describe("picker in the TUI", () => {
     expect(deps.buildPicker).not.toHaveBeenCalled();
     expect(notifyTypes(ctx)).toEqual(["warning"]);
     expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
-  });
-});
-
-describe("degraded picker without a runtime shape", () => {
-  const LABELS = ["anthropic/a", "anthropic/b", "openai/c"];
-
-  it("falls back to ui.select over provider/id labels and warns that the picker degraded", async () => {
-    const { deps } = makeDeps(CONFIG_QN);
-    const ctx = makeCtx("tui", { runtime: false });
-    ctx.ui.select.mockResolvedValue(undefined);
-    await createPermissionModelCommand(deps).handler("", ctx);
-    expect(ctx.ui.custom).not.toHaveBeenCalled();
-    expect(deps.buildPicker).not.toHaveBeenCalled();
-    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
-    expect(ctx.ui.select).toHaveBeenCalledWith(expect.any(String), LABELS);
-    expect(notifyTypes(ctx)).toContain("warning");
-    expect(notifyOf(ctx, "warning")).toMatch(/degraded/);
-  });
-
-  it("a chosen label applies like the typed form", async () => {
-    const { state, reloaded, deps } = makeDeps(CONFIG_QN);
-    const ctx = makeCtx("tui", { runtime: false });
-    ctx.ui.select.mockResolvedValue("p/m");
-    await createPermissionModelCommand(deps).handler("", ctx);
-    expect(ctx.modelRegistry.find).toHaveBeenCalledWith("p", "m");
-    expect(deps.write).toHaveBeenCalledTimes(1);
-    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
-    expect(state.config).toBe(reloaded.config);
-    expect(notifyTypes(ctx)).toContain("info");
-  });
-
-  it("a cancel changes nothing", async () => {
-    const { state, deps } = makeDeps(CONFIG_QN);
-    const before = structuredClone(state.config);
-    const ctx = makeCtx("tui", { runtime: false });
-    ctx.ui.select.mockResolvedValue(undefined);
-    await createPermissionModelCommand(deps).handler("", ctx);
-    expect(deps.write).not.toHaveBeenCalled();
-    expect(deps.apply).not.toHaveBeenCalled();
-    expect(state.config).toEqual(before);
-  });
-
-  it("with no available models notifies a warning instead of opening an empty list (T-23)", async () => {
-    const { state, deps } = makeDeps(CONFIG_QN);
-    const before = structuredClone(state.config);
-    const ctx = makeCtx("tui", { runtime: false });
-    ctx.modelRegistry.getAvailable.mockReturnValue([]);
-    await createPermissionModelCommand(deps).handler("", ctx);
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(ctx.ui.custom).not.toHaveBeenCalled();
-    expect(notifyTypes(ctx)).toEqual(["warning"]);
-    expect(notifyOf(ctx, "warning")).toMatch(/no models are available/i);
-    expect(deps.write).not.toHaveBeenCalled();
-    expect(deps.apply).not.toHaveBeenCalled();
-    expect(state.config).toEqual(before);
-  });
-
-  it("a runtime without getAvailableSnapshot counts as no runtime", async () => {
-    const { deps } = makeDeps(CONFIG_QN);
-    const ctx = makeCtx("tui", { runtime: false });
-    (ctx.modelRegistry as { runtime?: unknown }).runtime = { other: () => [] };
-    ctx.ui.select.mockResolvedValue(undefined);
-    await createPermissionModelCommand(deps).handler("", ctx);
-    expect(ctx.ui.custom).not.toHaveBeenCalled();
-    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -878,5 +924,50 @@ describe("removed and malformed forms", () => {
     expect(notifyOf(ctx, "error")).toContain(
       "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id>",
     );
+  });
+});
+
+describe("buildSelectList", () => {
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as PickerRequest["theme"];
+
+  function build(selectedValue: string | undefined) {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const component = buildSelectList({
+      tui: FAKE_TUI,
+      theme,
+      title: "Pick one",
+      items: [
+        { value: "a", label: "first", description: "the first item" },
+        { value: "b", label: "second", description: "the second item" },
+      ],
+      selectedValue,
+      onSelect,
+      onCancel,
+    }) as Component;
+    return { component, onSelect, onCancel };
+  }
+
+  it("renders the title, the labels and the descriptions", () => {
+    const text = build(undefined).component.render(80).join("\n");
+    expect(text).toContain("Pick one");
+    expect(text).toContain("second");
+    expect(text).toContain("the second item");
+  });
+
+  it("preselects the given value, so enter selects it", () => {
+    const { component, onSelect } = build("b");
+    component.handleInput?.("\r");
+    expect(onSelect).toHaveBeenCalledWith("b");
+  });
+
+  it("cancels on escape", () => {
+    const { component, onCancel, onSelect } = build("a");
+    component.handleInput?.("\u001b");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

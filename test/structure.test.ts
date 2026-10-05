@@ -441,16 +441,16 @@ describe("judge model picker guards", () => {
     expect(source.match(/\brewriteGlobalConfig\s*\(/g)).toHaveLength(2);
   });
 
-  it("the picker is pi's own selector, built with the 0.84.3 six-argument form", () => {
+  it("the picker steps are pi-tui's SelectList and nothing can set a default model", () => {
     const source = src("command.ts");
     expect(source).toMatch(
-      /import \{[^}]*ModelSelectorComponent[^}]*\} from "@earendil-works\/pi-coding-agent"/,
+      /import \{[^}]*\bSelectList\b[^}]*\} from "@earendil-works\/pi-tui"/,
     );
-    expect(source).toMatch(
-      /new ModelSelectorComponent\(\s*request\.tui,\s*request\.currentModel,\s*request\.runtime,\s*request\.scopedModels,\s*request\.onSelect,\s*request\.onCancel,?\s*\)/,
-    );
+    expect(source).toMatch(/new SelectList\(/);
+    expect(source).not.toContain("ModelSelectorComponent");
     expect(source).not.toContain("SettingsManager");
     expect(source).not.toContain("onSelectAsDefault");
+    expect(source).not.toMatch(/\bsetModel\b|setDefaultModel/);
   });
 });
 
