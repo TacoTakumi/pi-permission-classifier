@@ -10,7 +10,12 @@ import type {
 } from "@gotgenes/pi-permission-system";
 import { describe, expect, it, vi } from "vitest";
 
+import { CircuitBreaker } from "#src/breaker";
 import { classifierConfigSchema } from "#src/config-schema";
+import { type GuidanceSource, selectGuidance } from "#src/guidance";
+import type { HealthOutcome } from "#src/health";
+import type { CompleteFn } from "#src/model-review";
+import { createClassifierReviewer } from "#src/reviewer";
 import {
   createSystemOneLink,
   type SystemOneLinkDeps,
@@ -19,6 +24,7 @@ import {
 } from "#src/system-one-link";
 import { HAZARD_OPTIONS } from "#src/system-one-review";
 import { COULD_NOT_CONFIRM_REASON, failureDenyReason } from "#src/verdict-policy";
+import { assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
 
 const QUERY = {} as PermissionQuery;
@@ -413,7 +419,7 @@ describe("decision entry", () => {
   it.each([
     ["allow", ALLOW_RESULT, null],
     ["deny", DENY_RESULT, null],
-    ["defer", UNCERTAIN_RESULT, "uncertain"],
+    ["defer", UNCERTAIN_RESULT, "model-verdict"],
   ] as const)("writes one full entry on a %s answer, with answers", async (kind, result, reason) => {
     const authorize = createSystemOneLink(
       makeDeps({
@@ -469,5 +475,209 @@ describe("decision entry", () => {
       contextBytes: Buffer.byteLength(FULL_COMMAND, "utf8"),
     });
     expect(JSON.stringify(log.review.mock.calls)).not.toContain("evil.example");
+  });
+});
+
+describe("guidance", () => {
+  const GLOBAL = "/home/you/.pi/agent/AGENTS.md";
+  const PROJECT = "/work/repo/AGENTS.md";
+
+  function guidanceSeam(files: GuidanceSource[], trusted: () => boolean) {
+    return () => selectGuidance(files, GLOBAL, trusted());
+  }
+
+  function capturedState(registry: ReturnType<typeof fakeRegistry>, call = 0) {
+    return (registry.classify.mock.calls[call]![1] as ClassifierContext).state;
+  }
+
+  it("sends only global guidance for an untrusted project", async () => {
+    const registry = fakeRegistry();
+    const files = [
+      { path: GLOBAL, content: "global rules" },
+      { path: PROJECT, content: "project rules" },
+    ];
+    const authorize = createSystemOneLink(
+      makeDeps({ getRegistry: () => registry, getGuidance: guidanceSeam(files, () => false) }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    expect(capturedState(registry).guidance).toEqual([{ path: GLOBAL, content: "global rules" }]);
+    expect(decisionEntry(log)).toMatchObject({
+      guidanceIncluded: [{ path: GLOBAL }],
+      guidanceDropped: [{ path: PROJECT, reason: "untrusted" }],
+    });
+  });
+
+  it("reads guidance per ask: an edit between asks changes the second state", async () => {
+    const registry = fakeRegistry();
+    const files = [{ path: GLOBAL, content: "first rules" }];
+    const authorize = createSystemOneLink(
+      makeDeps({ getRegistry: () => registry, getGuidance: guidanceSeam(files, () => true) }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    files[0] = { path: GLOBAL, content: "second rules" };
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(capturedState(registry, 0).guidance).toEqual([{ path: GLOBAL, content: "first rules" }]);
+    expect(capturedState(registry, 1).guidance).toEqual([
+      { path: GLOBAL, content: "second rules" },
+    ]);
+  });
+
+  it("omits guidance and never calls the seam when systemOne.guidance is false", async () => {
+    const registry = fakeRegistry();
+    const getGuidance = vi.fn(guidanceSeam([{ path: GLOBAL, content: "rules" }], () => true));
+    const authorize = createSystemOneLink(
+      makeDeps({
+        settings: settings({ guidance: false }),
+        getRegistry: () => registry,
+        getGuidance,
+      }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getGuidance).not.toHaveBeenCalled();
+    expect(capturedState(registry)).not.toHaveProperty("guidance");
+  });
+
+  it("takes guidance-load-failed under onError with no classify call when the seam throws", async () => {
+    const registry = fakeRegistry();
+    const authorize = createSystemOneLink(
+      makeDeps({
+        settings: settings({ onError: "deny" }),
+        getRegistry: () => registry,
+        getGuidance: () => {
+          throw new Error("disk exploded");
+        },
+      }),
+    );
+    const log = fakeLog();
+    expect(await authorize(askDetails(), QUERY, log)).toEqual({
+      kind: "deny",
+      reason: failureDenyReason("guidance-load-failed"),
+    });
+    expect(registry.classify).not.toHaveBeenCalled();
+    expect(decisionEntry(log)?.deferReason).toBe("guidance-load-failed");
+  });
+
+  it("never logs guidance content", async () => {
+    const authorize = createSystemOneLink(
+      makeDeps({
+        getGuidance: guidanceSeam([{ path: GLOBAL, content: "SECRET-GUIDANCE-TEXT" }], () => true),
+      }),
+    );
+    const log = fakeLog();
+    await authorize(askDetails(), QUERY, log);
+    expect(JSON.stringify(log.review.mock.calls)).not.toContain("SECRET-GUIDANCE-TEXT");
+  });
+});
+
+describe("breaker and health", () => {
+  const never = () => new Promise<ClassifierResult>(() => {});
+
+  it("three system-one timeouts open its breaker; a classifier ask still calls complete", async () => {
+    const registry = fakeRegistry(never);
+    const authorize = createSystemOneLink(
+      makeDeps({ settings: settings({ timeoutMs: 5 }), getRegistry: () => registry }),
+    );
+    for (let i = 0; i < 3; i += 1) {
+      await authorize(askDetails(), QUERY, fakeLog());
+    }
+    const log = fakeLog();
+    expect(await authorize(askDetails(), QUERY, log)).toEqual({ kind: "defer" });
+    expect(registry.classify).toHaveBeenCalledTimes(3);
+    expect(decisionEntry(log)).toMatchObject({ deferReason: "breaker-open", modelCalled: false });
+
+    const complete = vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "allow" }));
+    const classifier = createClassifierReviewer({
+      getConfig: () => classifierConfigSchema.parse({}),
+      getSessionModel: () => ({ provider: "anthropic", id: "claude-haiku" }) as never,
+      getRegistry: () => ({
+        find: vi.fn(),
+        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const })),
+      }),
+      complete,
+    });
+    expect(await classifier(askDetails(), QUERY, fakeLog())).toEqual({ kind: "allow" });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the breaker it is given and records success on an answer", async () => {
+    const breaker = new CircuitBreaker();
+    const failures = vi.spyOn(breaker, "recordFailure");
+    const successes = vi.spyOn(breaker, "recordSuccess");
+    const authorize = createSystemOneLink(makeDeps({ breaker }));
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(successes).toHaveBeenCalledTimes(1);
+    expect(failures).not.toHaveBeenCalled();
+  });
+
+  it("denies an open breaker with its reason under onError deny", async () => {
+    const breaker = new CircuitBreaker();
+    for (let i = 0; i < 3; i += 1) {
+      breaker.recordFailure(fakeLog(), "warm-up");
+    }
+    const registry = fakeRegistry();
+    const authorize = createSystemOneLink(
+      makeDeps({ settings: settings({ onError: "deny" }), getRegistry: () => registry, breaker }),
+    );
+    expect(await authorize(askDetails(), QUERY, fakeLog())).toEqual({
+      kind: "deny",
+      reason: failureDenyReason("breaker-open"),
+    });
+    expect(registry.classify).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an allow", ALLOW_RESULT, { verdict: "allow" }],
+    ["a deny", DENY_RESULT, { verdict: "deny" }],
+    ["an uncertain answer", UNCERTAIN_RESULT, { verdict: "defer", deferReason: "model-verdict" }],
+  ] as const)("reports %s to the health seam once", async (_label, result, expected) => {
+    const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
+    const authorize = createSystemOneLink(
+      makeDeps({
+        settings: settings({ verdicts: "allow-deny-defer" }),
+        getRegistry: () => fakeRegistry(vi.fn(async () => result)),
+        onOutcome,
+      }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome).toHaveBeenCalledWith(expected);
+  });
+
+  it("reports a failure as a failure defer even under onError deny", async () => {
+    const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
+    const authorize = createSystemOneLink(
+      makeDeps({
+        settings: settings({ onError: "deny" }),
+        getRegistry: () => undefined,
+        onOutcome,
+      }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(onOutcome).toHaveBeenCalledWith({ verdict: "defer", deferReason: "model-unresolved" });
+  });
+
+  it("keeps the verdict when the health seam throws", async () => {
+    const authorize = createSystemOneLink(
+      makeDeps({
+        onOutcome: () => {
+          throw new Error("footer down");
+        },
+      }),
+    );
+    const log = fakeLog();
+    expect(await authorize(askDetails(), QUERY, log)).toEqual({ kind: "allow" });
+    expect(decisionEntries(log)).toHaveLength(1);
+  });
+
+  it("reports nothing for a surface short-circuit", async () => {
+    const onOutcome = vi.fn();
+    const authorize = createSystemOneLink(makeDeps({ onOutcome }));
+    await authorize(
+      askDetails({ surface: "path_read" }, { surface: "path_read" }),
+      QUERY,
+      fakeLog(),
+    );
+    expect(onOutcome).not.toHaveBeenCalled();
   });
 });
