@@ -141,6 +141,58 @@ describe("loadClassifierConfig", () => {
     expect(result.config?.timeoutMs).toBe(5000);
   });
 
+  it("loads a pre-existing config file with the new link defaults", () => {
+    writeConfig(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({
+        provider: "anthropic",
+        model: "claude-haiku",
+        instructions: "be strict",
+        timeoutMs: 250,
+      }),
+    );
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.classifierEnabled).toBe(true);
+    expect(result.config?.verdicts).toBe("allow-deny-defer");
+    expect(result.config?.onError).toBe("defer");
+    expect(result.config?.systemOne).toBeUndefined();
+  });
+
+  it("loads a systemOne object with its defaults filled", () => {
+    writeConfig(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({
+        classifierEnabled: false,
+        systemOne: { provider: "typesafe", model: "jev" },
+      }),
+    );
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.classifierEnabled).toBe(false);
+    expect(result.config?.systemOne).toEqual({
+      provider: "typesafe",
+      model: "jev",
+      verdicts: "allow-defer",
+      onError: "defer",
+      allowThreshold: 0.9,
+      denyThreshold: 0.9,
+      guidance: true,
+      timeoutMs: 5000,
+    });
+  });
+
+  it("yields no config plus a sourced issue for an out-of-range systemOne threshold", () => {
+    const path = getGlobalConfigPath(agentDir);
+    writeConfig(path, JSON.stringify({ systemOne: { allowThreshold: 1.5 } }));
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.config).toBeUndefined();
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.issues.some((issue) => issue.path.includes("allowThreshold"))).toBe(
+      true,
+    );
+  });
+
   it("lets project config override global config", () => {
     writeConfig(
       getGlobalConfigPath(agentDir),

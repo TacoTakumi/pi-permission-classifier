@@ -22,6 +22,49 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  */
 export const DEFAULT_CONTEXT_BUDGET_BYTES = 8192;
 
+/** Default systemOne allow and deny probability threshold. */
+export const DEFAULT_SYSTEM_ONE_THRESHOLD = 0.9;
+
+/**
+ * Which verdicts a link may return. `allow-deny-defer` passes all three;
+ * `allow-defer` never denies; `allow-deny` never defers.
+ */
+export const verdictsSchema = z.enum(["allow-deny-defer", "allow-defer", "allow-deny"]);
+
+export type Verdicts = z.infer<typeof verdictsSchema>;
+
+/** What a link returns on any failure. Never allow. */
+export const onErrorSchema = z.enum(["defer", "deny"]);
+
+export type OnError = z.infer<typeof onErrorSchema>;
+
+const thresholdSchema = z
+  .number()
+  .min(0)
+  .max(1)
+  .default(DEFAULT_SYSTEM_ONE_THRESHOLD);
+
+/**
+ * Settings for the system-one link. Its presence registers the link;
+ * `provider`/`model` name a classifier model and come together or not at all.
+ */
+export const systemOneConfigSchema = z
+  .object({
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    verdicts: verdictsSchema.default("allow-defer"),
+    onError: onErrorSchema.default("defer"),
+    allowThreshold: thresholdSchema,
+    denyThreshold: thresholdSchema,
+    guidance: z.boolean().default(true),
+    timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
+  })
+  .refine((config) => (config.provider === undefined) === (config.model === undefined), {
+    message: "provider and model must be set together or not at all",
+  });
+
+export type SystemOneConfig = z.infer<typeof systemOneConfigSchema>;
+
 /**
  * Operator-owned config for the auto-classifier reviewer. An absent config
  * file means no registration (fail-safe); an empty object means the defaults
@@ -44,6 +87,12 @@ export const classifierConfigSchema = z
       .int()
       .positive()
       .default(DEFAULT_CONTEXT_BUDGET_BYTES),
+    // The top-level fields above are the classifier link's settings;
+    // classifierEnabled false stops that link registering.
+    classifierEnabled: z.boolean().default(true),
+    verdicts: verdictsSchema.default("allow-deny-defer"),
+    onError: onErrorSchema.default("defer"),
+    systemOne: systemOneConfigSchema.optional(),
   })
   .refine((config) => (config.provider === undefined) === (config.model === undefined), {
     message: "provider and model must be set together or not at all",
