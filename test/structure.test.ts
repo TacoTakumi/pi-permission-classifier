@@ -63,7 +63,15 @@ function atLeast(version: string, floor: [number, number, number]): boolean {
 }
 
 describe("no path-based allow capping in link code", () => {
-  it.each(["reviewer.ts", "model-review.ts", "breaker.ts", "prompt.ts"])(
+  it.each([
+    "reviewer.ts",
+    "model-review.ts",
+    "breaker.ts",
+    "prompt.ts",
+    "system-one-link.ts",
+    "system-one-review.ts",
+    "verdict-policy.ts",
+  ])(
     "%s decides without filesystem or cwd inspection",
     (name) => {
       const source = src(name);
@@ -321,6 +329,58 @@ describe("fail-safe: verdicts come only from the model or the policy", () => {
       expect(source.match(pattern)?.length, kind).toBe(1);
       expect(mapper.match(pattern)?.length, kind).toBe(1);
     }
+  });
+});
+
+describe("system-one module guards", () => {
+  const SYSTEM_ONE_FILES = ["system-one-link.ts", "system-one-review.ts", "verdict-policy.ts"];
+
+  it("the link-file set includes the system-one modules", () => {
+    for (const name of SYSTEM_ONE_FILES) {
+      expect(LINK_FILES).toContain(name);
+    }
+  });
+
+  it.each(SYSTEM_ONE_FILES)("%s imports no node builtins and calls no fetch", (name) => {
+    const source = src(name);
+    expect(importsOf(source).filter((imported) => imported.startsWith("node:"))).toEqual([]);
+    expect(referencesMember(source, "fetch"), `${name} references fetch`).toBe(false);
+    expect(source).not.toMatch(/\bXMLHttpRequest\b|\bWebSocket\b/);
+  });
+
+  it.each(SYSTEM_ONE_FILES)("%s takes only types from pi-ai and nothing from pi-coding-agent", (name) => {
+    const source = src(name);
+    expect(source).not.toMatch(/^import (?!type\b)[^;]*from "@earendil-works\/pi-ai/m);
+    expect(importsOf(source).some((imported) => imported.includes("pi-coding-agent"))).toBe(
+      false,
+    );
+  });
+
+  it("classify is reached only through the injected registry seam", () => {
+    const link = src("system-one-link.ts");
+    // One member call, on the injected registry.
+    expect(link.match(/\.classify\s*\(/g)).toHaveLength(1);
+    expect(link).toMatch(/\bregistry\s*\.classify\s*\(/);
+    // The only bare form is the method signature in the seam interface.
+    const seam = link.slice(
+      link.indexOf("export interface SystemOneRegistryLike"),
+      link.indexOf("export interface SystemOneLinkSettings"),
+    );
+    expect(link.match(/(?<![.\w$])classify\s*\(/g)).toHaveLength(1);
+    expect(seam).toMatch(/(?<![.\w$])classify\s*\(/);
+    expect(src("system-one-review.ts")).not.toMatch(/\bclassify\s*\(/);
+    expect(src("verdict-policy.ts")).not.toMatch(/\bclassify\s*\(/);
+  });
+
+  it("the system-one link never reads the session model", () => {
+    const link = src("system-one-link.ts");
+    expect(link).not.toMatch(/sessionModel|getSessionModel|ctx\.model\b/);
+  });
+
+  it("the system-one link imports nothing from the extension and calls no setStatus", () => {
+    const link = src("system-one-link.ts");
+    expect(importsOf(link)).not.toContain("./extension");
+    expect(link).not.toContain("setStatus");
   });
 });
 
