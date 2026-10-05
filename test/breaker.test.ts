@@ -202,3 +202,45 @@ describe("circuit breaker", () => {
     });
   });
 });
+
+describe("judge tag on breaker entries", () => {
+  function openAndClose(breaker: CircuitBreaker) {
+    const log = fakeLog();
+    for (let i = 0; i < 3; i += 1) {
+      breaker.recordFailure(log, `r${i}`);
+    }
+    breaker.recordSuccess(log, "r3");
+    return log.review.mock.calls.map(([event, details]) => ({ event, details }));
+  }
+
+  it.each(["quick", "llm"] as const)("tags open and close with judge %s", (judge) => {
+    const entries = openAndClose(new CircuitBreaker(judge));
+    expect(entries.map((entry) => entry.event)).toEqual([
+      "classifier.breaker_open",
+      "classifier.breaker_close",
+    ]);
+    for (const entry of entries) {
+      expect(entry.details).toMatchObject({ judge });
+    }
+  });
+
+  it("the LLM judge's own breaker tags its entries llm", async () => {
+    const complete = vi.fn<CompleteFn>(async () => {
+      throw new Error("down");
+    });
+    const authorize = createClassifierReviewer({
+      ...makeDeps(complete),
+      getRegistry: () => ({
+        find: () => MODEL,
+        getApiKeyAndHeaders: async () => ({ ok: true as const }),
+      }),
+      getConfig: () => classifierConfigSchema.parse({ provider: "anthropic", model: "claude-haiku" }),
+    });
+    const log = fakeLog();
+    for (let i = 0; i < 3; i += 1) {
+      await authorize(askDetails(), QUERY, log);
+    }
+    const open = log.review.mock.calls.find(([event]) => event === "classifier.breaker_open");
+    expect(open?.[1]).toMatchObject({ judge: "llm" });
+  });
+});

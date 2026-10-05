@@ -136,7 +136,7 @@ function healthOf(outcome: LinkOutcome, reason: string | null): HealthOutcome {
 
 /** Build the quick judge's `authorize` callback. */
 export function createQuickJudge(deps: QuickJudgeDeps): Authorizer["authorize"] {
-  const breaker = deps.breaker ?? new CircuitBreaker();
+  const breaker = deps.breaker ?? new CircuitBreaker("quick");
 
   return async (details, _query, log) => {
     // What the guidance stage selected, so the backstop entry can say what

@@ -751,3 +751,18 @@ describe("hazard answers in the log", () => {
     expect(Array.isArray(hazard)).toBe(true);
   });
 });
+
+describe("quick judge breaker", () => {
+  it("tags its own breaker entries judge quick", async () => {
+    const never = () => new Promise<ClassifierResult>(() => {});
+    const authorize = createQuickJudge(
+      makeDeps({ settings: settings({ timeoutMs: 5 }), getRegistry: () => fakeRegistry(never) }),
+    );
+    const log = fakeLog();
+    for (let i = 0; i < 3; i += 1) {
+      await authorize(askDetails(), QUERY, log);
+    }
+    const open = log.review.mock.calls.find(([event]) => event === "classifier.breaker_open");
+    expect(open?.[1]).toMatchObject({ judge: "quick" });
+  });
+});

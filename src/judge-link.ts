@@ -48,7 +48,7 @@ export interface JudgeLinkDeps {
  */
 export function createJudgeLink(deps: JudgeLinkDeps): Authorizer["authorize"] {
   let warnedOverride = false;
-  const quickBreaker = deps.quick.breaker ?? new CircuitBreaker();
+  const quickBreaker = deps.quick.breaker ?? new CircuitBreaker("quick");
 
   const llmJudge = createClassifierReviewer({ ...deps.llm, getConfig: deps.getConfig });
 

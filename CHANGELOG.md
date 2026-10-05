@@ -54,6 +54,8 @@ this project adheres to
 - Decision entries carry `judge` (`quick` or `llm`); quick entries also
   carry the per-question answer probabilities, with the hazard as
   `[option, probability]` pairs, highest first.
+  The breaker open and close entries and the LLM judge's short-circuit
+  debug entries carry `judge` too.
 
 ### Changed
 

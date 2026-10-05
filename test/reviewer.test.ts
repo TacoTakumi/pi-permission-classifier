@@ -1026,3 +1026,13 @@ describe("verdicts and onError settings", () => {
     }
   });
 });
+
+describe("short-circuit debug entries", () => {
+  it.each([
+    ["an excluded surface", askDetails({ surface: "path_read" }, { surface: "path_read" })],
+  ])("tag %s with judge llm", async (_label, details) => {
+    const log = fakeLog();
+    await createClassifierReviewer(makeDeps())(details, QUERY, log);
+    expect(log.debug.mock.calls[0]?.[1]).toMatchObject({ judge: "llm" });
+  });
+});

@@ -29,6 +29,17 @@ export class CircuitBreaker {
   private openedAt: number | undefined;
 
   /**
+   * @param judge The judge this breaker guards, written as `judge` on its
+   *   open and close entries; untagged when absent.
+   */
+  constructor(private readonly judge?: "quick" | "llm") {}
+
+  /** The tag every entry of this breaker carries. */
+  private tag(): { judge?: "quick" | "llm" } {
+    return this.judge === undefined ? {} : { judge: this.judge };
+  }
+
+  /**
    * Milliseconds of cooldown left: 0 while closed or once the cooldown has
    * elapsed, else the time until the next ask may try the model again.
    */
@@ -58,6 +69,7 @@ export class CircuitBreaker {
     this.openedAt = Date.now();
     if (!reopening) {
       log.review(BREAKER_OPEN_EVENT, {
+        ...this.tag(),
         requestId,
         consecutiveFailures: this.consecutiveFailures,
         cooldownMs: BREAKER_COOLDOWN_MS,
@@ -71,7 +83,7 @@ export class CircuitBreaker {
     this.consecutiveFailures = 0;
     this.openedAt = undefined;
     if (wasOpen) {
-      log.review(BREAKER_CLOSE_EVENT, { requestId });
+      log.review(BREAKER_CLOSE_EVENT, { ...this.tag(), requestId });
     }
   }
 }

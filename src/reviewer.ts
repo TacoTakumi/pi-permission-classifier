@@ -163,7 +163,7 @@ function report(deps: ClassifierReviewerDeps, outcome: HealthOutcome): void {
 export function createClassifierReviewer(
   deps: ClassifierReviewerDeps,
 ): Authorizer["authorize"] {
-  const breaker = deps.breaker ?? new CircuitBreaker();
+  const breaker = deps.breaker ?? new CircuitBreaker("llm");
 
   return async (details, _query, log) => {
     // What the guidance stage selected, so the backstop entry below can say
@@ -251,6 +251,7 @@ async function decide(
 
   if (surface === undefined) {
     log.debug(SHORT_CIRCUIT_EVENT, {
+      judge: JUDGE_TAG,
       requestId,
       reason: "undeterminable-surface",
     });
@@ -258,6 +259,7 @@ async function decide(
   }
   if (isExcludedSurface(surface)) {
     log.debug(SHORT_CIRCUIT_EVENT, {
+      judge: JUDGE_TAG,
       requestId,
       surface,
       reason: "excluded-surface",

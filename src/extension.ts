@@ -173,10 +173,10 @@ export function createClassifierExtension(
   let warnedUnreachable = false;
   /** Per-session LLM judge health and breaker; both start fresh at shutdown. */
   const health = new SessionHealth();
-  let breaker = new CircuitBreaker();
+  let breaker = new CircuitBreaker("llm");
   /** The quick judge's own health and breaker, apart from the LLM judge's. */
   const quickHealth = new SessionHealth();
-  let quickBreaker = new CircuitBreaker();
+  let quickBreaker = new CircuitBreaker("quick");
   /** The once-per-second footer refresh while the breaker cools down. */
   let countdown: ReturnType<typeof setInterval> | undefined;
 
@@ -441,8 +441,8 @@ export function createClassifierExtension(
     warnedUnreachable = false;
     stopCountdown();
     health.reset();
-    breaker = new CircuitBreaker();
+    breaker = new CircuitBreaker("llm");
     quickHealth.reset();
-    quickBreaker = new CircuitBreaker();
+    quickBreaker = new CircuitBreaker("quick");
   });
 }
