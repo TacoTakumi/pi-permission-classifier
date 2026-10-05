@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonObject } from "@earendil-works/pi-ai";
 
 /**
  * Wrap reply content in the common `AssistantMessage` envelope the tests
@@ -42,7 +42,7 @@ export function assistantToolCall(
   name = "claude_code_report_verdict",
 ): AssistantMessage {
   return assistantReply([
-    { type: "toolCall", id: "call-1", name, arguments: args },
+    { type: "toolCall", id: "call-1", name, arguments: args as JsonObject },
   ]);
 }
 

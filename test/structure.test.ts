@@ -161,16 +161,16 @@ describe("manifest", () => {
     expect(manifest.pi?.extensions).toEqual(["./src/index.ts"]);
   });
 
-  it("declares the pi floor the searchable picker's constructor needs", () => {
+  it("declares the pi 1.0 peer floor", () => {
     expect(manifest.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe(
-      ">=0.84.3",
+      ">=1.0.0",
     );
     // The dev pin the typings were checked against must satisfy that floor.
     const pinned = (
       manifest.devDependencies?.["@earendil-works/pi-coding-agent"] ?? ""
     ).replace(/^[~^v>=]*/, "");
     expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(atLeast(pinned, [0, 84, 3])).toBe(true);
+    expect(atLeast(pinned, [1, 0, 0])).toBe(true);
   });
 });
 
@@ -225,7 +225,7 @@ describe("operator docs", () => {
       // Stated as loud and safe: the command fails before the picker mounts.
       expect(section).toContain("before the picker mounts");
     }
-    expect(flat).toContain("@earendil-works/pi-coding-agent >=0.84.3");
+    expect(flat).toContain("@earendil-works/pi-coding-agent >=1.0.0");
     // Degradation is reserved for the runtime-shape case, not the version floor.
     expect(flat).toMatch(/does not expose\s+the registry runtime/);
   });
