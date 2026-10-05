@@ -1,8 +1,8 @@
 /**
  * Extension wiring: load the config at `session_start`, register the
- * `"classifier"` link (unless `classifierEnabled` is false) and the
- * `"system-one"` link (when the config has a `systemOne` object) from
- * `permissions:ready`, and dispose both on shutdown.
+ * `"permission-judge"` link from `permissions:ready`, and dispose it on
+ * shutdown. The link reads the config's `mode` on every ask and runs the
+ * LLM judge, the quick judge, or both (see `judge-link.ts`).
  *
  * The ready handler is the sole registration site. pi-permission-system
  * >=27.0.0 emits `permissions:ready` at least once after every extension's
@@ -28,7 +28,7 @@
  * byte caps. An older pi without a trust query counts as untrusted.
  *
  * Once the link registers, the footer status `zz-permission-classifier` names
- * the effective judge (see `judge.ts`); it follows `model_select` and is
+ * the active judges (see `judge.ts`); it follows `model_select` and is
  * cleared at `session_shutdown`. No status is set when the link does not
  * register.
  *
@@ -90,29 +90,13 @@ import {
   resolveJudge,
   resolveSystemOneJudge,
 } from "./judge";
+import { createJudgeLink } from "./judge-link";
 import type { CompleteFn } from "./model-review";
-import {
-  createClassifierReviewer,
-  type ModelRegistryLike,
-} from "./reviewer";
-import {
-  createQuickJudge,
-  type QuickJudgeRegistryLike,
-  type QuickJudgeSettings,
-} from "./quick-judge";
+import type { QuickJudgeRegistryLike } from "./quick-judge";
+import type { ModelRegistryLike } from "./reviewer";
 
 /** The operator-facing chain-link name referenced from `authorizerChain`. */
-const LINK_NAME = "classifier";
-
-/** The second chain link, registered when the config has a `systemOne` object. */
-const SYSTEM_ONE_LINK_NAME = "system-one";
-
-/**
- * The system-one settings while the classifier link is enabled: it is a
- * front link that may only allow or pass the ask on, whatever its config
- * asks for.
- */
-const FRONT_LINK_POLICY = { verdicts: "allow-defer", onError: "defer" } as const;
+const LINK_NAME = "permission-judge";
 
 /** The footer status key naming the effective judge. pi sorts extension
  * statuses by key on one footer line; the `zz-` prefix keeps this entry last. */
@@ -188,15 +172,13 @@ export function createClassifierExtension(
   let session: ExtensionContext | undefined;
   let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
-  let disposeSystemOne: (() => void) | undefined;
   let warnedUnreachable = false;
-  let warnedFrontLink = false;
-  /** Per-session judge health and breaker; both start fresh at shutdown. */
+  /** Per-session LLM judge health and breaker; both start fresh at shutdown. */
   const health = new SessionHealth();
   let breaker = new CircuitBreaker();
-  /** The system-one link's own health and breaker, apart from the classifier's. */
-  const systemOneHealth = new SessionHealth();
-  let systemOneBreaker = new CircuitBreaker();
+  /** The quick judge's own health and breaker, apart from the LLM judge's. */
+  const quickHealth = new SessionHealth();
+  let quickBreaker = new CircuitBreaker();
   /** The once-per-second footer refresh while the breaker cools down. */
   let countdown: ReturnType<typeof setInterval> | undefined;
 
@@ -242,40 +224,7 @@ export function createClassifierExtension(
     );
   }
 
-  /**
-   * The system-one settings in effect, read live per ask. While the
-   * classifier link is enabled the front-link policy replaces the
-   * configured verdicts and onError, and the first time that drops a
-   * stricter setting this session, the operator is warned.
-   */
-  function systemOneSettings(): QuickJudgeSettings | undefined {
-    const systemOne = config?.systemOne;
-    if (!config || !systemOne) {
-      return undefined;
-    }
-    if (!config.classifierEnabled) {
-      return { quickJudge: systemOne, contextBudgetBytes: config.contextBudgetBytes };
-    }
-    if (
-      !warnedFrontLink &&
-      (systemOne.verdicts !== FRONT_LINK_POLICY.verdicts ||
-        systemOne.onError !== FRONT_LINK_POLICY.onError)
-    ) {
-      warnedFrontLink = true;
-      warn(
-        `systemOne asks for verdicts ${systemOne.verdicts} and onError ` +
-          `${systemOne.onError}, but while the classifier link is enabled ` +
-          "the system-one link runs with verdicts allow-defer and onError " +
-          "defer. Set classifierEnabled to false to apply them.",
-      );
-    }
-    return {
-      quickJudge: { ...systemOne, ...FRONT_LINK_POLICY },
-      contextBudgetBytes: config.contextBudgetBytes,
-    };
-  }
-
-  /** The session cwd for the system-one state; no session is an internal error. */
+  /** The session cwd for the quick judge state; no session is an internal error. */
   function sessionCwd(): string {
     if (!session) {
       throw new Error("no session context to read the cwd from");
@@ -302,38 +251,34 @@ export function createClassifierExtension(
   }
 
   /**
-   * Name the effective judge in the footer with the session health suffix;
-   * a no-op until the link registers. Refreshed on judge changes and after
-   * every reviewer outcome.
-   */
-  /**
-   * Repaint the footer: the system-one judge first (it is the front link),
-   * then the classifier judge, each with its own health suffix. A link that
-   * is not registered is left out; with neither, nothing is set.
+   * Repaint the footer: a part for each judge the mode runs, the quick judge
+   * first, each with its own health suffix. A no-op until the link
+   * registers. Refreshed on judge changes and after every judge outcome.
    */
   function refreshStatus(): void {
+    if (!dispose) {
+      return;
+    }
+    const mode = config?.mode ?? "llm";
     const parts: string[] = [];
-    if (disposeSystemOne && config?.systemOne) {
+    if (mode !== "llm") {
       parts.push(
-        formatSystemOneStatus(resolveSystemOneJudge(config.systemOne, registry)) +
-          formatHealthSuffix(systemOneHealth, systemOneBreaker.remainingMs()),
+        formatSystemOneStatus(resolveSystemOneJudge(config?.quickJudge ?? {}, registry)) +
+          formatHealthSuffix(quickHealth, quickBreaker.remainingMs()),
       );
     }
-    if (dispose) {
+    if (mode !== "quick") {
       parts.push(
         formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
           formatHealthSuffix(health, breaker.remainingMs()),
       );
-    }
-    if (parts.length === 0) {
-      return;
     }
     ui?.setStatus(STATUS_KEY, parts.join(", "));
   }
 
   /** The longer of the two breakers' remaining cooldowns. */
   function breakerRemainingMs(): number {
-    return Math.max(breaker.remainingMs(), systemOneBreaker.remainingMs());
+    return Math.max(breaker.remainingMs(), quickBreaker.remainingMs());
   }
 
   function stopCountdown(): void {
@@ -427,12 +372,8 @@ export function createClassifierExtension(
   });
 
   pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
-    // Idempotent per link: ready fires at least once per session and may
-    // repeat. classifierEnabled false keeps the classifier link off the
-    // chain; a systemOne object puts the system-one link on it.
-    const wantClassifier = !dispose && config?.classifierEnabled === true;
-    const wantSystemOne = !disposeSystemOne && config?.systemOne !== undefined;
-    if (!wantClassifier && !wantSystemOne) {
+    // Idempotent: ready fires at least once per session and may repeat.
+    if (dispose || !config) {
       return;
     }
     const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
@@ -445,41 +386,32 @@ export function createClassifierExtension(
       warnUnreachableOnce();
       return;
     }
-    if (wantSystemOne) {
-      // Warn about a front-link override at startup, not first ask.
-      systemOneSettings();
-      const authorizeSystemOne = createQuickJudge({
-        getSettings: systemOneSettings,
+    // One link per session: its once-per-session warnings live in the closure.
+    const authorize = createJudgeLink({
+      getConfig: effectiveConfig,
+      warn,
+      llm: {
+        getSessionModel: () => sessionModel,
         getRegistry: () => registry,
-        getCwd: sessionCwd,
+        complete,
+        breaker,
         getGuidance,
-        breaker: systemOneBreaker,
         onOutcome: (outcome) => {
-          systemOneHealth.record(outcome);
+          health.record(outcome);
           refreshStatus();
           syncCountdown();
         },
-      });
-      disposeSystemOne = service.registerAuthorizer(
-        SYSTEM_ONE_LINK_NAME,
-        authorizeSystemOne,
-      );
-    }
-    if (!wantClassifier) {
-      refreshStatus();
-      return;
-    }
-    const authorize = createClassifierReviewer({
-      getConfig: effectiveConfig,
-      getSessionModel: () => sessionModel,
-      getRegistry: () => registry,
-      complete,
-      breaker,
-      getGuidance,
-      onOutcome: (outcome) => {
-        health.record(outcome);
-        refreshStatus();
-        syncCountdown();
+      },
+      quick: {
+        getRegistry: () => registry,
+        getCwd: sessionCwd,
+        getGuidance,
+        breaker: quickBreaker,
+        onOutcome: (outcome) => {
+          quickHealth.record(outcome);
+          refreshStatus();
+          syncCountdown();
+        },
       },
     });
     dispose = service.registerAuthorizer(LINK_NAME, authorize);
@@ -487,13 +419,11 @@ export function createClassifierExtension(
   });
 
   pi.on("session_shutdown", () => {
-    if (dispose || disposeSystemOne) {
+    if (dispose) {
       ui?.setStatus(STATUS_KEY, undefined);
     }
     dispose?.();
     dispose = undefined;
-    disposeSystemOne?.();
-    disposeSystemOne = undefined;
     config = undefined;
     sessionModel = undefined;
     registry = undefined;
@@ -501,11 +431,10 @@ export function createClassifierExtension(
     session = undefined;
     override = undefined;
     warnedUnreachable = false;
-    warnedFrontLink = false;
     stopCountdown();
     health.reset();
     breaker = new CircuitBreaker();
-    systemOneHealth.reset();
-    systemOneBreaker = new CircuitBreaker();
+    quickHealth.reset();
+    quickBreaker = new CircuitBreaker();
   });
 }
