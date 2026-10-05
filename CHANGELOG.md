@@ -52,6 +52,12 @@ this project adheres to
   each judge the mode runs, quick first and joined with `->` in the order
   they run: `quick:<provider>/<id>` and `llm:<provider>/<id>` or
   `llm:chat-model`, each with its own health suffix.
+- `/permission-model` sets `verdicts` and `onError` for the last judge in
+  line (the LLM judge in modes `llm` and `quick-then-llm`, the quick judge
+  in mode `quick`): the picker ends with a verdicts step and an onError
+  step, and the typed forms `verdicts <allow-deny-defer|allow-defer|allow-deny>`
+  and `on-error <defer|deny>` set one field each. The print form outside
+  the TUI shows the last judge's policy.
 - Decision entries carry `judge` (`quick` or `llm`); quick entries also
   carry the per-question answer probabilities, with the hazard as
   `[option, probability]` pairs, highest first.

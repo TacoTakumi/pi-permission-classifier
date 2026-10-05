@@ -22,7 +22,8 @@ Two judges can review an ask, and the `mode` setting picks who does:
 - `quick-then-llm`: the quick judge settles the clear cases, and the LLM
   judge reviews everything the quick judge does not allow.
 
-You choose the mode and both models with `/permission-model`, inside pi.
+You choose the mode, both models and the last judge's `verdicts` and
+`onError` with `/permission-model`, inside pi.
 
 Fail-safe by construction: a missing config, an unresolved model, an auth
 failure, a timeout, an unparseable reply, or any internal error never
@@ -97,8 +98,8 @@ and installing it grants it no authority until you name it in the chain.
    judge model.
 
 5. Choose the judges. Start a new pi session and run `/permission-model`:
-   pick a mode, then the model for each judge that mode runs (see
-   "Choosing the judges"). The choice is saved to the config file from
+   pick a mode, then the model for each judge that mode runs, then the
+   last judge's verdicts and onError (see "Choosing the judges"). The choice is saved to the config file from
    step 4 and applies to the next ask.
 
 6. Try it. Trigger something your policy sends to `ask` (for example a bash
@@ -204,6 +205,11 @@ A judge that runs alone in an unattended session can use `allow-deny` with
 `onError: "deny"`, so it never waits for a human. In mode `quick-then-llm`
 the quick judge always runs with `allow-defer` and `onError: "defer"` (see
 "Modes").
+
+`/permission-model` sets both fields for the last judge in line, the judge
+whose answer ends the ask: the LLM judge (top-level fields) in modes `llm`
+and `quick-then-llm`, the quick judge (`quickJudge` fields) in mode
+`quick`. See "The /permission-model command".
 
 When `allow-defer` withholds a model deny, the decision entry records
 verdict `defer` with defer reason `deny-capped`.
@@ -515,12 +521,16 @@ choosing a judge never changes pi's session model or your default model:
   preselected: the quick list holds the available classifier models; the
   LLM list holds `Same as the chat model (follows /model)` and the
   available chat models. `quick-then-llm` shows the quick list, then the
-  LLM list. Nothing is written until the last step; then the mode and the
-  models are saved in one write. Press escape at any step to change
-  nothing.
+  LLM list. Then a verdicts list (`allow-deny-defer`, `allow-defer`,
+  `allow-deny`) and an onError list (`defer`, `deny`) follow for the last
+  judge in line: the LLM judge in `llm` and `quick-then-llm`, the quick
+  judge in `quick`. Each value has a one-line description, and the current
+  value is marked `(current)` and preselected. Nothing is written until the
+  last step; then the mode, the models and the policy are saved in one
+  write. Press escape at any step to change nothing.
 - Outside the TUI (rpc, json, print modes), `/permission-model` with no
-  argument prints the mode, the model of each judge the mode runs, and the
-  usage line, and writes nothing.
+  argument prints the mode, the model of each judge the mode runs, the last
+  judge's verdicts and onError, and the usage line, and writes nothing.
 - `/permission-model mode <llm|quick|quick-then-llm>` sets the mode. Mode
   `quick` or `quick-then-llm` needs a quick judge model in the global config
   file, where the mode is saved: without one it writes nothing and says to
@@ -536,15 +546,22 @@ choosing a judge never changes pi's session model or your default model:
 - `/permission-model quick <provider>/<id>` sets the quick judge. The pair
   must be a classifier model: an unknown pair or a chat model is rejected
   and nothing changes.
+- `/permission-model verdicts <allow-deny-defer|allow-defer|allow-deny>`
+  and `/permission-model on-error <defer|deny>` set that field for the last
+  judge in line of the mode in effect (a `mode:` launch flag value or a
+  project config mode counts). The confirmation names the judge. An
+  unknown value is rejected and nothing changes.
 - Setting a model never changes the mode.
-- Tab completion offers `mode`, `llm` and `quick`, then the mode values,
-  `chat-model` and the chat model labels, or the classifier model labels.
+- Tab completion offers `mode`, `llm`, `quick`, `verdicts` and `on-error`,
+  then the mode values, `chat-model` and the chat model labels, the
+  classifier model labels, or the verdicts and onError values.
 
 A choice applies to the next reviewed ask immediately and is saved to the
 global config file
 (`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only the
-fields the choice sets are rewritten (`mode`, `provider` and `model`, or
-`quickJudge.provider` and `quickJudge.model`), every other field is
+fields the choice sets are rewritten (`mode`, `provider` and `model`,
+`quickJudge.provider` and `quickJudge.model`, and `verdicts` and `onError`
+at the top level or inside `quickJudge`), every other field is
 preserved, and the write goes through a temporary file that is fsynced and
 then renamed, so neither a process crash nor an OS crash leaves a truncated
 config. The command never creates the file. Every write form refuses -
