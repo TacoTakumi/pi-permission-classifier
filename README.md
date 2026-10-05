@@ -582,8 +582,10 @@ touches, for the rest of that session.
 
 Once the link registers, the footer shows the active judges under the key
 `zz-permission-classifier` (pi sorts extension statuses by key on one
-footer line; the `zz-` prefix keeps the entry last). There is a part for
-each judge the mode runs, the quick judge first, separated by a comma:
+footer line; the `zz-` prefix keeps the entry last). The entry opens with
+the label `perm-judge:`, then a part for each judge the mode runs. In mode
+`quick-then-llm` the quick judge comes first and `->` joins the parts in
+the order the judges run:
 
 - `quick:<provider>/<id>` - the quick judge model
 - `llm:<provider>/<id>` - a configured or flag-set LLM judge
@@ -592,8 +594,8 @@ each judge the mode runs, the quick judge first, separated by a comma:
   judge's asks are `model-unresolved` until it resolves;
   `quick:unset (unresolved)` means no quick judge model is set
 
-For example `quick:typesafe/jev-latest | timeout x2, llm:chat-model` in mode
-`quick-then-llm`. The entry follows `/permission-model` changes and `/model`
+For example `perm-judge: quick:typesafe/jev-latest | timeout x2 -> llm:chat-model`
+in mode `quick-then-llm`. The entry follows `/permission-model` changes and `/model`
 switches and is cleared at session shutdown. No entry means the link did
 not register.
 

@@ -48,9 +48,10 @@ this project adheres to
   `quick:<provider>/<id>`, `llm:<provider>/<id>`, `llm:chat-model` and
   `mode:<mode>`, in any subset, for the session only. An item that does not
   resolve is ignored with a warning and the rest still applies.
-- The footer shows a part for each judge the mode runs, quick first:
-  `quick:<provider>/<id>` and `llm:<provider>/<id>` or `llm:chat-model`,
-  each with its own health suffix.
+- The footer entry opens with the label `perm-judge:` and shows a part for
+  each judge the mode runs, quick first and joined with `->` in the order
+  they run: `quick:<provider>/<id>` and `llm:<provider>/<id>` or
+  `llm:chat-model`, each with its own health suffix.
 - Decision entries carry `judge` (`quick` or `llm`); quick entries also
   carry the per-question answer probabilities, with the hazard as
   `[option, probability]` pairs, highest first.

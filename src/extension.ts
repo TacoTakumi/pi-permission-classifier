@@ -106,6 +106,9 @@ import type { ModelRegistryLike } from "./reviewer";
  * statuses by key on one footer line; the `zz-` prefix keeps this entry last. */
 const STATUS_KEY = "zz-permission-classifier";
 
+/** The label that opens the footer entry, so it reads as the permission judge. */
+const STATUS_LABEL = "perm-judge: ";
+
 /** The launch flag carrying a session-only judge override. */
 const FLAG_NAME = "permission-model";
 
@@ -238,8 +241,9 @@ export function createClassifierExtension(
   }
 
   /**
-   * Repaint the footer: a part for each judge the mode runs, the quick judge
-   * first, each with its own health suffix. A no-op until the link
+   * Repaint the footer: the `perm-judge: ` label, then a part for each judge
+   * the mode runs, the quick judge first and joined with ` -> ` in the order
+   * they run, each with its own health suffix. A no-op until the link
    * registers. Refreshed on judge changes and after every judge outcome.
    */
   function refreshStatus(): void {
@@ -261,7 +265,7 @@ export function createClassifierExtension(
           formatHealthSuffix(health, breaker.remainingMs()),
       );
     }
-    ui?.setStatus(STATUS_KEY, parts.join(", "));
+    ui?.setStatus(STATUS_KEY, STATUS_LABEL + parts.join(" -> "));
   }
 
   /** The longer of the two breakers' remaining cooldowns. */

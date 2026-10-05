@@ -497,11 +497,11 @@ describe("footer health suffix", () => {
     const ctx = ctxWithModel();
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(lastStatus(ctx)).toBe("llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model");
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | call-failed x1");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | call-failed x1");
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | call-failed x2");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | call-failed x2");
   });
 
   it("shows timeout after a review that ran out of time", async () => {
@@ -526,7 +526,7 @@ describe("footer health suffix", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | timeout x1");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | timeout x1");
   });
 
   it("keeps the count and drops the reason after a following allow", async () => {
@@ -540,7 +540,7 @@ describe("footer health suffix", () => {
     await lastAuthorizer()(askDetails(), {}, fakeLog());
     complete.mockImplementation(async () => assistantToolCall({ verdict: "allow" }));
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | defers x1");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | defers x1");
   });
 
   it("leaves the reason in place after a following deny", async () => {
@@ -556,7 +556,7 @@ describe("footer health suffix", () => {
       assistantToolCall({ verdict: "deny", reason: "no" }),
     );
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | call-failed x1");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | call-failed x1");
   });
 
   it("shows no suffix for a deny with no failures", async () => {
@@ -567,7 +567,7 @@ describe("footer health suffix", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model");
   });
 
   it("shows breaker open with the remaining seconds once the breaker trips", async () => {
@@ -580,7 +580,7 @@ describe("footer health suffix", () => {
     for (let i = 0; i < 3; i += 1) {
       await lastAuthorizer()(askDetails(), {}, fakeLog());
     }
-    expect(lastStatus(ctx)).toBe("llm:chat-model | breaker open 60s");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | breaker open 60s");
   });
 
   it("starts a fresh session with no suffix after session_shutdown", async () => {
@@ -591,12 +591,12 @@ describe("footer health suffix", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     await lastAuthorizer()(askDetails(), {}, fakeLog());
-    expect(lastStatus(ctx)).toBe("llm:chat-model | call-failed x1");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model | call-failed x1");
     pi.lifecycle.get("session_shutdown")?.({}, ctx);
     const next = ctxWithModel();
     pi.lifecycle.get("session_start")?.({}, next);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(lastStatus(next)).toBe("llm:chat-model");
+    expect(lastStatus(next)).toBe("perm-judge: llm:chat-model");
   });
 });
 
@@ -626,7 +626,7 @@ describe("breaker countdown", () => {
     }
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | breaker open 60s",
+      "perm-judge: llm:chat-model | breaker open 60s",
     );
     ctx.ui.setStatus.mockClear();
     return { ctx, complete };
@@ -639,13 +639,13 @@ describe("breaker countdown", () => {
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | breaker open 59s",
+      "perm-judge: llm:chat-model | breaker open 59s",
     );
     await vi.advanceTimersByTimeAsync(1000);
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | breaker open 58s",
+      "perm-judge: llm:chat-model | breaker open 58s",
     );
     await vi.advanceTimersByTimeAsync(500);
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
@@ -657,7 +657,7 @@ describe("breaker countdown", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | call-failed x3",
+      "perm-judge: llm:chat-model | call-failed x3",
     );
     expect(vi.getTimerCount()).toBe(0);
     ctx.ui.setStatus.mockClear();
@@ -673,7 +673,7 @@ describe("breaker countdown", () => {
     await lastAuthorizer()(askDetails(), {}, fakeLog());
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | defers x3",
+      "perm-judge: llm:chat-model | defers x3",
     );
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -686,13 +686,13 @@ describe("breaker countdown", () => {
     await lastAuthorizer()(askDetails(), {}, fakeLog());
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | breaker open 59s",
+      "perm-judge: llm:chat-model | breaker open 59s",
     );
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(1000);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model | breaker open 58s",
+      "perm-judge: llm:chat-model | breaker open 58s",
     );
     expect(vi.getTimerCount()).toBe(1);
   });
@@ -720,7 +720,7 @@ describe("footer status", () => {
     expect(ctx.ui.setStatus).not.toHaveBeenCalled();
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "llm:chat-model");
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "perm-judge: llm:chat-model");
   });
 
   it("sets llm:<provider>/<id> for a configured judge the registry knows", () => {
@@ -731,7 +731,7 @@ describe("footer status", () => {
     ctx.modelRegistry.find.mockReturnValue(PM_MODEL);
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "llm:p/m");
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "perm-judge: llm:p/m");
   });
 
   it("appends (unresolved) when the configured judge is not in the registry", () => {
@@ -744,7 +744,7 @@ describe("footer status", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(ctx.ui.setStatus).toHaveBeenCalledWith(
       STATUS_KEY,
-      "llm:p/m (unresolved)",
+      "perm-judge: llm:p/m (unresolved)",
     );
   });
 
@@ -774,7 +774,7 @@ describe("footer status", () => {
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(2);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
       STATUS_KEY,
-      "llm:chat-model",
+      "perm-judge: llm:chat-model",
     );
   });
 
@@ -860,7 +860,7 @@ describe("launch flag --permission-model", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(pi.api.getFlag).toHaveBeenCalledWith("permission-model");
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:p/m");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:p/m");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
     expect(loadConfig).toHaveBeenCalledTimes(1);
@@ -882,7 +882,7 @@ describe("launch flag --permission-model", () => {
     pi.api.getFlag.mockReturnValue(undefined);
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
@@ -906,7 +906,7 @@ describe("launch flag --permission-model", () => {
       "warning",
     );
     expect(writeSelection).not.toHaveBeenCalled();
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
@@ -923,7 +923,7 @@ describe("launch flag --permission-model", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:chat-model");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:chat-model");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(SESSION_MODEL);
   });
@@ -1137,14 +1137,14 @@ describe("/permission-model command wiring", () => {
     ctx.modelRegistry.find.mockImplementation(findKnown);
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:p/m");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:p/m");
 
     await pi.commands.get("permission-model")?.handler("llm q/n", ctx);
 
     expect(writeSelection).toHaveBeenCalledTimes(1);
     expect(writeSelection).toHaveBeenCalledWith({ llm: { provider: "q", model: "n" } });
     expect(loadConfig).toHaveBeenCalledTimes(2);
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.any(String), "info");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
@@ -1212,7 +1212,7 @@ describe("/permission-model command wiring", () => {
     ctx.modelRegistry.find.mockImplementation(findKnown);
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
 
     await pi.commands.get("permission-model")?.handler("llm nope/x", ctx);
 
@@ -1222,7 +1222,7 @@ describe("/permission-model command wiring", () => {
       expect.stringContaining("nope/x"),
       "error",
     );
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
@@ -1262,7 +1262,7 @@ describe("picker selection through the extension", () => {
       mode: "llm",
       llm: { provider: "q", model: "n" },
     });
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "llm:q/n");
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     expect(pi.api.setModel).not.toHaveBeenCalled();
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
@@ -1749,7 +1749,7 @@ describe("footer status by mode", () => {
 
   it("shows the quick judge before the LLM judge in mode quick-then-llm", () => {
     const { ctx } = boot({ mode: "quick-then-llm", quickJudge: JEV_PAIR });
-    expect(lastStatus(ctx)).toBe("quick:typesafe/jev-latest, llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:typesafe/jev-latest -> llm:chat-model");
   });
 
   it("marks an unresolved quick judge", () => {
@@ -1757,23 +1757,23 @@ describe("footer status by mode", () => {
       mode: "quick-then-llm",
       quickJudge: { provider: "typesafe", model: "nope" },
     });
-    expect(lastStatus(ctx)).toBe("quick:typesafe/nope (unresolved), llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:typesafe/nope (unresolved) -> llm:chat-model");
   });
 
   it("shows only the quick judge in mode quick", () => {
     const { ctx } = boot({ mode: "quick", quickJudge: JEV_PAIR });
-    expect(lastStatus(ctx)).toBe("quick:typesafe/jev-latest");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:typesafe/jev-latest");
   });
 
   it("shows only the LLM judge in mode llm, even with a quickJudge object", () => {
     const { ctx } = boot({ quickJudge: JEV_PAIR, systemOne: JEV_PAIR });
-    expect(lastStatus(ctx)).toBe("llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model");
   });
 
   it("gives the quick judge its own health suffix", async () => {
     const { ctx } = boot({ mode: "quick-then-llm", quickJudge: JEV_PAIR });
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
-    expect(lastStatus(ctx)).toBe("quick:typesafe/jev-latest | call-failed x1, llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:typesafe/jev-latest | call-failed x1 -> llm:chat-model");
   });
 
   it("shows the quick breaker countdown while it is open", async () => {
@@ -1781,17 +1781,17 @@ describe("footer status by mode", () => {
     for (let i = 0; i < 3; i += 1) {
       await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     }
-    expect(lastStatus(ctx)).toMatch(/^quick:typesafe\/jev-latest \| breaker open \d+s$/);
+    expect(lastStatus(ctx)).toMatch(/^perm-judge: quick:typesafe\/jev-latest \| breaker open \d+s$/);
   });
 
   it("names a configured LLM pair, and marks it unresolved when the registry lacks it", () => {
     const { ctx } = boot({ provider: "nope", model: "x" });
-    expect(lastStatus(ctx)).toBe("llm:nope/x (unresolved)");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:nope/x (unresolved)");
   });
 
   it("marks a quick judge with no pair as unset", () => {
     const { ctx } = boot({ mode: "quick" });
-    expect(lastStatus(ctx)).toBe("quick:unset (unresolved)");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:unset (unresolved)");
   });
 
   it("updates the entry after a mode change", async () => {
@@ -1800,9 +1800,9 @@ describe("footer status by mode", () => {
       quickJudge: JEV_PAIR,
     });
     saveGlobal(agentDir, { quickJudge: JEV_PAIR });
-    expect(lastStatus(ctx)).toBe("llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: llm:chat-model");
     await pi.commands.get("permission-model")?.handler("mode quick-then-llm", ctx);
-    expect(lastStatus(ctx)).toBe("quick:typesafe/jev-latest, llm:chat-model");
+    expect(lastStatus(ctx)).toBe("perm-judge: quick:typesafe/jev-latest -> llm:chat-model");
   });
 
   it("clears the status at shutdown", () => {
