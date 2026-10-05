@@ -118,10 +118,7 @@ function makeCtx(
 }
 
 function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
-  const state: {
-    config: ClassifierConfig | undefined;
-    override: JudgePair | undefined;
-  } = { config: initial, override: undefined };
+  const state: { config: ClassifierConfig | undefined } = { config: initial };
   const reloaded: LoadConfigResult = {
     config: { ...EMPTY_CONFIG, provider: "p", model: "m" },
     issues: [],
@@ -130,7 +127,6 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
   const registry = makeRegistry();
   const deps = {
     getConfig: () => state.config,
-    getOverride: () => state.override,
     getRegistry: () => registry,
     buildPicker: vi.fn<PickerSeam>(() => FAKE_COMPONENT),
     globalConfigExists: vi.fn<CommandDependencies["globalConfigExists"]>(
@@ -141,11 +137,8 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
       `${cwd}/.pi/extensions/pi-permission-classifier/config.json`,
     write: vi.fn<CommandDependencies["write"]>(),
     reload: vi.fn<CommandDependencies["reload"]>(() => reloaded),
-    apply: vi.fn<CommandDependencies["apply"]>((config, selection) => {
+    apply: vi.fn<CommandDependencies["apply"]>((config) => {
       state.config = config;
-      if (selection.llm !== undefined) {
-        state.override = undefined;
-      }
     }),
   } satisfies CommandDependencies;
   return { state, reloaded, deps, registry };
@@ -398,9 +391,8 @@ describe("no-argument form outside the TUI", () => {
     expect(notifyOf(ctx, "info")).toContain("judge:session");
   });
 
-  it("prints the active flag override ahead of the config judge", async () => {
-    const { state, deps } = makeDeps(CONFIG_QN);
-    state.override = { provider: "p", model: "m" };
+  it("prints the judge of the config it is handed, flag values included", async () => {
+    const { deps } = makeDeps({ ...CONFIG_QN, provider: "p", model: "m" });
     const ctx = makeCtx("rpc");
     await createPermissionModelCommand(deps).handler("", ctx);
     expect(notifyOf(ctx, "info")).toContain("judge:p/m");
@@ -761,14 +753,12 @@ describe("typed form /permission-model quick <provider>/<id>", () => {
     expect(notifyOf(ctx, "error")).toMatch(/disk full/);
   });
 
-  it("never touches the LLM judge, its flag override or the session model", async () => {
+  it("never touches the LLM judge or the session model", async () => {
     const { deps, state } = quickDeps();
-    state.override = { provider: "q", model: "n" };
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("quick typesafe/jev-latest", ctx);
     expect(ctx.modelRegistry.find).not.toHaveBeenCalled();
     expect(state.config?.provider).toBeUndefined();
-    expect(state.override).toEqual({ provider: "q", model: "n" });
     expect(ctx.model).toBe(SESSION_MODEL);
   });
 });

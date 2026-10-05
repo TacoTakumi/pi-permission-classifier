@@ -34,12 +34,13 @@
  * cleared at `session_shutdown`. No status is set when the link does not
  * register.
  *
- * The `--permission-model <provider>/<id>` launch flag is read at
- * `session_start`. A value the registry knows becomes a session-only judge
- * override with precedence over the merged config and the session model;
- * nothing is written, and the override is dropped at `session_shutdown`. An
- * unknown value is ignored with a warning, so the merged config (or the
- * session model) applies as if no flag were given.
+ * The `--permission-model` launch flag is read at `session_start`: a comma
+ * list of `quick:<provider>/<id>`, `llm:<provider>/<id>`, `llm:chat-model`
+ * and `mode:<mode>` (see `parseFlagOverride`). The values become a
+ * session-only override merged over the config per ask; nothing is written.
+ * An item that does not parse or resolve is ignored with a warning and the
+ * rest still applies. A /permission-model write drops the values it touches,
+ * and the override is dropped at `session_shutdown`.
  */
 
 import type { Model } from "@earendil-works/pi-ai";
@@ -85,12 +86,13 @@ import {
 } from "./guidance";
 import { formatHealthSuffix, SessionHealth } from "./health";
 import {
+  applySessionOverride,
   formatJudgeStatus,
   formatSystemOneStatus,
-  type JudgePair,
-  parseJudgePair,
+  parseFlagOverride,
   resolveJudge,
   resolveSystemOneJudge,
+  type SessionOverride,
 } from "./judge";
 import { createJudgeLink } from "./judge-link";
 import type { CompleteFn } from "./model-review";
@@ -151,8 +153,9 @@ export function createClassifierExtension(
 
   pi.registerFlag(FLAG_NAME, {
     description:
-      "Judge model for the permission classifier this session only " +
-      "(<provider>/<id>); overrides the configured judge, writes nothing.",
+      "Permission judge for this session only, a comma list of " +
+      "quick:<provider>/<id>, llm:<provider>/<id>, llm:chat-model and " +
+      "mode:<llm|quick|quick-then-llm>; writes nothing.",
     type: "string",
   });
 
@@ -164,7 +167,7 @@ export function createClassifierExtension(
   let ui: ExtensionContext["ui"] | undefined;
   /** The session context, for the per-ask cwd and trust reads. */
   let session: ExtensionContext | undefined;
-  let override: JudgePair | undefined;
+  let override: SessionOverride = {};
   let dispose: (() => void) | undefined;
   let warnedUnreachable = false;
   /** Per-session LLM judge health and breaker; both start fresh at shutdown. */
@@ -176,17 +179,9 @@ export function createClassifierExtension(
   /** The once-per-second footer refresh while the breaker cools down. */
   let countdown: ReturnType<typeof setInterval> | undefined;
 
-  /**
-   * The config the reviewer judges with: the merged config, with the
-   * provider/model pair replaced by the session-only override when one is
-   * active. The reviewer's own resolution (registry lookup, auth check,
-   * defer on failure) is unchanged, so an override can never widen a verdict.
-   */
+  /** The config the judges read: the merged config with the flag values over it. */
   function effectiveConfig(): ClassifierConfig | undefined {
-    if (!config || !override) {
-      return config;
-    }
-    return { ...config, provider: override.provider, model: override.model };
+    return applySessionOverride(config, override);
   }
 
   /**
@@ -226,22 +221,19 @@ export function createClassifierExtension(
     return session.cwd;
   }
 
-  /** Read the launch flag; a value the registry does not know is ignored. */
-  function readFlagOverride(): JudgePair | undefined {
+  /** Read the launch flag; each item that does not apply is ignored with a warning. */
+  function readFlagOverride(): SessionOverride {
     const raw = pi.getFlag(FLAG_NAME);
     if (typeof raw !== "string" || raw.length === 0) {
-      return undefined;
+      return {};
     }
-    const pair = parseJudgePair(raw);
-    if (pair && registry?.find(pair.provider, pair.model)) {
-      return pair;
+    const parsed = parseFlagOverride(raw, registry);
+    for (const warning of parsed.warnings) {
+      const message = `--${FLAG_NAME}: ${warning} Ignored.`;
+      warn(message);
+      ui?.notify(message, "warning");
     }
-    const message =
-      `--${FLAG_NAME} ${raw} is not a known <provider>/<id>; ` +
-      "the configured judge applies.";
-    warn(message);
-    ui?.notify(message, "warning");
-    return undefined;
+    return parsed.override;
   }
 
   /**
@@ -253,17 +245,18 @@ export function createClassifierExtension(
     if (!dispose) {
       return;
     }
-    const mode = config?.mode ?? "llm";
+    const effective = effectiveConfig();
+    const mode = effective?.mode ?? "llm";
     const parts: string[] = [];
     if (mode !== "llm") {
       parts.push(
-        formatSystemOneStatus(resolveSystemOneJudge(config?.quickJudge ?? {}, registry)) +
+        formatSystemOneStatus(resolveSystemOneJudge(effective?.quickJudge ?? {}, registry)) +
           formatHealthSuffix(quickHealth, quickBreaker.remainingMs()),
       );
     }
     if (mode !== "quick") {
       parts.push(
-        formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
+        formatJudgeStatus(resolveJudge(undefined, effective, registry, sessionModel)) +
           formatHealthSuffix(health, breaker.remainingMs()),
       );
     }
@@ -308,8 +301,7 @@ export function createClassifierExtension(
   pi.registerCommand(
     COMMAND_NAME,
     createPermissionModelCommand({
-      getConfig: () => config,
-      getOverride: () => override,
+      getConfig: effectiveConfig,
       getRegistry: () => registry,
       ...(dependencies.buildPicker
         ? { buildPicker: dependencies.buildPicker }
@@ -323,9 +315,17 @@ export function createClassifierExtension(
         // An explicit choice replaces the flag value it touches for the rest
         // of the session.
         config = next;
-        if (selection.llm !== undefined) {
-          override = undefined;
-        }
+        override = {
+          ...(selection.mode === undefined && override.mode !== undefined
+            ? { mode: override.mode }
+            : {}),
+          ...(selection.llm === undefined && override.llm !== undefined
+            ? { llm: override.llm }
+            : {}),
+          ...(selection.quick === undefined && override.quick !== undefined
+            ? { quick: override.quick }
+            : {}),
+        };
         refreshStatus();
       },
     }),
@@ -426,7 +426,7 @@ export function createClassifierExtension(
     registry = undefined;
     ui = undefined;
     session = undefined;
-    override = undefined;
+    override = {};
     warnedUnreachable = false;
     stopCountdown();
     health.reset();

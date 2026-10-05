@@ -179,10 +179,11 @@ function runtimeOf(registry: CommandRegistryLike): ModelRuntime | undefined {
 
 /** Seams the extension supplies; none of them are called on a rejected pick. */
 export interface CommandDependencies {
-  /** The merged config the reviewer judges with; `undefined` when invalid or absent. */
+  /**
+   * The config the judges read, with any session-only flag values over it;
+   * `undefined` when invalid or absent.
+   */
   getConfig(): ClassifierConfig | undefined;
-  /** The active session-only flag override, if any. */
-  getOverride(): JudgePair | undefined;
   /** The session's model registry (captured at `session_start`), for completion. */
   getRegistry(): CommandRegistryLike | undefined;
   /** Whether the global config file exists (the precondition for a write). */
@@ -288,7 +289,7 @@ export function createPermissionModelCommand(
   /** The judge the next ask would use. */
   function currentJudge(ctx: CommandContextLike) {
     return resolveJudge(
-      deps.getOverride(),
+      undefined,
       deps.getConfig(),
       ctx.modelRegistry,
       ctx.model,

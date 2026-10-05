@@ -855,7 +855,7 @@ describe("launch flag --permission-model", () => {
     const loadConfig = vi.fn(() => CONFIG_QN_RESULT);
     const writeSelection = vi.fn();
     const pi = makeFakePi();
-    pi.api.getFlag.mockReturnValue("p/m");
+    pi.api.getFlag.mockReturnValue("llm:p/m");
     start(pi, { complete, loadConfig, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
@@ -874,7 +874,7 @@ describe("launch flag --permission-model", () => {
   it("drops the override at session_shutdown so the config judge applies next session", async () => {
     const complete = allowingComplete();
     const pi = makeFakePi();
-    pi.api.getFlag.mockReturnValue("p/m");
+    pi.api.getFlag.mockReturnValue("llm:p/m");
     start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
     publishForSession();
     const ctx = ctxWithModel();
@@ -895,7 +895,7 @@ describe("launch flag --permission-model", () => {
     const complete = allowingComplete();
     const writeSelection = vi.fn();
     const pi = makeFakePi();
-    pi.api.getFlag.mockReturnValue("nope/x");
+    pi.api.getFlag.mockReturnValue("llm:nope/x");
     start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
@@ -930,6 +930,139 @@ describe("launch flag --permission-model", () => {
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(SESSION_MODEL);
   });
+
+  const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
+  const QUICK_ALLOW = {
+    api: "typesafe-system-one",
+    provider: "typesafe",
+    model: "jev-latest",
+    answers: {
+      reversible: { type: "bool", probability: 0.99 },
+      contained: { type: "bool", probability: 0.99 },
+      hazard: {
+        type: "choice",
+        choice: "none",
+        probabilities: { none: 0.99 },
+        confidence: 0.99,
+      },
+    } as Record<string, unknown>,
+    stopReason: "stop",
+    timestamp: 0,
+  };
+
+  function ctxWithJev(classify = vi.fn(async () => QUICK_ALLOW)) {
+    const base = ctxWithModel();
+    base.modelRegistry.find.mockImplementation(findKnown);
+    return {
+      ...base,
+      modelRegistry: {
+        ...base.modelRegistry,
+        findOfType: vi.fn((type: string, provider: string, id: string) =>
+          type === "classifier" && provider === "typesafe" && id === "jev-latest"
+            ? JEV
+            : undefined,
+        ),
+        classify,
+      },
+    };
+  }
+
+  it("a full list sets mode and both judges for the next ask and writes nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const writeSelection = vi.fn();
+    const classify = vi.fn(async () => ({ ...QUICK_ALLOW, answers: {} }));
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("quick:typesafe/jev-latest,llm:p/m,mode:quick-then-llm");
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT, writeSelection });
+    publishForSession();
+    const ctx = ctxWithJev(classify);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect((classify.mock.calls[0] as unknown[])[0]).toBe(JEV);
+    expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
+    expect(writeSelection).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("one bad item warns and the rest of the list applies", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const classify = vi.fn(async () => QUICK_ALLOW);
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("quick:typesafe/nope,llm:p/m,mode:quick");
+    const complete = allowingComplete();
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
+    publishForSession();
+    const ctx = ctxWithJev(classify);
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("typesafe/nope");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("typesafe/nope"), "warning");
+    // mode quick applies with no quick model: the quick judge defers unresolved.
+    expect(await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() })).toEqual({
+      kind: "defer",
+    });
+    expect(classify).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("an unprefixed pair warns with the llm: form and changes nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("p/m");
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT });
+    publishForSession();
+    const ctx = ctxWithJev();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("llm:p/m");
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
+  });
+
+  it("a command write of the quick model drops only the flag's quick value", async () => {
+    const complete = allowingComplete();
+    const classify = vi.fn(async () => ({ ...QUICK_ALLOW, answers: {} }));
+    const KEV = { provider: "local", id: "kev", type: "classifier" } as never;
+    const reloaded = classifierConfigSchema.parse({
+      provider: "q",
+      model: "n",
+      mode: "quick-then-llm",
+      quickJudge: { provider: "local", model: "kev" },
+    });
+    const loadConfig = vi
+      .fn<() => LoadConfigResult>()
+      .mockReturnValueOnce(CONFIG_QN_RESULT)
+      .mockReturnValue({ config: reloaded, issues: [], projectSetsJudge: false });
+    const pi = makeFakePi();
+    pi.api.getFlag.mockReturnValue("quick:typesafe/jev-latest,llm:p/m,mode:quick-then-llm");
+    start(pi, { complete, loadConfig, writeSelection: vi.fn() });
+    publishForSession();
+    const ctx = ctxWithJev(classify);
+    ctx.modelRegistry.findOfType.mockImplementation((type: string, provider: string, id: string) =>
+      type !== "classifier"
+        ? undefined
+        : provider === "typesafe" && id === "jev-latest"
+          ? JEV
+          : provider === "local" && id === "kev"
+            ? KEV
+            : undefined,
+    );
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+
+    await pi.commands.get("permission-model")?.handler("quick local/kev", ctx);
+
+    await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect((classify.mock.calls[0] as unknown[])[0]).toBe(KEV);
+    // The flag's LLM judge and mode still apply.
+    expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
+  });
 });
 
 describe("/permission-model command wiring", () => {
@@ -955,7 +1088,7 @@ describe("/permission-model command wiring", () => {
       .mockReturnValueOnce(CONFIG_RESULT)
       .mockReturnValue(CONFIG_QN_RESULT);
     const pi = makeFakePi();
-    pi.api.getFlag.mockReturnValue("p/m");
+    pi.api.getFlag.mockReturnValue("llm:p/m");
     start(pi, { complete, loadConfig, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();

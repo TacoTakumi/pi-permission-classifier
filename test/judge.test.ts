@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ClassifierConfig } from "#src/config-schema";
 import {
+  applySessionOverride,
   formatJudgeStatus,
   formatSystemOneStatus,
   type JudgeRegistryLike,
+  parseFlagOverride,
   parseJudgePair,
   resolveJudge,
   resolveSystemOneJudge,
@@ -218,5 +220,121 @@ describe("system-one judge status", () => {
     const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, chatRegistry);
     expect(chatRegistry.find).not.toHaveBeenCalled();
     expect(judge.model).toBeUndefined();
+  });
+});
+
+describe("parseFlagOverride", () => {
+  const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
+  const flagRegistry = {
+    find: (provider: string, id: string) =>
+      provider === "p" && id === "m" ? OVERRIDE_MODEL : undefined,
+    findOfType: (_type: "classifier", provider: string, id: string) =>
+      provider === "typesafe" && id === "jev-latest" ? JEV : undefined,
+  };
+
+  it("reads a full list into mode and both judges", () => {
+    expect(
+      parseFlagOverride("quick:typesafe/jev-latest,llm:p/m,mode:quick-then-llm", flagRegistry),
+    ).toEqual({
+      override: {
+        quick: { provider: "typesafe", model: "jev-latest" },
+        llm: { provider: "p", model: "m" },
+        mode: "quick-then-llm",
+      },
+      warnings: [],
+    });
+  });
+
+  it("reads llm:chat-model as following the chat model", () => {
+    expect(parseFlagOverride("llm:chat-model", flagRegistry)).toEqual({
+      override: { llm: null },
+      warnings: [],
+    });
+  });
+
+  it("tolerates spaces and empty items", () => {
+    expect(parseFlagOverride(" mode:quick , ,llm:p/m ", flagRegistry).override).toEqual({
+      mode: "quick",
+      llm: { provider: "p", model: "m" },
+    });
+  });
+
+  it.each([
+    ["llm:nope/x", /nope\/x/],
+    ["quick:p/m", /p\/m/],
+    ["llm:typesafe/jev-latest", /typesafe\/jev-latest/],
+    ["mode:system-one", /system-one/],
+    ["judge:p/m", /judge:p\/m/],
+    ["nonsense", /nonsense/],
+  ])("ignores %j with a warning and keeps the rest", (bad, pattern) => {
+    const parsed = parseFlagOverride(`${bad},mode:llm`, flagRegistry);
+    expect(parsed.override).toEqual({ mode: "llm" });
+    expect(parsed.warnings).toHaveLength(1);
+    expect(parsed.warnings[0]).toMatch(pattern);
+  });
+
+  it("warns on an unprefixed pair, naming the llm: form, and changes nothing", () => {
+    const parsed = parseFlagOverride("p/m", flagRegistry);
+    expect(parsed.override).toEqual({});
+    expect(parsed.warnings).toHaveLength(1);
+    expect(parsed.warnings[0]).toContain("llm:p/m");
+  });
+
+  it("checks no model without a registry", () => {
+    const parsed = parseFlagOverride("llm:p/m,quick:typesafe/jev-latest,mode:quick", undefined);
+    expect(parsed.override).toEqual({ mode: "quick" });
+    expect(parsed.warnings).toHaveLength(2);
+  });
+});
+
+describe("applySessionOverride", () => {
+  it("returns the config itself with no override values", () => {
+    expect(applySessionOverride(CONFIG_QN, {})).toBe(CONFIG_QN);
+    expect(applySessionOverride(undefined, { mode: "quick" })).toBeUndefined();
+  });
+
+  it("replaces mode and the LLM pair", () => {
+    const next = applySessionOverride(CONFIG_QN, {
+      mode: "quick-then-llm",
+      llm: { provider: "p", model: "m" },
+    });
+    expect(next).toMatchObject({ mode: "quick-then-llm", provider: "p", model: "m" });
+  });
+
+  it("removes the LLM pair for the chat model", () => {
+    const next = applySessionOverride(CONFIG_QN, { llm: null });
+    expect(next?.provider).toBeUndefined();
+    expect(next?.model).toBeUndefined();
+    expect(next).not.toHaveProperty("provider");
+  });
+
+  it("sets the quick pair over the configured quick settings, or the defaults", () => {
+    const withQuick: ClassifierConfig = {
+      ...EMPTY_CONFIG,
+      quickJudge: {
+        provider: "local",
+        model: "kev",
+        verdicts: "allow-deny",
+        onError: "deny",
+        allowThreshold: 0.8,
+        denyThreshold: 0.9,
+        guidance: false,
+        timeoutMs: 900,
+      },
+    };
+    const quick = { provider: "typesafe", model: "jev-latest" };
+    expect(applySessionOverride(withQuick, { quick })?.quickJudge).toEqual({
+      ...withQuick.quickJudge,
+      ...quick,
+    });
+    expect(applySessionOverride(EMPTY_CONFIG, { quick })?.quickJudge).toEqual({
+      ...quick,
+      verdicts: "allow-defer",
+      onError: "defer",
+      allowThreshold: 0.9,
+      denyThreshold: 0.9,
+      guidance: true,
+      timeoutMs: 5000,
+    });
   });
 });

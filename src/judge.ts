@@ -11,12 +11,21 @@
  * The system-one judge resolves only through the registry's classifier
  * lookup and renders as `s1:<provider>/<id>`, with the same suffix.
  *
+ * The `--permission-model` launch flag parses into a session override of the
+ * mode and both judges' models, merged over the config per ask.
+ *
  * This module has no side effects and imports nothing from pi beyond types.
  */
 
 import type { ClassifierApi, ClassifierModel, Model } from "@earendil-works/pi-ai";
 
-import type { ClassifierConfig, SystemOneConfig } from "./config-schema";
+import {
+  type ClassifierConfig,
+  type Mode,
+  modeSchema,
+  quickJudgeConfigSchema,
+  type SystemOneConfig,
+} from "./config-schema";
 
 /** A provider/id pair naming a judge model. */
 export interface JudgePair {
@@ -136,4 +145,128 @@ export function formatSystemOneStatus(judge: ResolvedSystemOneJudge): string {
   }
   const text = `s1:${judge.pair.provider}/${judge.pair.model}`;
   return judge.model === undefined ? `${text} (unresolved)` : text;
+}
+
+/**
+ * Session-only values from the launch flag. An absent field leaves the
+ * config's value; `llm: null` makes the LLM judge follow the chat model.
+ */
+export interface SessionOverride {
+  mode?: Mode;
+  llm?: JudgePair | null;
+  quick?: JudgePair;
+}
+
+/** The registry lookups the flag parser checks models with. */
+export interface FlagRegistryLike {
+  find(provider: string, modelId: string): Model<any> | undefined;
+  findOfType(
+    type: "classifier",
+    provider: string,
+    modelId: string,
+  ): ClassifierModel<ClassifierApi> | undefined;
+}
+
+/** The parsed flag: the values that apply, and one warning per ignored item. */
+export interface ParsedFlag {
+  override: SessionOverride;
+  warnings: string[];
+}
+
+/**
+ * Parse the comma list `quick:<provider>/<id>`, `llm:<provider>/<id>`,
+ * `llm:chat-model` and `mode:<mode>`, in any subset. An LLM pair must be a
+ * chat model and a quick pair a classifier model the registry knows. Every
+ * other item is ignored with a warning and the rest still applies; a later
+ * item for the same field wins.
+ */
+export function parseFlagOverride(
+  raw: string,
+  registry: FlagRegistryLike | undefined,
+): ParsedFlag {
+  const override: SessionOverride = {};
+  const warnings: string[] = [];
+  for (const item of raw.split(",").map((part) => part.trim())) {
+    if (item === "") {
+      continue;
+    }
+    const colon = item.indexOf(":");
+    const prefix = colon < 0 ? "" : item.slice(0, colon);
+    const value = colon < 0 ? item : item.slice(colon + 1).trim();
+    if (prefix === "mode") {
+      const mode = modeSchema.safeParse(value);
+      if (mode.success) {
+        override.mode = mode.data;
+      } else {
+        warnings.push(`${item}: unknown mode ${value}; use one of ${modeSchema.options.join(", ")}.`);
+      }
+      continue;
+    }
+    if (prefix === "llm" && value === "chat-model") {
+      override.llm = null;
+      continue;
+    }
+    const pair = parseJudgePair(value);
+    if (prefix === "llm" && pair) {
+      if (registry?.find(pair.provider, pair.model)) {
+        override.llm = pair;
+      } else {
+        warnings.push(`${item}: ${value} is not a known chat model.`);
+      }
+      continue;
+    }
+    if (prefix === "quick" && pair) {
+      if (registry?.findOfType("classifier", pair.provider, pair.model)) {
+        override.quick = pair;
+      } else {
+        warnings.push(`${item}: ${value} is not a known classifier model.`);
+      }
+      continue;
+    }
+    if (colon < 0 && pair) {
+      warnings.push(`${item} has no prefix; write llm:${item} to set the LLM judge.`);
+      continue;
+    }
+    warnings.push(
+      `${item} is not one of quick:<provider>/<id>, llm:<provider>/<id>, llm:chat-model, mode:<mode>.`,
+    );
+  }
+  return { override, warnings };
+}
+
+/**
+ * The config with the session override merged in, read per ask. The judges'
+ * own resolution (registry lookup, auth, defer on failure) is unchanged, so
+ * an override can never widen a verdict. Returns the config itself when the
+ * override sets nothing.
+ */
+export function applySessionOverride(
+  config: ClassifierConfig | undefined,
+  override: SessionOverride,
+): ClassifierConfig | undefined {
+  if (
+    !config ||
+    (override.mode === undefined && override.llm === undefined && override.quick === undefined)
+  ) {
+    return config;
+  }
+  let next: ClassifierConfig = { ...config };
+  if (override.mode !== undefined) {
+    next.mode = override.mode;
+  }
+  if (override.llm === null) {
+    const { provider: _provider, model: _model, ...rest } = next;
+    next = rest;
+  } else if (override.llm !== undefined) {
+    next.provider = override.llm.provider;
+    next.model = override.llm.model;
+  }
+  if (override.quick !== undefined) {
+    next.quickJudge = {
+      ...(next.quickJudge ?? quickJudgeConfigSchema.parse({})),
+      provider: override.quick.provider,
+      model: override.quick.model,
+    };
+  }
+  return next;
 }
