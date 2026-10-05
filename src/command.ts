@@ -14,6 +14,12 @@
  *     the session's chat model.
  *   - `quick <provider>/<id>`: validate through the classifier lookup only
  *     and persist the quick judge pair. A chat model is refused.
+ *   - `verdicts <allow-deny-defer|allow-defer|allow-deny>` and
+ *     `on-error <defer|deny>`: persist the policy of the last judge in line
+ *     for the live mode (launch flag included): the LLM judge's top-level
+ *     fields in modes llm and quick-then-llm, the quick judge's `quickJudge`
+ *     fields in mode quick. The quick judge in quick-then-llm stays forced,
+ *     so its policy is never offered.
  *   - Setting a model never changes the mode.
  *   - no argument in the TUI: a two-step picker, each step a list mounted
  *     through `ctx.ui.custom`. Step 1 picks the mode (quick-then-llm, llm,
@@ -25,12 +31,13 @@
  *     then the mode and the models go out in one write. A cancel at any step
  *     writes nothing.
  *   - no argument outside the TUI: print the mode, the model of each judge
- *     the mode runs, and the usage line (pi's `ctx.ui.custom` returns
+ *     the mode runs, the last judge's policy, and the usage line (pi's `ctx.ui.custom` returns
  *     nothing in rpc/json/print modes).
  *   - anything else, including the removed forms `<provider>/<id>`,
  *     `session` and `system-one`, gets the usage line and writes nothing.
  *
- * Argument completion offers the forms `mode`, `llm` and `quick`, then the
+ * Argument completion offers the forms `mode`, `llm`, `quick`, `verdicts` and
+ * `on-error`, then the
  * values each takes (see `getArgumentCompletions`).
  *
  * Every write form refuses when the global config file is absent or there is
@@ -55,10 +62,20 @@ import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi
 
 import {
   formatConfigIssue,
+  type JudgePolicy,
   type JudgeSelection,
   type LoadConfigResult,
 } from "./config-loader";
-import { type ClassifierConfig, type Mode, modeSchema } from "./config-schema";
+import {
+  type ClassifierConfig,
+  type Mode,
+  modeSchema,
+  type OnError,
+  onErrorSchema,
+  quickJudgeConfigSchema,
+  type Verdicts,
+  verdictsSchema,
+} from "./config-schema";
 import {
   formatJudgeStatus,
   formatQuickStatus,
@@ -77,14 +94,51 @@ const LLM_FORM = "llm";
 
 const QUICK_FORM = "quick";
 
+const VERDICTS_FORM = "verdicts";
+
+const ON_ERROR_FORM = "on-error";
+
 /** The `llm` argument that makes the LLM judge follow the chat model. */
 const CHAT_MODEL = "chat-model";
 
 const MODES = modeSchema.options;
 
+const VERDICTS = verdictsSchema.options;
+
+const ON_ERRORS = onErrorSchema.options;
+
 const USAGE =
   `/${COMMAND_NAME} ${MODE_FORM} <${MODES.join("|")}> | ${LLM_FORM} <provider>/<id> | ` +
-  `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id>`;
+  `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id> | ` +
+  `${VERDICTS_FORM} <${VERDICTS.join("|")}> | ${ON_ERROR_FORM} <${ON_ERRORS.join("|")}>`;
+
+/** How a confirmation or the print form names each judge. */
+const JUDGE_NAMES: Record<JudgePolicy["judge"], string> = {
+  llm: "LLM judge",
+  quick: "quick judge",
+};
+
+/**
+ * The judge whose answer ends an ask in this mode, so the one whose verdicts
+ * and onError apply. The quick judge in quick-then-llm is forced and never
+ * last.
+ */
+function lastJudge(mode: Mode): JudgePolicy["judge"] {
+  return mode === "quick" ? "quick" : "llm";
+}
+
+/**
+ * A judge's verdicts and onError in a config, with the schema defaults for a
+ * quick judge the config does not set up.
+ */
+function policyOf(
+  config: ClassifierConfig,
+  judge: JudgePolicy["judge"],
+): { verdicts: Verdicts; onError: OnError } {
+  const source =
+    judge === "llm" ? config : (config.quickJudge ?? quickJudgeConfigSchema.parse({}));
+  return { verdicts: source.verdicts, onError: source.onError };
+}
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
 /** pi's completion result, in the asynchronous form this command returns. */
@@ -332,8 +386,12 @@ export function createPermissionModelCommand(
     if (config.mode !== "quick") {
       parts.push(formatJudgeStatus(currentJudge(ctx)));
     }
+    const judge = lastJudge(config.mode);
+    const policy = policyOf(config, judge);
     ctx.ui.notify(
-      `Permission judge mode ${config.mode}: ${parts.join(", ")}. Usage: ${USAGE}`,
+      `Permission judge mode ${config.mode}: ${parts.join(", ")}; ` +
+        `${JUDGE_NAMES[judge]} verdicts ${policy.verdicts}, onError ${policy.onError}. ` +
+        `Usage: ${USAGE}`,
       "info",
     );
   }
@@ -405,6 +463,14 @@ export function createPermissionModelCommand(
       return;
     }
     persist({ mode }, ctx);
+  }
+
+  /**
+   * Persist verdicts or onError for the last judge of the live mode. Called
+   * only after `canWrite`, so the config is there.
+   */
+  function applyPolicy(fields: Omit<JudgePolicy, "judge">, ctx: CommandContextLike): void {
+    persist({ policy: { judge: lastJudge(deps.getConfig()!.mode), ...fields } }, ctx);
   }
 
   /** Mount one picker step; resolves the chosen value, or `undefined` on cancel. */
@@ -528,7 +594,7 @@ export function createPermissionModelCommand(
     const text = prefix.trimStart().toLowerCase();
     const space = text.indexOf(" ");
     if (space < 0) {
-      const items = [MODE_FORM, LLM_FORM, QUICK_FORM]
+      const items = [MODE_FORM, LLM_FORM, QUICK_FORM, VERDICTS_FORM, ON_ERROR_FORM]
         .filter((form) => form.startsWith(text))
         .map((form) => ({ value: form, label: form }));
       return items.length > 0 ? items : null;
@@ -544,7 +610,11 @@ export function createPermissionModelCommand(
             ? (await registry.getAvailableOfType("classifier")).map(
                 (model) => `${model.provider}/${model.id}`,
               )
-            : [];
+            : form === VERDICTS_FORM
+              ? [...VERDICTS]
+              : form === ON_ERROR_FORM
+                ? [...ON_ERRORS]
+                : [];
     const items = options
       .filter((option) => option.toLowerCase().startsWith(wanted))
       .map((option) => ({ value: `${form} ${option}`, label: option }));
@@ -577,6 +647,28 @@ export function createPermissionModelCommand(
     if (head === LLM_FORM && value === CHAT_MODEL) {
       if (canWrite(ctx)) {
         persist({ llm: null }, ctx);
+      }
+      return;
+    }
+    if (head === VERDICTS_FORM && value !== undefined) {
+      const verdicts = verdictsSchema.safeParse(value);
+      if (!verdicts.success) {
+        ctx.ui.notify(`Unknown verdicts ${value}. Usage: ${USAGE}`, "error");
+        return;
+      }
+      if (canWrite(ctx)) {
+        applyPolicy({ verdicts: verdicts.data }, ctx);
+      }
+      return;
+    }
+    if (head === ON_ERROR_FORM && value !== undefined) {
+      const onError = onErrorSchema.safeParse(value);
+      if (!onError.success) {
+        ctx.ui.notify(`Unknown onError ${value}. Usage: ${USAGE}`, "error");
+        return;
+      }
+      if (canWrite(ctx)) {
+        applyPolicy({ onError: onError.data }, ctx);
       }
       return;
     }
@@ -622,6 +714,13 @@ function describeSelection(selection: JudgeSelection): string {
   } else if (selection.llm !== undefined) {
     parts.push(`LLM judge ${selection.llm.provider}/${selection.llm.model}`);
   }
+  const policy = selection.policy;
+  if (policy?.verdicts !== undefined) {
+    parts.push(`${JUDGE_NAMES[policy.judge]} verdicts ${policy.verdicts}`);
+  }
+  if (policy?.onError !== undefined) {
+    parts.push(`${JUDGE_NAMES[policy.judge]} onError ${policy.onError}`);
+  }
   return `Permission judge: ${parts.join(", ")}`;
 }
 
@@ -648,6 +747,17 @@ function shadowedFields(selection: JudgeSelection, config: ClassifierConfig): st
       config.quickJudge?.model !== selection.quick.model)
   ) {
     shadowed.push("quickJudge");
+  }
+  const policy = selection.policy;
+  if (policy !== undefined) {
+    const merged = policyOf(config, policy.judge);
+    const prefix = policy.judge === "quick" ? "quickJudge." : "";
+    if (policy.verdicts !== undefined && merged.verdicts !== policy.verdicts) {
+      shadowed.push(`${prefix}verdicts`);
+    }
+    if (policy.onError !== undefined && merged.onError !== policy.onError) {
+      shadowed.push(`${prefix}onError`);
+    }
   }
   return shadowed;
 }

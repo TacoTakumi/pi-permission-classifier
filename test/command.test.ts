@@ -274,7 +274,14 @@ describe("chat-model form /permission-model llm chat-model", () => {
 });
 
 describe("refusal when there is no valid config or no global file", () => {
-  it.each(["llm p/m", "llm chat-model", "mode llm", "quick typesafe/jev-latest"])(
+  it.each([
+    "llm p/m",
+    "llm chat-model",
+    "mode llm",
+    "quick typesafe/jev-latest",
+    "verdicts allow-deny",
+    "on-error deny",
+  ])(
     "%j refuses with a warning naming the global path when the link is not registered",
     async (args) => {
       const { state, deps } = makeDeps();
@@ -288,7 +295,14 @@ describe("refusal when there is no valid config or no global file", () => {
     },
   );
 
-  it.each(["llm p/m", "llm chat-model", "mode llm", "quick typesafe/jev-latest"])(
+  it.each([
+    "llm p/m",
+    "llm chat-model",
+    "mode llm",
+    "quick typesafe/jev-latest",
+    "verdicts allow-deny",
+    "on-error deny",
+  ])(
     "%j refuses with a warning naming the global path when the global file is absent",
     async (args) => {
       const { state, deps } = makeDeps(CONFIG_QN);
@@ -325,6 +339,8 @@ describe("project layer shadowing the choice", () => {
     ["mode quick-then-llm", { mode: "llm" as const }, "mode"],
     ["quick typesafe/jev-latest", { quickJudge: { ...QUICK_JUDGE, model: "other" } }, "quickJudge"],
     ["llm chat-model", { provider: "q", model: "n" }, "provider/model"],
+    ["verdicts allow-deny", { verdicts: "allow-defer" as const }, "verdicts"],
+    ["on-error deny", { onError: "defer" as const }, "onError"],
   ])("warns when the project layer shadows %j", async (args, merged, field) => {
     const { deps } = makeDeps(WITH_QUICK);
     deps.reload.mockReturnValue({
@@ -336,6 +352,29 @@ describe("project layer shadowing the choice", () => {
     expect(deps.write).toHaveBeenCalledTimes(1);
     expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
     expect(notifyOf(ctx, "warning")).toContain(field);
+  });
+
+  it("warns naming quickJudge.verdicts when the project layer shadows the quick judge's policy", async () => {
+    const { deps } = makeDeps({ ...WITH_QUICK, mode: "quick" });
+    deps.reload.mockReturnValue({
+      config: { ...WITH_QUICK, mode: "quick", quickJudge: { ...QUICK_JUDGE, verdicts: "allow-defer" } },
+      issues: [],
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("verdicts allow-deny", ctx);
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+    expect(notifyOf(ctx, "warning")).toContain("quickJudge.verdicts");
+  });
+
+  it("does not warn when the merged config shows the policy written", async () => {
+    const { deps } = makeDeps();
+    deps.reload.mockReturnValue({
+      config: { ...EMPTY_CONFIG, verdicts: "allow-deny" },
+      issues: [],
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("verdicts allow-deny", ctx);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
   });
 
   it("does not warn when the merged config shows the choice", async () => {
@@ -369,7 +408,8 @@ describe("write failure", () => {
 
 describe("no-argument form outside the TUI", () => {
   const USAGE_LINE =
-    "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id>";
+    "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id> | " +
+    "verdicts <allow-deny-defer|allow-defer|allow-deny> | on-error <defer|deny>";
 
   it.each(["rpc", "json", "print"] as const)(
     "in %s mode opens no picker and prints the mode, the judge and the usage",
@@ -382,7 +422,7 @@ describe("no-argument form outside the TUI", () => {
       expect(deps.write).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["info"]);
       expect(notifyOf(ctx, "info")).toBe(
-        `Permission judge mode llm: llm:q/n. Usage: ${USAGE_LINE}`,
+        `Permission judge mode llm: llm:q/n; LLM judge verdicts allow-deny-defer, onError defer. Usage: ${USAGE_LINE}`,
       );
     },
   );
@@ -391,7 +431,7 @@ describe("no-argument form outside the TUI", () => {
     const { deps } = makeDeps(EMPTY_CONFIG);
     const ctx = makeCtx("rpc");
     await createPermissionModelCommand(deps).handler("  ", ctx);
-    expect(notifyOf(ctx, "info")).toContain("mode llm: llm:chat-model.");
+    expect(notifyOf(ctx, "info")).toContain("mode llm: llm:chat-model;");
   });
 
   it("prints both judges, quick first, in mode quick-then-llm", async () => {
@@ -403,15 +443,26 @@ describe("no-argument form outside the TUI", () => {
     const ctx = makeCtx("print");
     await createPermissionModelCommand(deps).handler("", ctx);
     expect(notifyOf(ctx, "info")).toContain(
-      "mode quick-then-llm: quick:typesafe/jev-latest, llm:chat-model.",
+      "mode quick-then-llm: quick:typesafe/jev-latest, llm:chat-model; LLM judge verdicts allow-deny-defer, onError defer.",
     );
+  });
+
+  it("prints the quick judge's policy in mode quick", async () => {
+    const { deps } = makeDeps({
+      ...WITH_QUICK,
+      mode: "quick",
+      quickJudge: { ...QUICK_JUDGE, verdicts: "allow-deny", onError: "deny" },
+    });
+    const ctx = makeCtx("print");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(notifyOf(ctx, "info")).toContain("; quick judge verdicts allow-deny, onError deny.");
   });
 
   it("prints only the quick judge in mode quick, marking an unknown pair", async () => {
     const { deps } = makeDeps({ ...WITH_QUICK, mode: "quick" });
     const ctx = makeCtx("print");
     await createPermissionModelCommand(deps).handler("", ctx);
-    expect(notifyOf(ctx, "info")).toContain("mode quick: quick:typesafe/jev (unresolved).");
+    expect(notifyOf(ctx, "info")).toContain("mode quick: quick:typesafe/jev (unresolved);");
   });
 
   it("prints the judge of the config it is handed, flag values included", async () => {
@@ -429,13 +480,29 @@ describe("argument completion", () => {
     );
   }
 
-  it("offers the three forms for an empty prefix", async () => {
-    expect(await values("")).toEqual(["mode", "llm", "quick"]);
+  it("offers the five forms for an empty prefix", async () => {
+    expect(await values("")).toEqual(["mode", "llm", "quick", "verdicts", "on-error"]);
   });
 
   it("filters the forms by the typed prefix", async () => {
     expect(await values("q")).toEqual(["quick"]);
     expect(await values("l")).toEqual(["llm"]);
+    expect(await values("v")).toEqual(["verdicts"]);
+    expect(await values("on")).toEqual(["on-error"]);
+  });
+
+  it("offers the verdicts values after 'verdicts allow-d'", async () => {
+    expect(await values("verdicts allow-d")).toEqual([
+      "verdicts allow-deny-defer",
+      "verdicts allow-defer",
+      "verdicts allow-deny",
+    ]);
+    expect(await values("verdicts allow-deny-")).toEqual(["verdicts allow-deny-defer"]);
+  });
+
+  it("offers the onError values after 'on-error '", async () => {
+    expect(await values("on-error ")).toEqual(["on-error defer", "on-error deny"]);
+    expect(await values("on-error den")).toEqual(["on-error deny"]);
   });
 
   it("offers the matching modes after 'mode q'", async () => {
@@ -935,6 +1002,60 @@ describe("typed form /permission-model mode <mode>", () => {
     expect(notifyTypes(ctx)).toEqual(["error"]);
     expect(notifyOf(ctx, "error")).toContain("mode <llm|quick|quick-then-llm>");
   });
+});
+
+describe("typed forms /permission-model verdicts and on-error", () => {
+  it.each(["llm", "quick-then-llm"] as const)(
+    "in mode %s 'verdicts allow-deny' writes the LLM judge's verdicts and names it",
+    async (mode) => {
+      const { deps } = makeDeps({ ...WITH_QUICK, mode });
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler("verdicts allow-deny", ctx);
+      expect(deps.write).toHaveBeenCalledTimes(1);
+      expect(deps.write).toHaveBeenCalledWith({
+        policy: { judge: "llm", verdicts: "allow-deny" },
+      });
+      expect(notifyOf(ctx, "info")).toContain("LLM judge verdicts allow-deny");
+    },
+  );
+
+  it("in mode quick 'verdicts allow-deny' writes the quick judge's verdicts and names it", async () => {
+    const { deps } = makeDeps({ ...WITH_QUICK, mode: "quick" });
+    deps.reload.mockReturnValue({ config: { ...WITH_QUICK, mode: "quick" }, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("verdicts allow-deny", ctx);
+    expect(deps.write).toHaveBeenCalledWith({
+      policy: { judge: "quick", verdicts: "allow-deny" },
+    });
+    expect(notifyOf(ctx, "info")).toContain("quick judge verdicts allow-deny");
+  });
+
+  it.each([
+    ["llm", "llm", "LLM judge"],
+    ["quick-then-llm", "llm", "LLM judge"],
+    ["quick", "quick", "quick judge"],
+  ] as const)(
+    "in mode %s 'on-error deny' writes the %s judge's onError",
+    async (mode, judge, name) => {
+      const { deps } = makeDeps({ ...WITH_QUICK, mode });
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler("on-error deny", ctx);
+      expect(deps.write).toHaveBeenCalledWith({ policy: { judge, onError: "deny" } });
+      expect(notifyOf(ctx, "info")).toContain(`${name} onError deny`);
+    },
+  );
+
+  it.each(["verdicts maybe", "on-error later", "verdicts", "on-error deny defer"])(
+    "%j notifies an error with the usage and writes nothing",
+    async (args) => {
+      const { deps } = makeDeps();
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler(args, ctx);
+      expect(deps.write).not.toHaveBeenCalled();
+      expect(notifyTypes(ctx)).toEqual(["error"]);
+      expect(notifyOf(ctx, "error")).toContain("verdicts <allow-deny-defer|allow-defer|allow-deny>");
+    },
+  );
 });
 
 describe("removed and malformed forms", () => {
