@@ -4,7 +4,9 @@
  *
  * Forms:
  *   - `mode <llm|quick|quick-then-llm>`: persist the mode. A mode that runs
- *     the quick judge is refused while no quick judge model is set.
+ *     the quick judge is refused while the global config file sets no quick
+ *     judge model; one from the launch flag or a project config does not
+ *     count.
  *   - `llm <provider>/<id>`: validate through the chat model registry,
  *     persist the LLM judge pair, reload, and apply live for the next ask.
  *     A classifier model is refused.
