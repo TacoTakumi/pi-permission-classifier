@@ -19,6 +19,8 @@ const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
 const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
 const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
+const KEV = { provider: "local", id: "kev-4b-q8", type: "classifier" } as never;
+const CLASSIFIERS = [JEV, KEV];
 
 const EMPTY_CONFIG: ClassifierConfig = {
   surfaces: ["bash"],
@@ -68,6 +70,8 @@ function makeRegistry(options: { runtime?: boolean } = {}) {
   return {
     find: vi.fn(findKnown),
     findOfType: vi.fn(findClassifier),
+    getModelsOfType: vi.fn((_type: "classifier") => CLASSIFIERS),
+    getAvailableOfType: vi.fn(async (_type: "classifier") => CLASSIFIERS),
     hasConfiguredAuth: vi.fn(() => true),
     getAvailable: vi.fn(() => AVAILABLE),
     ...(options.runtime === false
@@ -377,6 +381,7 @@ describe("argument completion", () => {
       "anthropic/b",
       "openai/c",
       "session",
+      "system-one",
     ]);
   });
 
@@ -772,5 +777,106 @@ describe("/permission-model system-one <provider>/<id>", () => {
     expect(state.config?.provider).toBeUndefined();
     expect(state.override).toEqual({ provider: "q", model: "n" });
     expect(ctx.model).toBe(SESSION_MODEL);
+  });
+});
+
+describe("/permission-model system-one picker and completion", () => {
+  function withCurrent(provider: string, model: string) {
+    return makeDeps({
+      ...EMPTY_CONFIG,
+      systemOne: {
+        provider,
+        model,
+        verdicts: "allow-defer",
+        onError: "defer",
+        allowThreshold: 0.9,
+        denyThreshold: 0.9,
+        guidance: true,
+        timeoutMs: 5000,
+      },
+    });
+  }
+
+  it("lists available classifier models with the current one first", async () => {
+    const { deps } = withCurrent("local", "kev-4b-q8");
+    const ctx = makeCtx();
+    ctx.ui.select.mockResolvedValue(undefined);
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(ctx.modelRegistry.getAvailableOfType).toHaveBeenCalledWith("classifier");
+    const [title, labels] = ctx.ui.select.mock.calls[0]!;
+    expect(labels).toEqual(["local/kev-4b-q8", "typesafe/jev-latest"]);
+    expect(String(title)).toMatch(/local\/kev-4b-q8/);
+  });
+
+  it("writes a selection like the typed form", async () => {
+    const { deps } = withCurrent("local", "kev-4b-q8");
+    const ctx = makeCtx();
+    ctx.ui.select.mockResolvedValue("typesafe/jev-latest");
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(deps.writeSystemOne).toHaveBeenCalledWith("typesafe", "jev-latest");
+    expect(deps.applySystemOne).toHaveBeenCalled();
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing on cancel", async () => {
+    const { deps } = withCurrent("local", "kev-4b-q8");
+    const ctx = makeCtx();
+    ctx.ui.select.mockResolvedValue(undefined);
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(deps.reload).not.toHaveBeenCalled();
+  });
+
+  it("warns and writes nothing when no classifier model is available", async () => {
+    const { deps } = makeDeps();
+    const ctx = makeCtx();
+    ctx.modelRegistry.getAvailableOfType.mockResolvedValue([]);
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "warning")).toMatch(/classifier/);
+  });
+
+  it("refuses with the setup hint and opens no picker without a config", async () => {
+    const { deps, state } = makeDeps();
+    state.config = undefined;
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+  });
+
+  it("prints the current system-one model and usage outside the TUI", async () => {
+    const { deps } = withCurrent("typesafe", "jev-latest");
+    const ctx = makeCtx("print");
+    await createPermissionModelCommand(deps).handler("system-one", ctx);
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "info")).toMatch(/typesafe\/jev-latest/);
+    expect(notifyOf(ctx, "info")).toMatch(/system-one <provider>\/<id>/);
+  });
+
+  it("offers classifier labels for 'system-one ty'", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions("system-one ty");
+    expect(items?.map((item) => item.value)).toEqual(["system-one typesafe/jev-latest"]);
+    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest"]);
+  });
+
+  it("offers every classifier label after 'system-one '", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions("system-one ");
+    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest", "local/kev-4b-q8"]);
+  });
+
+  it("offers the literal system-one when it matches", () => {
+    const { deps } = makeDeps();
+    const items = createPermissionModelCommand(deps).getArgumentCompletions("sys");
+    expect(items?.map((item) => item.value)).toEqual(["system-one"]);
+  });
+
+  it("returns null for 'system-one zz'", () => {
+    const { deps } = makeDeps();
+    expect(createPermissionModelCommand(deps).getArgumentCompletions("system-one zz")).toBeNull();
   });
 });

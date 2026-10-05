@@ -22,10 +22,15 @@
  *     classifier lookup only, persist the pair to `systemOne` in the global
  *     config, reload, and apply live for the next ask. A chat model or an
  *     unknown pair is refused and nothing is written.
+ *   - `system-one` in the TUI: a plain list of the available classifier
+ *     models, the current system-one model first. A selection applies like
+ *     the typed form; a cancel changes nothing. Outside the TUI it prints the
+ *     current system-one model and the usage line.
  *
  * Argument completion offers `provider/id` labels from the registry's
  * available models whose label starts with the typed prefix, plus the
- * literal `session` when it matches.
+ * literals `session` and `system-one` when they match. After `system-one `
+ * it offers the registry's classifier model labels.
  *
  * Every write form refuses when the global config file is absent or there is
  * no valid merged config - no config file found, or the files found failed
@@ -91,6 +96,8 @@ export interface CommandRegistryLike {
     provider: string,
     modelId: string,
   ): ClassifierModel<ClassifierApi> | undefined;
+  getModelsOfType(type: "classifier"): readonly ClassifierModel<ClassifierApi>[];
+  getAvailableOfType(type: "classifier"): Promise<readonly ClassifierModel<ClassifierApi>[]>;
   hasConfiguredAuth(model: Model<any>): boolean;
   getAvailable(): Model<any>[];
 }
@@ -388,6 +395,53 @@ export function createPermissionModelCommand(
     }
   }
 
+  /** The configured system-one pair as a label, if any. */
+  function currentSystemOneLabel(): string | undefined {
+    const systemOne = deps.getConfig()?.systemOne;
+    return systemOne?.provider !== undefined && systemOne.model !== undefined
+      ? `${systemOne.provider}/${systemOne.model}`
+      : undefined;
+  }
+
+  function printSystemOne(ctx: CommandContextLike): void {
+    if (deps.getConfig() === undefined) {
+      ctx.ui.notify(setupHint(), "warning");
+      return;
+    }
+    ctx.ui.notify(
+      `System One judge: ${currentSystemOneLabel() ?? "not set"}. Usage: ${USAGE}`,
+      "info",
+    );
+  }
+
+  /** The `system-one` picker: available classifier models, the current one first. */
+  async function pickSystemOne(ctx: CommandContextLike): Promise<void> {
+    const current = currentSystemOneLabel();
+    const labels = (await ctx.modelRegistry.getAvailableOfType("classifier")).map(
+      (model) => `${model.provider}/${model.id}`,
+    );
+    if (labels.length === 0) {
+      ctx.ui.notify(
+        "No classifier models are available to pick from. Nothing changed.",
+        "warning",
+      );
+      return;
+    }
+    const ordered =
+      current !== undefined && labels.includes(current)
+        ? [current, ...labels.filter((label) => label !== current)]
+        : labels;
+    const chosen = await ctx.ui.select(
+      `System One judge model (current: ${current ?? "not set"})`,
+      ordered,
+    );
+    // Labels are built as provider/id above, so the parse cannot fail.
+    const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
+    if (pair) {
+      applySystemOnePair(pair, ctx);
+    }
+  }
+
   /** The degraded picker: a plain list of `provider/id` labels. */
   async function pickFromList(ctx: CommandContextLike): Promise<void> {
     const labels = ctx.modelRegistry
@@ -440,10 +494,21 @@ export function createPermissionModelCommand(
     if (!registry) {
       return null;
     }
+    const systemOnePrefix = `${SYSTEM_ONE_FORM} `;
+    if (prefix.trimStart().toLowerCase().startsWith(systemOnePrefix)) {
+      const wanted = prefix.trimStart().slice(systemOnePrefix.length).trim().toLowerCase();
+      const items = registry
+        .getModelsOfType("classifier")
+        .map((model) => `${model.provider}/${model.id}`)
+        .filter((label) => label.toLowerCase().startsWith(wanted))
+        .map((label) => ({ value: `${systemOnePrefix}${label}`, label }));
+      return items.length > 0 ? items : null;
+    }
     const wanted = prefix.trim().toLowerCase();
     const labels = [
       ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`),
       SESSION_FORM,
+      SYSTEM_ONE_FORM,
     ];
     const items = labels
       .filter((label) => label.toLowerCase().startsWith(wanted))
@@ -469,6 +534,14 @@ export function createPermissionModelCommand(
     }
     const [head, ...tail] = text.split(/\s+/);
     if (head === SYSTEM_ONE_FORM) {
+      if (tail.length === 0) {
+        if (ctx.mode !== "tui") {
+          printSystemOne(ctx);
+        } else if (canWrite(ctx)) {
+          await pickSystemOne(ctx);
+        }
+        return;
+      }
       const systemOnePair = tail.length === 1 ? parseJudgePair(tail[0]!) : undefined;
       if (!systemOnePair) {
         ctx.ui.notify(`Expected a classifier model reference. Usage: ${USAGE}`, "error");
