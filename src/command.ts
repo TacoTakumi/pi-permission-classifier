@@ -85,10 +85,9 @@ const USAGE =
   `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id>`;
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
-/** pi's completion result, restricted to the synchronous half this command returns. */
-type ArgumentCompletions = Exclude<
-  ReturnType<NonNullable<CommandOptions["getArgumentCompletions"]>>,
-  Promise<unknown>
+/** pi's completion result, in the asynchronous form this command returns. */
+type ArgumentCompletions = Promise<
+  Awaited<ReturnType<NonNullable<CommandOptions["getArgumentCompletions"]>>>
 >;
 
 type PickerFactory = Parameters<ExtensionUIContext["custom"]>[0];
@@ -107,7 +106,6 @@ export interface CommandRegistryLike {
     provider: string,
     modelId: string,
   ): ClassifierModel<ClassifierApi> | undefined;
-  getModelsOfType(type: "classifier"): readonly ClassifierModel<ClassifierApi>[];
   getAvailableOfType(type: "classifier"): Promise<readonly ClassifierModel<ClassifierApi>[]>;
   hasConfiguredAuth(model: Model<any>): boolean;
   getAvailable(): Model<any>[];
@@ -516,9 +514,10 @@ export function createPermissionModelCommand(
   /**
    * Complete the form, then its value: the modes after `mode `, the
    * chat-model option and the available chat model labels after `llm `, and
-   * the classifier model labels after `quick `, each filtered by the prefix.
+   * the available classifier model labels after `quick `, each filtered by
+   * the prefix.
    */
-  function getArgumentCompletions(prefix: string): ArgumentCompletions {
+  async function getArgumentCompletions(prefix: string): ArgumentCompletions {
     const registry = deps.getRegistry();
     if (!registry) {
       return null;
@@ -539,9 +538,9 @@ export function createPermissionModelCommand(
         : form === LLM_FORM
           ? [CHAT_MODEL, ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`)]
           : form === QUICK_FORM
-            ? registry
-                .getModelsOfType("classifier")
-                .map((model) => `${model.provider}/${model.id}`)
+            ? (await registry.getAvailableOfType("classifier")).map(
+                (model) => `${model.provider}/${model.id}`,
+              )
             : [];
     const items = options
       .filter((option) => option.toLowerCase().startsWith(wanted))

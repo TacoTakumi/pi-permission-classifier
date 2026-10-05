@@ -426,32 +426,31 @@ describe("no-argument form outside the TUI", () => {
 });
 
 describe("argument completion", () => {
-  function values(prefix: string) {
-    const { deps } = makeDeps();
-    return createPermissionModelCommand(deps)
-      .getArgumentCompletions(prefix)
-      ?.map((item) => item.value);
+  async function values(prefix: string, made = makeDeps()) {
+    return (await createPermissionModelCommand(made.deps).getArgumentCompletions(prefix))?.map(
+      (item) => item.value,
+    );
   }
 
-  it("offers the three forms for an empty prefix", () => {
-    expect(values("")).toEqual(["mode", "llm", "quick"]);
+  it("offers the three forms for an empty prefix", async () => {
+    expect(await values("")).toEqual(["mode", "llm", "quick"]);
   });
 
-  it("filters the forms by the typed prefix", () => {
-    expect(values("q")).toEqual(["quick"]);
-    expect(values("l")).toEqual(["llm"]);
+  it("filters the forms by the typed prefix", async () => {
+    expect(await values("q")).toEqual(["quick"]);
+    expect(await values("l")).toEqual(["llm"]);
   });
 
-  it("offers the matching modes after 'mode q'", () => {
-    expect(values("mode q")).toEqual(["mode quick", "mode quick-then-llm"]);
+  it("offers the matching modes after 'mode q'", async () => {
+    expect(await values("mode q")).toEqual(["mode quick", "mode quick-then-llm"]);
   });
 
-  it("offers every mode after 'mode '", () => {
-    expect(values("mode ")).toEqual(["mode llm", "mode quick", "mode quick-then-llm"]);
+  it("offers every mode after 'mode '", async () => {
+    expect(await values("mode ")).toEqual(["mode llm", "mode quick", "mode quick-then-llm"]);
   });
 
-  it("offers chat-model and the chat model labels after 'llm '", () => {
-    expect(values("llm ")).toEqual([
+  it("offers chat-model and the chat model labels after 'llm '", async () => {
+    expect(await values("llm ")).toEqual([
       "llm chat-model",
       "llm anthropic/a",
       "llm anthropic/b",
@@ -459,33 +458,40 @@ describe("argument completion", () => {
     ]);
   });
 
-  it("filters the chat model labels after 'llm an'", () => {
-    expect(values("llm an")).toEqual(["llm anthropic/a", "llm anthropic/b"]);
+  it("filters the chat model labels after 'llm an'", async () => {
+    expect(await values("llm an")).toEqual(["llm anthropic/a", "llm anthropic/b"]);
   });
 
-  it("offers the classifier labels after 'quick ty'", () => {
-    expect(values("quick ty")).toEqual(["quick typesafe/jev-latest"]);
+  it("offers the classifier labels after 'quick ty'", async () => {
+    expect(await values("quick ty")).toEqual(["quick typesafe/jev-latest"]);
   });
 
-  it("labels a second-level item with the value alone", () => {
+  it("offers only the available classifiers after 'quick '", async () => {
+    const made = makeDeps();
+    made.registry.getModelsOfType.mockReturnValue([JEV, KEV]);
+    made.registry.getAvailableOfType.mockResolvedValue([KEV]);
+    expect(await values("quick ", made)).toEqual(["quick local/kev-4b-q8"]);
+  });
+
+  it("labels a second-level item with the value alone", async () => {
     const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions("quick ");
+    const items = await createPermissionModelCommand(deps).getArgumentCompletions("quick ");
     expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest", "local/kev-4b-q8"]);
   });
 
-  it("returns null when nothing matches", () => {
-    expect(values("zzz")).toBeUndefined();
-    expect(values("quick zz")).toBeUndefined();
-    expect(values("session ")).toBeUndefined();
+  it("returns null when nothing matches", async () => {
+    expect(await values("zzz")).toBeUndefined();
+    expect(await values("quick zz")).toBeUndefined();
+    expect(await values("session ")).toBeUndefined();
   });
 
-  it("returns null before a session captured the registry", () => {
+  it("returns null before a session captured the registry", async () => {
     const { deps } = makeDeps();
     const command = createPermissionModelCommand({
       ...deps,
       getRegistry: () => undefined,
     });
-    expect(command.getArgumentCompletions("llm ")).toBeNull();
+    expect(await command.getArgumentCompletions("llm ")).toBeNull();
   });
 });
 
