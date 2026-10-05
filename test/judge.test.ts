@@ -5,12 +5,12 @@ import type { ClassifierConfig } from "#src/config-schema";
 import {
   applySessionOverride,
   formatJudgeStatus,
-  formatSystemOneStatus,
+  formatQuickStatus,
   type JudgeRegistryLike,
   parseFlagOverride,
   parseJudgePair,
   resolveJudge,
-  resolveSystemOneJudge,
+  resolveQuickJudge,
 } from "#src/judge";
 
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
@@ -130,17 +130,17 @@ describe("formatJudgeStatus", () => {
         pair: { provider: "p", model: "m" },
         model: OVERRIDE_MODEL,
       }),
-    ).toBe("judge:p/m");
+    ).toBe("llm:p/m");
   });
 
-  it("names the session model as judge:session", () => {
+  it("names the session model as llm:chat-model", () => {
     expect(
       formatJudgeStatus({
         source: "session",
         pair: undefined,
         model: SESSION_MODEL,
       }),
-    ).toBe("judge:session");
+    ).toBe("llm:chat-model");
   });
 
   it("appends (unresolved) when a named pair is not in the registry", () => {
@@ -150,7 +150,7 @@ describe("formatJudgeStatus", () => {
         pair: { provider: "p", model: "m" },
         model: undefined,
       }),
-    ).toBe("judge:p/m (unresolved)");
+    ).toBe("llm:p/m (unresolved)");
   });
 
   it("formats the configured pair, not the resolved model's own ids", () => {
@@ -160,7 +160,7 @@ describe("formatJudgeStatus", () => {
         pair: { provider: "q", model: "n" },
         model: OVERRIDE_MODEL,
       }),
-    ).toBe("judge:q/n");
+    ).toBe("llm:q/n");
   });
 });
 
@@ -193,31 +193,31 @@ describe("system-one judge status", () => {
     ),
   };
 
-  it("renders s1:<provider>/<id> for a classifier the registry knows", () => {
-    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, registry);
+  it("renders quick:<provider>/<id> for a classifier the registry knows", () => {
+    const judge = resolveQuickJudge({ provider: "typesafe", model: "jev-latest" }, registry);
     expect(judge.model).toBe(JEV);
-    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/jev-latest");
+    expect(formatQuickStatus(judge)).toBe("quick:typesafe/jev-latest");
   });
 
   it("appends (unresolved) when the classifier lookup fails", () => {
-    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "nope" }, registry);
-    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/nope (unresolved)");
+    const judge = resolveQuickJudge({ provider: "typesafe", model: "nope" }, registry);
+    expect(formatQuickStatus(judge)).toBe("quick:typesafe/nope (unresolved)");
   });
 
   it("appends (unresolved) before a registry is captured", () => {
-    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, undefined);
-    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/jev-latest (unresolved)");
+    const judge = resolveQuickJudge({ provider: "typesafe", model: "jev-latest" }, undefined);
+    expect(formatQuickStatus(judge)).toBe("quick:typesafe/jev-latest (unresolved)");
   });
 
-  it("renders s1:unset (unresolved) for a systemOne object with no pair", () => {
-    const judge = resolveSystemOneJudge({}, registry);
+  it("renders quick:unset (unresolved) for a systemOne object with no pair", () => {
+    const judge = resolveQuickJudge({}, registry);
     expect(judge.pair).toBeUndefined();
-    expect(formatSystemOneStatus(judge)).toBe("s1:unset (unresolved)");
+    expect(formatQuickStatus(judge)).toBe("quick:unset (unresolved)");
   });
 
   it("never looks the pair up as a chat model", () => {
     const chatRegistry = { findOfType: vi.fn(() => undefined), find: vi.fn(() => JEV) };
-    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, chatRegistry);
+    const judge = resolveQuickJudge({ provider: "typesafe", model: "jev-latest" }, chatRegistry);
     expect(chatRegistry.find).not.toHaveBeenCalled();
     expect(judge.model).toBeUndefined();
   });

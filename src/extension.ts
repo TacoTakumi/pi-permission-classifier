@@ -88,10 +88,10 @@ import { formatHealthSuffix, SessionHealth } from "./health";
 import {
   applySessionOverride,
   formatJudgeStatus,
-  formatSystemOneStatus,
+  formatQuickStatus,
   parseFlagOverride,
   resolveJudge,
-  resolveSystemOneJudge,
+  resolveQuickJudge,
   type SessionOverride,
 } from "./judge";
 import { createJudgeLink } from "./judge-link";
@@ -250,7 +250,7 @@ export function createClassifierExtension(
     const parts: string[] = [];
     if (mode !== "llm") {
       parts.push(
-        formatSystemOneStatus(resolveSystemOneJudge(effective?.quickJudge ?? {}, registry)) +
+        formatQuickStatus(resolveQuickJudge(effective?.quickJudge ?? {}, registry)) +
           formatHealthSuffix(quickHealth, quickBreaker.remainingMs()),
       );
     }

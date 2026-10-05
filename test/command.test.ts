@@ -379,23 +379,23 @@ describe("no-argument form outside the TUI", () => {
       expect(ctx.ui.select).not.toHaveBeenCalled();
       expect(deps.write).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["info"]);
-      expect(notifyOf(ctx, "info")).toContain("judge:q/n");
+      expect(notifyOf(ctx, "info")).toContain("llm:q/n");
       expect(notifyOf(ctx, "info")).toContain("/permission-model");
     },
   );
 
-  it("prints judge:session when the session model judges", async () => {
+  it("prints llm:chat-model when the session model judges", async () => {
     const { deps } = makeDeps(EMPTY_CONFIG);
     const ctx = makeCtx("rpc");
     await createPermissionModelCommand(deps).handler("  ", ctx);
-    expect(notifyOf(ctx, "info")).toContain("judge:session");
+    expect(notifyOf(ctx, "info")).toContain("llm:chat-model");
   });
 
   it("prints the judge of the config it is handed, flag values included", async () => {
     const { deps } = makeDeps({ ...CONFIG_QN, provider: "p", model: "m" });
     const ctx = makeCtx("rpc");
     await createPermissionModelCommand(deps).handler("", ctx);
-    expect(notifyOf(ctx, "info")).toContain("judge:p/m");
+    expect(notifyOf(ctx, "info")).toContain("llm:p/m");
   });
 });
 
@@ -640,7 +640,7 @@ describe("no-argument form without a valid config (review round 1, F3)", () => {
     await createPermissionModelCommand(deps).handler("", ctx);
     expect(notifyTypes(ctx)).toEqual(["warning"]);
     expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
-    expect(notifyOf(ctx, "warning")).not.toContain("judge:session");
+    expect(notifyOf(ctx, "warning")).not.toContain("llm:chat-model");
   });
 });
 

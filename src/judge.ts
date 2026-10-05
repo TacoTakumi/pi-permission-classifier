@@ -6,10 +6,12 @@
  * config's `provider`/`model` pair, then the session's active model. A named
  * pair is looked up in the model registry; when the registry does not know
  * it the judge is unresolved and every ask defers (fail-safe), which the
- * status text surfaces with an ` (unresolved)` suffix.
+ * status text surfaces with an ` (unresolved)` suffix. The LLM judge renders
+ * as `llm:<provider>/<id>`, or `llm:chat-model` when it follows the session's
+ * chat model.
  *
- * The system-one judge resolves only through the registry's classifier
- * lookup and renders as `s1:<provider>/<id>`, with the same suffix.
+ * The quick judge resolves only through the registry's classifier lookup
+ * and renders as `quick:<provider>/<id>`, with the same suffix.
  *
  * The `--permission-model` launch flag parses into a session override of the
  * mode and both judges' models, merged over the config per ask.
@@ -24,7 +26,7 @@ import {
   type Mode,
   modeSchema,
   quickJudgeConfigSchema,
-  type SystemOneConfig,
+  type QuickJudgeConfig,
 } from "./config-schema";
 
 /** A provider/id pair naming a judge model. */
@@ -93,20 +95,20 @@ export function resolveJudge(
 }
 
 /**
- * The footer status text: `judge:<provider>/<id>` for a named pair, with
- * ` (unresolved)` appended when the registry does not know it, and
- * `judge:session` when the session model judges.
+ * The footer text for the LLM judge: `llm:<provider>/<id>` for a named pair,
+ * with ` (unresolved)` appended when the registry does not know it, and
+ * `llm:chat-model` when the session's chat model judges.
  */
 export function formatJudgeStatus(judge: ResolvedJudge): string {
   if (judge.pair === undefined) {
-    return "judge:session";
+    return "llm:chat-model";
   }
-  const text = `judge:${judge.pair.provider}/${judge.pair.model}`;
+  const text = `llm:${judge.pair.provider}/${judge.pair.model}`;
   return judge.model === undefined ? `${text} (unresolved)` : text;
 }
 
-/** The narrow registry projection the system-one resolver needs. */
-export interface SystemOneJudgeRegistryLike {
+/** The narrow registry projection the quick judge resolver needs. */
+export interface QuickJudgeLookupLike {
   findOfType(
     type: "classifier",
     provider: string,
@@ -114,36 +116,36 @@ export interface SystemOneJudgeRegistryLike {
   ): ClassifierModel<ClassifierApi> | undefined;
 }
 
-/** The configured system-one judge and the classifier model it names. */
-export interface ResolvedSystemOneJudge {
-  /** The configured pair; `undefined` when systemOne names none. */
+/** The configured quick judge and the classifier model it names. */
+export interface ResolvedQuickJudge {
+  /** The configured pair; `undefined` when quickJudge names none. */
   pair: JudgePair | undefined;
   /** The classifier model; `undefined` means every ask is model-unresolved. */
   model: ClassifierModel<ClassifierApi> | undefined;
 }
 
-/** Resolve the system-one pair through the classifier lookup only. */
-export function resolveSystemOneJudge(
-  systemOne: Pick<SystemOneConfig, "provider" | "model">,
-  registry: SystemOneJudgeRegistryLike | undefined,
-): ResolvedSystemOneJudge {
-  if (systemOne.provider === undefined || systemOne.model === undefined) {
+/** Resolve the quick judge pair through the classifier lookup only. */
+export function resolveQuickJudge(
+  quickJudge: Pick<QuickJudgeConfig, "provider" | "model">,
+  registry: QuickJudgeLookupLike | undefined,
+): ResolvedQuickJudge {
+  if (quickJudge.provider === undefined || quickJudge.model === undefined) {
     return { pair: undefined, model: undefined };
   }
-  const pair: JudgePair = { provider: systemOne.provider, model: systemOne.model };
+  const pair: JudgePair = { provider: quickJudge.provider, model: quickJudge.model };
   return { pair, model: registry?.findOfType("classifier", pair.provider, pair.model) };
 }
 
 /**
- * The footer text for the system-one judge: `s1:<provider>/<id>`, with
+ * The footer text for the quick judge: `quick:<provider>/<id>`, with
  * ` (unresolved)` when the classifier lookup fails, and
- * `s1:unset (unresolved)` when systemOne names no pair.
+ * `quick:unset (unresolved)` when quickJudge names no pair.
  */
-export function formatSystemOneStatus(judge: ResolvedSystemOneJudge): string {
+export function formatQuickStatus(judge: ResolvedQuickJudge): string {
   if (judge.pair === undefined) {
-    return "s1:unset (unresolved)";
+    return "quick:unset (unresolved)";
   }
-  const text = `s1:${judge.pair.provider}/${judge.pair.model}`;
+  const text = `quick:${judge.pair.provider}/${judge.pair.model}`;
   return judge.model === undefined ? `${text} (unresolved)` : text;
 }
 
