@@ -232,6 +232,102 @@ describe("systemOne settings", () => {
   });
 });
 
+describe("mode", () => {
+  it("defaults to llm", () => {
+    expect(classifierConfigSchema.parse({}).mode).toBe("llm");
+  });
+
+  it.each(["llm", "quick", "quick-then-llm"])("accepts mode %p", (mode) => {
+    expect(classifierConfigSchema.parse({ mode }).mode).toBe(mode);
+  });
+
+  it.each(["system-one", "quick-llm", "LLM", "", 1])("rejects mode %p", (mode) => {
+    expect(classifierConfigSchema.safeParse({ mode }).success).toBe(false);
+  });
+});
+
+describe("quickJudge settings", () => {
+  it("fills every default on an empty quickJudge object", () => {
+    const parsed = classifierConfigSchema.parse({ quickJudge: {} });
+    expect(parsed.quickJudge).toEqual({
+      verdicts: "allow-defer",
+      onError: "defer",
+      allowThreshold: 0.9,
+      denyThreshold: 0.9,
+      guidance: true,
+      timeoutMs: 5000,
+    });
+  });
+
+  it("keeps explicit quickJudge values", () => {
+    const quickJudge = {
+      provider: "typesafe",
+      model: "jev",
+      verdicts: "allow-deny",
+      onError: "deny",
+      allowThreshold: 0.75,
+      denyThreshold: 1,
+      guidance: false,
+      timeoutMs: 1500,
+    };
+    expect(classifierConfigSchema.parse({ quickJudge }).quickJudge).toEqual(quickJudge);
+  });
+
+  it("accepts thresholds at the 0 and 1 bounds", () => {
+    const parsed = classifierConfigSchema.parse({
+      quickJudge: { allowThreshold: 0, denyThreshold: 1 },
+    });
+    expect(parsed.quickJudge?.allowThreshold).toBe(0);
+    expect(parsed.quickJudge?.denyThreshold).toBe(1);
+  });
+
+  it.each([-0.01, 1.01, "0.9"])("rejects allowThreshold %p", (allowThreshold) => {
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { allowThreshold } }).success,
+    ).toBe(false);
+  });
+
+  it.each([-0.01, 1.01, "0.9"])("rejects denyThreshold %p", (denyThreshold) => {
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { denyThreshold } }).success,
+    ).toBe(false);
+  });
+
+  it.each(["allow", "allow-only"])("rejects quickJudge verdicts %p", (verdicts) => {
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { verdicts } }).success,
+    ).toBe(false);
+  });
+
+  it.each(["allow", "ignore"])("rejects quickJudge onError %p", (onError) => {
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { onError } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a quickJudge provider without a model, and the reverse", () => {
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { provider: "typesafe" } })
+        .success,
+    ).toBe(false);
+    expect(
+      classifierConfigSchema.safeParse({ quickJudge: { model: "jev" } }).success,
+    ).toBe(false);
+  });
+
+  it("parses a config with only the older fields as mode llm with no quickJudge", () => {
+    const parsed = classifierConfigSchema.parse({
+      provider: "anthropic",
+      model: "claude-haiku",
+      instructions: "be strict",
+      timeoutMs: 250,
+      contextBudgetBytes: 2048,
+    });
+    expect(parsed.mode).toBe("llm");
+    expect(parsed.quickJudge).toBeUndefined();
+  });
+});
+
 describe("extension id", () => {
   it("names the extensions/<id>/config.json path segment", () => {
     expect(CLASSIFIER_EXTENSION_ID).toBe("pi-permission-classifier");

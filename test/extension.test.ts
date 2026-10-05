@@ -31,6 +31,7 @@ const CONFIG_RESULT: LoadConfigResult = {
     surfaces: ["bash", "mcp", "skill", "tool", "read", "write", "edit"],
     timeoutMs: 5000,
     contextBudgetBytes: 8192,
+    mode: "llm",
     classifierEnabled: true,
     verdicts: "allow-deny-defer",
     onError: "defer",

@@ -194,6 +194,47 @@ describe("loadClassifierConfig", () => {
     );
   });
 
+  it("loads mode and a quickJudge object with its defaults filled", () => {
+    writeConfig(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({
+        mode: "quick-then-llm",
+        quickJudge: { provider: "typesafe", model: "jev" },
+      }),
+    );
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.mode).toBe("quick-then-llm");
+    expect(result.config?.quickJudge).toEqual({
+      provider: "typesafe",
+      model: "jev",
+      verdicts: "allow-defer",
+      onError: "defer",
+      allowThreshold: 0.9,
+      denyThreshold: 0.9,
+      guidance: true,
+      timeoutMs: 5000,
+    });
+  });
+
+  it("loads an older config file as mode llm with no quickJudge", () => {
+    writeConfig(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({ provider: "anthropic", model: "claude-haiku", timeoutMs: 250 }),
+    );
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.mode).toBe("llm");
+    expect(result.config?.quickJudge).toBeUndefined();
+  });
+
+  it("yields no config plus a sourced issue for an invalid mode", () => {
+    writeConfig(getGlobalConfigPath(agentDir), JSON.stringify({ mode: "system-one" }));
+    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+    expect(result.config).toBeUndefined();
+    expect(result.issues.some((issue) => issue.path.includes("mode"))).toBe(true);
+  });
+
   it("lets project config override global config", () => {
     writeConfig(
       getGlobalConfigPath(agentDir),

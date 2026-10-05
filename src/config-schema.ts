@@ -45,10 +45,19 @@ const thresholdSchema = z
   .default(DEFAULT_SYSTEM_ONE_THRESHOLD);
 
 /**
- * Settings for the system-one link. Its presence registers the link;
+ * Who judges an ask: `llm` (the LLM judge alone, the default), `quick` (the
+ * quick judge alone), or `quick-then-llm` (the quick judge first, the LLM
+ * judge for anything it does not allow).
+ */
+export const modeSchema = z.enum(["llm", "quick", "quick-then-llm"]);
+
+export type Mode = z.infer<typeof modeSchema>;
+
+/**
+ * Settings for the quick judge, a System One decision model.
  * `provider`/`model` name a classifier model and come together or not at all.
  */
-export const systemOneConfigSchema = z
+export const quickJudgeConfigSchema = z
   .object({
     provider: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
@@ -63,7 +72,12 @@ export const systemOneConfigSchema = z
     message: "provider and model must be set together or not at all",
   });
 
-export type SystemOneConfig = z.infer<typeof systemOneConfigSchema>;
+export type QuickJudgeConfig = z.infer<typeof quickJudgeConfigSchema>;
+
+/** The unreleased name of the quick judge settings, still accepted. */
+export const systemOneConfigSchema = quickJudgeConfigSchema;
+
+export type SystemOneConfig = QuickJudgeConfig;
 
 /**
  * Operator-owned config for the auto-classifier reviewer. An absent config
@@ -87,8 +101,10 @@ export const classifierConfigSchema = z
       .int()
       .positive()
       .default(DEFAULT_CONTEXT_BUDGET_BYTES),
-    // The top-level fields above are the classifier link's settings;
-    // classifierEnabled false stops that link registering.
+    // The top-level fields above and below are the LLM judge's settings.
+    mode: modeSchema.default("llm"),
+    quickJudge: quickJudgeConfigSchema.optional(),
+    // classifierEnabled false stops the classifier link registering.
     classifierEnabled: z.boolean().default(true),
     verdicts: verdictsSchema.default("allow-deny-defer"),
     onError: onErrorSchema.default("defer"),
