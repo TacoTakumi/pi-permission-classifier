@@ -22,6 +22,7 @@ import {
   getGlobalConfigPath,
   getProjectConfigPath,
   globalConfigExists,
+  globalQuickJudgeSet,
   loadClassifierConfig,
   writeGlobalSelection,
 } from "#src/config-loader";
@@ -402,6 +403,54 @@ describe("loadClassifierConfig", () => {
       expect(result.config?.model).toBe("m");
       expect(result.issues).toHaveLength(1);
     });
+  });
+});
+
+describe("globalQuickJudgeSet", () => {
+  let root: string;
+  let agentDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pi-permission-classifier-test-"));
+    agentDir = join(root, "agent");
+    mkdirSync(dirname(getGlobalConfigPath(agentDir)), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("is true when the global file sets the quick judge provider and model", () => {
+    writeFileSync(
+      getGlobalConfigPath(agentDir),
+      JSON.stringify({ quickJudge: { provider: "typesafe", model: "jev" } }),
+    );
+    expect(globalQuickJudgeSet(agentDir)).toBe(true);
+  });
+
+  it.each([
+    ["no file", undefined],
+    ["no quickJudge", "{}"],
+    ["a lone provider", JSON.stringify({ quickJudge: { provider: "typesafe" } })],
+    ["an empty model", JSON.stringify({ quickJudge: { provider: "typesafe", model: "" } })],
+    ["the old systemOne field", JSON.stringify({ systemOne: { provider: "typesafe", model: "jev" } })],
+    ["malformed JSON", "{ not json"],
+  ])("is false for %s", (_label, content) => {
+    if (content !== undefined) {
+      writeFileSync(getGlobalConfigPath(agentDir), content);
+    }
+    expect(globalQuickJudgeSet(agentDir)).toBe(false);
+  });
+
+  it("ignores a project file that sets the quick judge", () => {
+    writeFileSync(getGlobalConfigPath(agentDir), "{}");
+    const cwd = join(root, "project");
+    mkdirSync(dirname(getProjectConfigPath(cwd)), { recursive: true });
+    writeFileSync(
+      getProjectConfigPath(cwd),
+      JSON.stringify({ quickJudge: { provider: "typesafe", model: "jev" } }),
+    );
+    expect(globalQuickJudgeSet(agentDir)).toBe(false);
   });
 });
 

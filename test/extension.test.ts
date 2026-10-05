@@ -221,6 +221,11 @@ function makeAgentDir(): string {
   return dir;
 }
 
+/** Overwrite the global config file in a scratch agent dir. */
+function saveGlobal(agentDir: string, config: Record<string, unknown>): void {
+  writeFileSync(getGlobalConfigPath(agentDir), JSON.stringify(config));
+}
+
 /** Publish `service` under {@link SESSION_ID} in the keyed locator. */
 function publishForSession(): void {
   publishPermissionsService(SESSION_ID, service);
@@ -1017,6 +1022,30 @@ describe("launch flag --permission-model", () => {
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
 
+  it("typed mode quick is refused when only a project config sets the quick model", async () => {
+    const writeSelection = vi.fn();
+    const projectQuick = classifierConfigSchema.parse({
+      quickJudge: { provider: "typesafe", model: "jev-latest" },
+    });
+    const pi = makeFakePi();
+    const agentDir = start(pi, {
+      complete: allowingComplete(),
+      loadConfig: () => ({ config: projectQuick, issues: [] }),
+      writeSelection,
+    });
+    saveGlobal(agentDir, {});
+    publishForSession();
+    const ctx = ctxWithJev();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await pi.commands.get("permission-model")?.handler("mode quick", ctx);
+    expect(writeSelection).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("does not count"),
+      "warning",
+    );
+  });
+
   it.each(["quick", "quick-then-llm"])(
     "typed mode %s is refused when only the flag sets the quick model",
     async (mode) => {
@@ -1144,7 +1173,8 @@ describe("/permission-model command wiring", () => {
     }));
     const complete = allowingComplete();
     const pi = makeFakePi();
-    start(pi, { complete, loadConfig, writeSelection });
+    const agentDir = start(pi, { complete, loadConfig, writeSelection });
+    saveGlobal(agentDir, { quickJudge: { provider: "typesafe", model: "jev" } });
     publishForSession();
     const base = ctxWithModel();
     const ctx = {
@@ -1698,7 +1728,7 @@ describe("footer status by mode", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const pi = makeFakePi();
     let loads = 0;
-    start(pi, {
+    const agentDir = start(pi, {
       complete: allowingComplete(),
       loadConfig: () => ({
         config: classifierConfigSchema.parse(loads++ === 0 ? top : next),
@@ -1708,7 +1738,7 @@ describe("footer status by mode", () => {
     publishForSession();
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    return { pi, ctx };
+    return { pi, ctx, agentDir };
   }
 
   function lastStatus(ctx: ReturnType<typeof ctxWith>): unknown {
@@ -1765,10 +1795,11 @@ describe("footer status by mode", () => {
   });
 
   it("updates the entry after a mode change", async () => {
-    const { pi, ctx } = boot({ quickJudge: JEV_PAIR }, ctxWith(), {
+    const { pi, ctx, agentDir } = boot({ quickJudge: JEV_PAIR }, ctxWith(), {
       mode: "quick-then-llm",
       quickJudge: JEV_PAIR,
     });
+    saveGlobal(agentDir, { quickJudge: JEV_PAIR });
     expect(lastStatus(ctx)).toBe("llm:chat-model");
     await pi.commands.get("permission-model")?.handler("mode quick-then-llm", ctx);
     expect(lastStatus(ctx)).toBe("quick:typesafe/jev-latest, llm:chat-model");

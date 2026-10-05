@@ -40,9 +40,10 @@ this project adheres to
 - Typed forms `/permission-model mode <llm|quick|quick-then-llm>`,
   `/permission-model llm <provider>/<id>`, `/permission-model llm
   chat-model` and `/permission-model quick <provider>/<id>`, with tab
-  completion for each. Setting a model never changes the mode. Outside the
-  TUI, `/permission-model` prints the mode, the active judges and the usage
-  line.
+  completion for each. Setting a model never changes the mode, and a
+  typed quick mode is saved only when the global config has a quick
+  model. Outside the TUI, `/permission-model` prints the mode, the active
+  judges and the usage line.
 - The `--permission-model` launch flag takes a comma list of
   `quick:<provider>/<id>`, `llm:<provider>/<id>`, `llm:chat-model` and
   `mode:<mode>`, in any subset, for the session only. An item that does not

@@ -200,10 +200,11 @@ export interface CommandDependencies {
    */
   getConfig(): ClassifierConfig | undefined;
   /**
-   * The config loaded from the files, without the flag values: what a write
-   * builds on, so a mode is saved only with a quick model saved beside it.
+   * Whether the global config file itself sets the quick judge pair. The mode
+   * is written there, so a quick mode is saved only beside a quick model in
+   * the same file.
    */
-  getSavedConfig(): ClassifierConfig | undefined;
+  globalQuickJudgeSet(): boolean;
   /** The session's model registry (captured at `session_start`), for completion. */
   getRegistry(): CommandRegistryLike | undefined;
   /** Whether the global config file exists (the precondition for a write). */
@@ -388,15 +389,15 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Set the mode; a mode that runs the quick judge needs a saved quick model
-   * first. A quick model set only by the launch flag does not count: the
-   * saved mode would outlive the flag.
+   * Set the mode; a mode that runs the quick judge needs a quick model in the
+   * global config file first. A quick model from the launch flag or a project
+   * config does not count: the mode is saved globally and would outlive the
+   * flag or apply in other projects.
    */
   function applyMode(mode: Mode, ctx: CommandContextLike): void {
-    const quickJudge = deps.getSavedConfig()?.quickJudge;
-    if (mode !== "llm" && (quickJudge?.provider === undefined || quickJudge.model === undefined)) {
+    if (mode !== "llm" && !deps.globalQuickJudgeSet()) {
       ctx.ui.notify(
-        `Mode ${mode} needs a quick judge model: set one first with /${COMMAND_NAME} ${QUICK_FORM} <provider>/<id>. Nothing changed.`,
+        `Mode ${mode} needs a quick judge model in the global config: set one first with /${COMMAND_NAME} ${QUICK_FORM} <provider>/<id>. A quick model from the launch flag or a project config does not count. Nothing changed.`,
         "warning",
       );
       return;

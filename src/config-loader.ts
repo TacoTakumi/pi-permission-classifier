@@ -89,6 +89,27 @@ export function globalConfigExists(agentDir: string): boolean {
   return existsSync(getGlobalConfigPath(agentDir));
 }
 
+/**
+ * Whether the global config file itself sets `quickJudge.provider` and
+ * `quickJudge.model` as non-empty strings. A missing or unreadable file, or a
+ * file that is not a JSON object, is false.
+ */
+export function globalQuickJudgeSet(agentDir: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(getGlobalConfigPath(agentDir), "utf-8"));
+    const quickJudge = isRecord(parsed) ? parsed.quickJudge : undefined;
+    return (
+      isRecord(quickJudge) &&
+      typeof quickJudge.provider === "string" &&
+      quickJudge.provider.length > 0 &&
+      typeof quickJudge.model === "string" &&
+      quickJudge.model.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

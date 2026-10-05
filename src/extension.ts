@@ -67,6 +67,7 @@ import {
   getGlobalConfigPath,
   getProjectConfigPath,
   globalConfigExists,
+  globalQuickJudgeSet,
   type JudgeSelection,
   type LoadConfigResult,
   loadClassifierConfig,
@@ -302,7 +303,7 @@ export function createClassifierExtension(
     COMMAND_NAME,
     createPermissionModelCommand({
       getConfig: effectiveConfig,
-      getSavedConfig: () => config,
+      globalQuickJudgeSet: () => globalQuickJudgeSet(agentDir()),
       getRegistry: () => registry,
       ...(dependencies.buildPicker
         ? { buildPicker: dependencies.buildPicker }

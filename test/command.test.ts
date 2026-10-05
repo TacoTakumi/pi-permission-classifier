@@ -127,7 +127,9 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
   const registry = makeRegistry();
   const deps = {
     getConfig: () => state.config,
-    getSavedConfig: () => state.config,
+    globalQuickJudgeSet: vi.fn<CommandDependencies["globalQuickJudgeSet"]>(
+      () => state.config?.quickJudge?.model !== undefined,
+    ),
     getRegistry: () => registry,
     buildPicker: vi.fn<PickerSeam>(() => FAKE_COMPONENT),
     globalConfigExists: vi.fn<CommandDependencies["globalConfigExists"]>(
@@ -903,18 +905,18 @@ describe("typed form /permission-model mode <mode>", () => {
   );
 
   it.each(["quick", "quick-then-llm"])(
-    "refuses mode %s when only the launch flag sets a quick judge model",
+    "refuses mode %s when the global file has no quick judge model",
     async (mode) => {
       const { deps } = makeDeps(WITH_QUICK);
-      const command = createPermissionModelCommand({
-        ...deps,
-        getSavedConfig: () => EMPTY_CONFIG,
-      });
+      deps.globalQuickJudgeSet.mockReturnValue(false);
+      const command = createPermissionModelCommand(deps);
       const ctx = makeCtx();
       await command.handler(`mode ${mode}`, ctx);
       expect(deps.write).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["warning"]);
       expect(notifyOf(ctx, "warning")).toContain("/permission-model quick <provider>/<id>");
+      expect(notifyOf(ctx, "warning")).toContain("global config");
+      expect(notifyOf(ctx, "warning")).toContain("launch flag or a project config does not count");
     },
   );
 

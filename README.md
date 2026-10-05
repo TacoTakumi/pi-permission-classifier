@@ -522,8 +522,11 @@ choosing a judge never changes pi's session model or your default model:
   argument prints the mode, the model of each judge the mode runs, and the
   usage line, and writes nothing.
 - `/permission-model mode <llm|quick|quick-then-llm>` sets the mode. Mode
-  `quick` or `quick-then-llm` with no quick judge model set writes nothing
-  and says to set one first.
+  `quick` or `quick-then-llm` needs a quick judge model in the global config
+  file, where the mode is saved: without one it writes nothing and says to
+  set one first. A quick model that only the launch flag or a project config
+  sets does not count, because the saved mode would outlive the flag or apply
+  in other projects. The picker always saves the quick model with the mode.
 - `/permission-model llm <provider>/<id>` sets the LLM judge. The pair must
   be a chat model in pi's model registry: an unknown pair or a classifier
   model is rejected and nothing changes. A known model without configured
