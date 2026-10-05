@@ -1,6 +1,8 @@
 /**
  * Extension wiring: load the config at `session_start`, register the
- * `"classifier"` link from `permissions:ready`, and dispose on shutdown.
+ * `"classifier"` link (unless `classifierEnabled` is false) and the
+ * `"system-one"` link (when the config has a `systemOne` object) from
+ * `permissions:ready`, and dispose both on shutdown.
  *
  * The ready handler is the sole registration site. pi-permission-system
  * >=27.0.0 emits `permissions:ready` at least once after every extension's
@@ -90,9 +92,24 @@ import {
   createClassifierReviewer,
   type ModelRegistryLike,
 } from "./reviewer";
+import {
+  createSystemOneLink,
+  type SystemOneLinkSettings,
+  type SystemOneRegistryLike,
+} from "./system-one-link";
 
 /** The operator-facing chain-link name referenced from `authorizerChain`. */
 const LINK_NAME = "classifier";
+
+/** The second chain link, registered when the config has a `systemOne` object. */
+const SYSTEM_ONE_LINK_NAME = "system-one";
+
+/**
+ * The system-one settings while the classifier link is enabled: it is a
+ * front link that may only allow or pass the ask on, whatever its config
+ * asks for.
+ */
+const FRONT_LINK_POLICY = { verdicts: "allow-defer", onError: "defer" } as const;
 
 /** The footer status key naming the effective judge. pi sorts extension
  * statuses by key on one footer line; the `zz-` prefix keeps this entry last. */
@@ -154,16 +171,23 @@ export function createClassifierExtension(
 
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
-  let registry: (ModelRegistryLike & CommandRegistryLike) | undefined;
+  let registry:
+    | (ModelRegistryLike & CommandRegistryLike & SystemOneRegistryLike)
+    | undefined;
   let ui: ExtensionContext["ui"] | undefined;
   /** The session context, for the per-ask cwd and trust reads. */
   let session: ExtensionContext | undefined;
   let override: JudgePair | undefined;
   let dispose: (() => void) | undefined;
+  let disposeSystemOne: (() => void) | undefined;
   let warnedUnreachable = false;
+  let warnedFrontLink = false;
   /** Per-session judge health and breaker; both start fresh at shutdown. */
   const health = new SessionHealth();
   let breaker = new CircuitBreaker();
+  /** The system-one link's own health and breaker, apart from the classifier's. */
+  const systemOneHealth = new SessionHealth();
+  let systemOneBreaker = new CircuitBreaker();
   /** The once-per-second footer refresh while the breaker cools down. */
   let countdown: ReturnType<typeof setInterval> | undefined;
 
@@ -207,6 +231,47 @@ export function createClassifierExtension(
       findGlobalGuidancePath(files, dir),
       projectTrusted(session),
     );
+  }
+
+  /**
+   * The system-one settings in effect, read live per ask. While the
+   * classifier link is enabled the front-link policy replaces the
+   * configured verdicts and onError, and the first time that drops a
+   * stricter setting this session, the operator is warned.
+   */
+  function systemOneSettings(): SystemOneLinkSettings | undefined {
+    const systemOne = config?.systemOne;
+    if (!config || !systemOne) {
+      return undefined;
+    }
+    if (!config.classifierEnabled) {
+      return { systemOne, contextBudgetBytes: config.contextBudgetBytes };
+    }
+    if (
+      !warnedFrontLink &&
+      (systemOne.verdicts !== FRONT_LINK_POLICY.verdicts ||
+        systemOne.onError !== FRONT_LINK_POLICY.onError)
+    ) {
+      warnedFrontLink = true;
+      warn(
+        `systemOne asks for verdicts ${systemOne.verdicts} and onError ` +
+          `${systemOne.onError}, but while the classifier link is enabled ` +
+          "the system-one link runs with verdicts allow-defer and onError " +
+          "defer. Set classifierEnabled to false to apply them.",
+      );
+    }
+    return {
+      systemOne: { ...systemOne, ...FRONT_LINK_POLICY },
+      contextBudgetBytes: config.contextBudgetBytes,
+    };
+  }
+
+  /** The session cwd for the system-one state; no session is an internal error. */
+  function sessionCwd(): string {
+    if (!session) {
+      throw new Error("no session context to read the cwd from");
+    }
+    return session.cwd;
   }
 
   /** Read the launch flag; a value the registry does not know is ignored. */
@@ -304,7 +369,7 @@ export function createClassifierExtension(
     warn(
       "could not resolve this session's permission service — " +
         "pi-permission-system 27.0.0 or later must be loaded in the same " +
-        "session; the classifier link is not registered.",
+        "session; no permission link is registered.",
     );
   }
 
@@ -327,9 +392,12 @@ export function createClassifierExtension(
   });
 
   pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
-    // Idempotent: ready fires at least once per session and may repeat.
-    // classifierEnabled false keeps the classifier link off the chain.
-    if (dispose || !config || !config.classifierEnabled) {
+    // Idempotent per link: ready fires at least once per session and may
+    // repeat. classifierEnabled false keeps the classifier link off the
+    // chain; a systemOne object puts the system-one link on it.
+    const wantClassifier = !dispose && config?.classifierEnabled === true;
+    const wantSystemOne = !disposeSystemOne && config?.systemOne !== undefined;
+    if (!wantClassifier && !wantSystemOne) {
       return;
     }
     const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
@@ -340,6 +408,25 @@ export function createClassifierExtension(
     const service = getPermissionsService(sessionId);
     if (!service) {
       warnUnreachableOnce();
+      return;
+    }
+    if (wantSystemOne) {
+      // Warn about a front-link override at startup, not first ask.
+      systemOneSettings();
+      const authorizeSystemOne = createSystemOneLink({
+        getSettings: systemOneSettings,
+        getRegistry: () => registry,
+        getCwd: sessionCwd,
+        getGuidance,
+        breaker: systemOneBreaker,
+        onOutcome: (outcome) => systemOneHealth.record(outcome),
+      });
+      disposeSystemOne = service.registerAuthorizer(
+        SYSTEM_ONE_LINK_NAME,
+        authorizeSystemOne,
+      );
+    }
+    if (!wantClassifier) {
       return;
     }
     const authorize = createClassifierReviewer({
@@ -365,6 +452,8 @@ export function createClassifierExtension(
     }
     dispose?.();
     dispose = undefined;
+    disposeSystemOne?.();
+    disposeSystemOne = undefined;
     config = undefined;
     sessionModel = undefined;
     registry = undefined;
@@ -372,8 +461,11 @@ export function createClassifierExtension(
     session = undefined;
     override = undefined;
     warnedUnreachable = false;
+    warnedFrontLink = false;
     stopCountdown();
     health.reset();
     breaker = new CircuitBreaker();
+    systemOneHealth.reset();
+    systemOneBreaker = new CircuitBreaker();
   });
 }

@@ -1238,3 +1238,201 @@ describe("config trust gate wiring", () => {
     expect(loadConfig).toHaveBeenLastCalledWith("/project", false);
   });
 });
+
+describe("system-one link registration", () => {
+  const JEV = { provider: "typesafe", id: "jev", type: "classifier" } as never;
+  const DENY_RESULT = {
+    api: "typesafe-system-one",
+    provider: "typesafe",
+    model: "jev",
+    answers: {
+      reversible: { type: "bool", probability: 0.1 },
+      contained: { type: "bool", probability: 0.9 },
+      hazard: {
+        type: "choice",
+        choice: "force_push",
+        probabilities: { none: 0.02, force_push: 0.98 },
+        confidence: 0.98,
+      },
+    },
+    stopReason: "stop",
+    timestamp: 0,
+  };
+
+  function ctxWithClassifier(classify = vi.fn(async () => DENY_RESULT)) {
+    const ctx = ctxWithModel();
+    return {
+      ...ctx,
+      modelRegistry: {
+        ...ctx.modelRegistry,
+        findOfType: vi.fn((type: string, provider: string, id: string) =>
+          type === "classifier" && provider === "typesafe" && id === "jev" ? JEV : undefined,
+        ),
+        classify,
+      },
+    };
+  }
+
+  function configWith(top: Record<string, unknown>): LoadConfigResult {
+    return {
+      config: classifierConfigSchema.parse(top),
+      issues: [],
+      projectSetsJudge: false,
+    };
+  }
+
+  function registeredNames(): string[] {
+    return service.registerAuthorizer.mock.calls.map((call) => call[0] as string);
+  }
+
+  function authorizerNamed(name: string): RegisteredAuthorizer {
+    const call = service.registerAuthorizer.mock.calls.find((c) => c[0] === name);
+    return call?.[1] as RegisteredAuthorizer;
+  }
+
+  const log = () => ({ review: vi.fn(), debug: vi.fn() });
+
+  it("registers system-one once across repeated ready events and disposes it at shutdown", () => {
+    const pi = makeFakePi();
+    start(pi, { loadConfig: () => configWith({ systemOne: { provider: "typesafe", model: "jev" } }) });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(registeredNames().filter((name) => name === "system-one")).toHaveLength(1);
+    expect(registeredNames().filter((name) => name === "classifier")).toHaveLength(1);
+    pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
+    expect(service.disposer).toHaveBeenCalledTimes(2);
+  });
+
+  it("never registers system-one without a systemOne object", () => {
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(registeredNames()).toEqual(["classifier"]);
+  });
+
+  it("registers only system-one when classifierEnabled is false", () => {
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () =>
+        configWith({
+          classifierEnabled: false,
+          systemOne: { provider: "typesafe", model: "jev" },
+        }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(registeredNames()).toEqual(["system-one"]);
+    pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
+    expect(service.disposer).toHaveBeenCalledTimes(1);
+  });
+
+  it("forces allow-defer and onError defer while the classifier is enabled, warning once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () =>
+        configWith({
+          systemOne: {
+            provider: "typesafe",
+            model: "jev",
+            verdicts: "allow-deny",
+            onError: "deny",
+          },
+        }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    const authorize = authorizerNamed("system-one");
+    expect(await authorize(askDetails(), {}, log())).toEqual({ kind: "defer" });
+    expect(await authorize(askDetails(), {}, log())).toEqual({ kind: "defer" });
+    const forced = warn.mock.calls.filter(([message]) =>
+      String(message).includes("allow-defer"),
+    );
+    expect(forced).toHaveLength(1);
+  });
+
+  it("forces onError defer for a failure while the classifier is enabled", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () =>
+        configWith({ systemOne: { provider: "typesafe", model: "unknown", onError: "deny" } }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(await authorizerNamed("system-one")(askDetails(), {}, log())).toEqual({
+      kind: "defer",
+    });
+  });
+
+  it("warns again in the next session", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () =>
+        configWith({ systemOne: { provider: "typesafe", model: "jev", verdicts: "allow-deny" } }),
+    });
+    publishForSession();
+    for (let i = 0; i < 2; i += 1) {
+      pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+      pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
+    }
+    const forced = warn.mock.calls.filter(([message]) =>
+      String(message).includes("allow-defer"),
+    );
+    expect(forced).toHaveLength(2);
+  });
+
+  it("does not warn when the config already asks for allow-defer and onError defer", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, { loadConfig: () => configWith({ systemOne: { provider: "typesafe", model: "jev" } }) });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("applies the configured verdicts and onError with classifierEnabled false", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () =>
+        configWith({
+          classifierEnabled: false,
+          systemOne: {
+            provider: "typesafe",
+            model: "jev",
+            verdicts: "allow-deny",
+            onError: "deny",
+          },
+        }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    const verdict = await authorizerNamed("system-one")(askDetails(), {}, log());
+    expect(verdict).toMatchObject({ kind: "deny" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("sends the session cwd to the classifier model", async () => {
+    const classify = vi.fn(async () => DENY_RESULT);
+    const pi = makeFakePi();
+    start(pi, { loadConfig: () => configWith({ systemOne: { provider: "typesafe", model: "jev" } }) });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier(classify));
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    await authorizerNamed("system-one")(askDetails(), {}, log());
+    const context = (classify.mock.calls[0] as unknown[])[1] as { state: { cwd: string } };
+    expect(context.state.cwd).toBe("/project");
+  });
+});
