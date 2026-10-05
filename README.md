@@ -1,40 +1,42 @@
 # pi-permission-classifier
 
-An auto-classifier for the [pi coding agent](https://pi.dev/)'s
-permission system. It registers an Authorizer chain link named `classifier`
-with [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system):
-a light model reviews each permission
-`ask` and returns allow, deny, or defer, so clearly benign requests are
-approved automatically, clearly bad ones are rejected with a short teaching
-reason, and only genuinely uncertain ones reach you.
+A permission judge for the [pi coding agent](https://pi.dev/)'s
+permission system. It registers an Authorizer chain link named
+`permission-judge` with [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system):
+a model reviews each permission `ask` and returns allow, deny, or defer, so
+clearly benign requests are approved automatically, clearly bad ones are
+rejected with a short teaching reason, and only genuinely uncertain ones
+reach you.
 
 Think of it as a Claude-Code-style auto-approve mode, without giving up the
-permission gate: your deterministic policy still runs first, and the
-classifier only sees the asks that policy would have sent to you anyway.
+permission gate: your deterministic policy still runs first, and the judge
+only sees the asks that policy would have sent to you anyway.
 
-A second, optional link named `system-one` asks a System One decision model
-(TypeSafe's Jev by default) three fixed questions about each ask and maps the
-answer probabilities to a verdict in about 200 ms. Put it in front of the
-`classifier` link to settle the clear cases fast and pass the rest on, or run
-it alone. See "The system-one link".
+Two judges can review an ask, and the `mode` setting picks who does:
+
+- `llm` (the default): the LLM judge. A chat model reads the ask and
+  reasons about it.
+- `quick`: the quick judge. A System One decision model, such as TypeSafe's
+  Jev, answers three fixed questions about the ask in about 200 ms, and
+  the answer probabilities map to a verdict.
+- `quick-then-llm`: the quick judge settles the clear cases, and the LLM
+  judge reviews everything the quick judge does not allow.
+
+You choose the mode and both models with `/permission-model`, inside pi.
 
 Fail-safe by construction: a missing config, an unresolved model, an auth
 failure, a timeout, an unparseable reply, or any internal error never
-allows. A failure defers unless the link's `onError` is `deny`, which turns
+allows. A failure defers unless the judge's `onError` is `deny`, which turns
 it into a deny that tells the agent to retry later or take another route.
 
 ## Requirements
 
 - pi with `@gotgenes/pi-permission-system` 27.0.0 or newer installed and
-  active in the same session (the classifier resolves the permission service
+  active in the same session (the judge resolves the permission service
   through the session-keyed locator introduced in 27.0.0; with an older
   version it warns once and registers nothing)
 - pi 1.0.0 or newer, declared as the
-  `@earendil-works/pi-coding-agent >=1.0.0` peer dependency. The searchable
-  `/permission-model` picker needs pi 0.84.3 or newer: the selector component
-  that picker mounts changed constructor shape in 0.84.3, so on an older pi
-  the command errors before the picker mounts - nothing is written, the judge
-  keeps reviewing, and the typed and `session` forms still work.
+  `@earendil-works/pi-coding-agent >=1.0.0` peer dependency
 - Node 22 or newer
 - No build step: pi loads `src/index.ts` directly
 
@@ -63,9 +65,9 @@ and installing it grants it no authority until you name it in the chain.
 
    Order matters: pi runs `session_start` handlers in package order, and
    `pi-permission-system` emits its `permissions:ready` event from its own
-   `session_start`. With the classifier listed first, the link and the
+   `session_start`. With the judge listed first, the link and the
    `zz-permission-classifier` footer entry are in place at startup. Listed
-   after it, the classifier misses that first ready event and registers
+   after it, the judge misses that first ready event and registers
    at the next one, so the link and the footer entry appear only after the
    first agent turn (asks are still reviewed, since they happen inside
    agent turns).
@@ -77,34 +79,39 @@ and installing it grants it no authority until you name it in the chain.
 3. Activate the chain link. In
    `~/.pi/agent/extensions/pi-permission-system/config.json`, add:
 
-       "authorizerChain": ["classifier"]
+       "authorizerChain": ["permission-judge"]
 
    Only links named here are consulted; config order fixes the chain order.
+   This is the only edit to another package's config you ever make: the
+   mode and the models are chosen inside pi (step 5).
 
-4. Create the classifier config. Without it the link registers nothing
+4. Create the judge config. Without it the link registers nothing
    (a safe no-op). The defaults are a good starting point:
 
        mkdir -p ~/.pi/agent/extensions/pi-permission-classifier
        echo '{}' > ~/.pi/agent/extensions/pi-permission-classifier/config.json
 
-   `{}` means: judge with the session's active model, judge every surface
+   `{}` means: mode `llm`, judged by the session's chat model, every surface
    except `path` and `external_directory`, 5000 ms timeout, built-in
-   rubric. See `config/config.example.json`
-   for a version with a dedicated judge model, or pick one later from
-   inside pi with `/permission-model` (see "Choosing the judge model").
+   rubric. See `config/config.example.json` for a version with a dedicated
+   judge model.
 
-5. Try it. Start a new pi session and trigger something your policy sends
-   to `ask` (for example a bash command not on your allowlist). A benign
-   command should now be approved automatically; a command matching the
-   never-allow list should be rejected with a reason; anything uncertain
-   still prompts you.
+5. Choose the judges. Start a new pi session and run `/permission-model`:
+   pick a mode, then the model for each judge that mode runs (see
+   "Choosing the judges"). The choice is saved to the config file from
+   step 4 and applies to the next ask.
 
-6. Watch the decisions. Every reviewed ask writes one `classifier.decision`
-   entry to the permission review log:
+6. Try it. Trigger something your policy sends to `ask` (for example a bash
+   command not on your allowlist). A benign command should now be approved
+   automatically; a command matching the never-allow list should be
+   rejected with a reason; anything uncertain still prompts you.
+
+7. Watch the decisions. Every judge that reviews an ask writes one
+   `classifier.decision` entry to the permission review log:
 
        ~/.pi/agent/extensions/pi-permission-system/logs/pi-permission-system-permission-review.jsonl
 
-   Each entry records the link (`classifier` or `system-one`), request id,
+   Each entry records the judge (`quick` or `llm`), request id,
    surface, value, model id, latency, verdict, defer reason, and three
    context fields: `contextIncluded`
    (true only when a full command was rendered to the judge),
@@ -115,8 +122,25 @@ and installing it grants it no authority until you name it in the chain.
    Enable `debugLog` in the permission system config to also capture raw
    model replies and short-circuit traces.
 
-To disable, remove `classifier` from `authorizerChain` (or remove the
+To disable, remove `permission-judge` from `authorizerChain` (or remove the
 package entry). The previous prompting behavior returns immediately.
+
+### The old chain name `classifier`
+
+Earlier releases registered the link as `classifier`. For this release the
+same judge is also registered under that name, so an existing
+`"authorizerChain": ["classifier"]` keeps working. The first ask that
+arrives under `classifier` in a session logs one warning that the name is
+deprecated and that `authorizerChain` should name `permission-judge`. A
+later release removes the old name; a chain that still names it then gets
+only pi-permission-system's generic warning for an unregistered link.
+
+With both names in `authorizerChain`, an ask is still judged once: the
+second name consulted for a request the judge already reviewed under the
+other name defers at once, with no model call and no decision entry. The
+judge remembers the last 8 request ids per session for this. The first such
+duplicate in a session logs one warning that both names are listed and
+`classifier` should be removed.
 
 ## Configuration
 
@@ -125,29 +149,41 @@ Config files (project overrides global, shallow merge):
 - Global: `~/.pi/agent/extensions/pi-permission-classifier/config.json`
 - Project: `<cwd>/.pi/extensions/pi-permission-classifier/config.json`
 
+The merge is shallow: a field the project file sets replaces the global
+field whole. A project `quickJudge` object therefore replaces the global
+`quickJudge` object completely. A project file that sets only
+`"quickJudge": { "allowThreshold": 0.8 }` drops the global quick judge model,
+and every quick judge ask is then `model-unresolved`; repeat `provider` and
+`model` in the project object.
+
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `provider` | unset | Judge model provider. Set together with `model`; with neither set, the session's active model judges. |
-| `model` | unset | Judge model id, resolved from the session model registry. Set together with `provider`. |
-| `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
+| `mode` | `"llm"` | Who judges: `"llm"`, `"quick"` or `"quick-then-llm"`. See "Modes". |
+| `provider` | unset | LLM judge model provider. Set together with `model`; with neither set, the session's chat model judges. |
+| `model` | unset | LLM judge model id, resolved from the session model registry. Set together with `provider`. |
+| `instructions` | built-in rubric | System prompt for the LLM judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
-| `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
-| `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer), for both links. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
-| `classifierEnabled` | `true` | `false` stops the `classifier` link registering, for a setup where `system-one` judges alone. |
-| `verdicts` | `"allow-deny-defer"` | Which verdicts the `classifier` link may return. See "Verdicts and onError". |
-| `onError` | `"defer"` | What the `classifier` link returns on a failure: `"defer"` or `"deny"`. Never allow. |
-| `systemOne` | unset | Settings for the `system-one` link. Its presence registers the link. See "The system-one link". |
+| `timeoutMs` | `5000` | LLM judge model call budget in milliseconds (positive integer). |
+| `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer), for both judges. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
+| `verdicts` | `"allow-deny-defer"` | Which verdicts the LLM judge may return. See "Verdicts and onError". |
+| `onError` | `"defer"` | What the LLM judge returns on a failure: `"defer"` or `"deny"`. Never allow. |
+| `quickJudge` | unset | The quick judge settings. See "quickJudge settings". |
 
-The top-level fields are the `classifier` link's settings, so a config file
-written before the `system-one` link existed still parses and behaves as
-before.
+The top-level fields are the LLM judge's settings, so a config file written
+before the quick judge existed still parses and behaves as before: mode
+`llm`, no quick judge.
+
+An unreleased build used the fields `systemOne` and `classifierEnabled`. A
+file that still sets one loads, ignores it, and logs one config issue per
+field: `systemOne` was renamed to `quickJudge`, and `classifierEnabled` is
+replaced by `mode`.
 
 A malformed or invalid config file means the link registers nothing and pi
 logs a warning - the gate falls back to normal prompting.
 
 ### Verdicts and onError
 
-Each link enforces its own `verdicts` and `onError` in code, after the
+Each judge enforces its own `verdicts` and `onError` in code, after the
 model answered:
 
 | `verdicts` | Model allow | Model deny | Uncertain (model defer, answer below thresholds, over budget) |
@@ -163,10 +199,10 @@ reply or a thrown call), `breaker-open`, `model-unresolved`, `auth-failed`,
 "Retry later or take another route." It never says the action is unsafe,
 because nothing judged it. No failure ever allows.
 
-A front link in a cascade should use `allow-defer` with `onError: "defer"`,
-so everything it is not sure about reaches the next link. A link that judges
-alone in an unattended session can use `allow-deny` with `onError: "deny"`,
-so it never waits for a human.
+A judge that runs alone in an unattended session can use `allow-deny` with
+`onError: "deny"`, so it never waits for a human. In mode `quick-then-llm`
+the quick judge always runs with `allow-defer` and `onError: "defer"` (see
+"Modes").
 
 When `allow-defer` withholds a model deny, the decision entry records
 verdict `defer` with defer reason `deny-capped`.
@@ -199,7 +235,7 @@ local OpenAI-compatible provider (llama.cpp, llama-swap, Ollama, vLLM):
 }
 ```
 
-Then point the classifier at it:
+Then point the LLM judge at it:
 
 ```json
 {
@@ -208,7 +244,7 @@ Then point the classifier at it:
 }
 ```
 
-The model must support tool calling: the classifier forces a
+The model must support tool calling: the LLM judge forces a
 `report_verdict` tool call and treats a reply without one as defer. Verify
 with a quick curl (`"tool_choice": "required"`) that your server returns
 `finish_reason: "tool_calls"`. Keep the model resident if you can - a cold
@@ -257,7 +293,7 @@ Set `instructions` to replace the rubric wholesale with your own.
 The judge reads the same context files the agent does: the global
 `AGENTS.md` (or `CLAUDE.md` fallback) in the pi agent dir, and the project
 files pi finds from the session cwd up through its ancestors (override
-names and worktree shadowing included, because the classifier calls pi's
+names and worktree shadowing included, because the judge calls pi's
 own context-file loader). Write the lines that describe what is normal
 here, for example "downloads into ./vendor and cleanup of build/ are
 routine in this repo", and the judge sees them verbatim.
@@ -267,7 +303,7 @@ routine in this repo", and the judge sees them verbatim.
 - Trust gating: the global file always reaches the judge. Project files
   reach it only while pi reports the project trusted, read at the moment
   of each ask. In an untrusted directory the judge sees the global file
-  alone, and the classifier's own project config layer
+  alone, and the judge's own project config layer
   (`.pi/extensions/pi-permission-classifier/config.json`) is not read
   either, so a project `instructions` string cannot replace the rubric
   before you trust the directory.
@@ -322,7 +358,7 @@ useful and cheap:
 
 ### Which surfaces are judged
 
-The classifier judges every surface except the `path` and
+The judges review every surface except the `path` and
 `external_directory` families, whatever the surface name, including
 surfaces added by other extensions. A family is the bare name plus its
 `<name>_*` members, today `path`, `path_read`, `path_write`,
@@ -330,15 +366,37 @@ surfaces added by other extensions. A family is the bare name plus its
 `external_directory_write`. There is no surface list to maintain. Your
 cross-cutting `path` and `external_directory` rules still apply, and the
 engine downgrades any link allow on those families to defer, so the
-classifier can never approve access outside the working directory or to a
+judge can never approve access outside the working directory or to a
 path your policy denies. To keep a tool out of the judge's hands, route it
 to `allow` or `deny` in the permission system policy instead of `ask`.
 
-## The system-one link
+## Modes
 
-The `system-one` link sends each ask to a classifier model through pi's
-model registry (`findOfType("classifier", ...)` and `classify`) and asks
-three fixed questions:
+The `mode` field picks who judges each ask. It is read on every ask, so a
+change from `/permission-model` or a config reload applies to the next ask,
+with no new session.
+
+- `llm` (default): only the LLM judge runs, under the top-level `verdicts`
+  and `onError`. The quick judge is never called.
+- `quick`: only the quick judge runs, under `quickJudge.verdicts` and
+  `quickJudge.onError`. The LLM judge is never called.
+- `quick-then-llm`: the quick judge runs first, always with
+  `verdicts: "allow-defer"` and `onError: "defer"`, whatever `quickJudge`
+  says. A quick allow ends the ask. Anything else - a deny, an uncertain
+  answer, a failure, an unresolved quick model - goes to the LLM judge,
+  which decides under the top-level `verdicts` and `onError`. When
+  `quickJudge` asks for other verdicts or onError, pi logs one warning per
+  session that names the override.
+
+Each judge has its own circuit breaker (3 failures open it for 60 seconds)
+and its own health record, so a quick judge outage never opens the LLM
+judge's breaker or changes its footer part, and the reverse.
+
+## The quick judge
+
+The quick judge sends each ask to a classifier model through pi's model
+registry (`findOfType("classifier", ...)` and `classify`) and asks three
+fixed questions:
 
 - `reversible` (yes/no): can every effect be undone with ordinary tools?
 - `contained` (yes/no): does the action act only on the project tree (the
@@ -360,50 +418,37 @@ annotations or the tool-input preview. The `path` and `external_directory`
 families and an undeterminable surface defer with no model call, whatever
 `verdicts` and `onError` say.
 
-### systemOne settings
+### quickJudge settings
 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `provider` | unset | Classifier model provider, for example `typesafe`. Set together with `model`. |
 | `model` | unset | Classifier model id, for example `jev-latest`. An unset or unknown pair never falls back to the session model: every ask takes `onError` with reason `model-unresolved`. |
-| `verdicts` | `"allow-defer"` | See "Verdicts and onError". Forced to `allow-defer` while the `classifier` link is enabled. |
-| `onError` | `"defer"` | See "Verdicts and onError". Forced to `defer` while the `classifier` link is enabled. |
+| `verdicts` | `"allow-defer"` | See "Verdicts and onError". In mode `quick-then-llm` it is always `allow-defer`. |
+| `onError` | `"defer"` | See "Verdicts and onError". In mode `quick-then-llm` it is always `defer`. |
 | `allowThreshold` | `0.9` | Probability (0 to 1) that reversible, contained and hazard none must each reach to allow. |
 | `denyThreshold` | `0.9` | Probability (0 to 1) one hazard must reach to deny. |
-| `guidance` | `true` | Send the selected guidance files, chosen by the same rules as for the classifier link. |
+| `guidance` | `true` | Send the selected guidance files, chosen by the same rules as for the LLM judge. |
 | `timeoutMs` | `5000` | Per-call budget in milliseconds, enforced with an abort signal. |
 
-The link has its own circuit breaker (3 failures open it for 60 seconds) and
-its own health record, so a System One outage never opens the classifier
-link's breaker.
-
-### A cascade: system-one in front of classifier
-
-    { "systemOne": { "provider": "typesafe", "model": "jev-latest" } }
-
-and in `~/.pi/agent/extensions/pi-permission-system/config.json`:
-
-    "authorizerChain": ["system-one", "classifier"]
-
-While the `classifier` link is enabled, `system-one` always runs with
-`verdicts: "allow-defer"` and `onError: "defer"`, whatever its config says:
-it may allow, and everything else goes on to the classifier. When the config
-asks for more, pi logs one warning per session that names the override.
-
-### system-one alone
+A config for the quick judge in front of the LLM judge:
 
     {
-      "classifierEnabled": false,
-      "systemOne": {
+      "mode": "quick-then-llm",
+      "quickJudge": { "provider": "typesafe", "model": "jev-latest" }
+    }
+
+The quick judge alone, never waiting for a human:
+
+    {
+      "mode": "quick",
+      "quickJudge": {
         "provider": "typesafe",
         "model": "jev-latest",
         "verdicts": "allow-deny",
         "onError": "deny"
       }
     }
-
-with `"authorizerChain": ["system-one"]`. Here the configured `verdicts`
-and `onError` apply, so no ask waits for a human.
 
 ### The TypeSafe API key
 
@@ -422,8 +467,8 @@ with reason `call-failed`.
 
 ### Data sent to a hosted provider
 
-With a hosted classifier such as `typesafe/jev-latest`, every judged ask
-leaves your machine: the gated value, the full command (within
+With a hosted classifier such as `typesafe/jev-latest`, every ask the quick
+judge reviews leaves your machine: the gated value, the full command (within
 `contextBudgetBytes`), the surface, the tool name, the cwd path, and, with
 `guidance` on, the full text of the selected guidance files. Set
 `"guidance": false` to keep your guidance files local. Use a local model if
@@ -433,119 +478,121 @@ none of this may leave the machine.
 
 pi 1.0.3 cannot declare a classifier model in `models.json`: it reads every
 `models.json` entry as a chat model and ignores `"type": "classifier"`, so
-`findOfType` never finds it and the link defers with `model-unresolved`. A
-local System One model, such as Kev 4B behind llama-swap's
-`/upstream/<model>/v1/systemone`, works only when an extension registers it
-with `pi.registerProvider`, a `classifiers` entry for the
+`findOfType` never finds it and the quick judge defers with
+`model-unresolved`. A local System One model, such as Kev 4B behind
+llama-swap's `/upstream/<model>/v1/systemone`, works only when an extension
+registers it with `pi.registerProvider`, a `classifiers` entry for the
 `typesafe-system-one` api, and `"type": "classifier"` on the model. This
 package does not do that yet.
 
-### Choosing the system-one model
-
-- `/permission-model system-one <provider>/<id>` checks the pair with the
-  classifier lookup only (a chat model is rejected), writes it to
-  `systemOne.provider` and `systemOne.model` in the global config, and
-  applies it on the next ask. An unknown pair writes nothing. When the
-  config had no `systemOne` object before, the link registers at the next
-  session start. The classifier judge, its launch flag and your session and
-  default models are not touched.
-- `/permission-model system-one` with no pair opens a list of the available
-  classifier models, the current one first. Cancel to change nothing.
-  Outside the TUI it prints the current system-one model and the usage line.
-- Tab completion after `system-one ` offers the classifier model labels.
-
 ### Decision entries
 
-Each `system-one` decision writes one `classifier.decision` entry with
-`link: "system-one"`, the same fields as the classifier link, and, when the
-model answered, `answers`: the reversible and contained probabilities and
-the full hazard probability map. A below-threshold answer records defer
-reason `model-verdict`.
+Each judge that reviews an ask writes one `classifier.decision` entry with
+`judge` set to `quick` or `llm`. In mode `quick-then-llm` an ask the quick
+judge does not allow writes two entries, `quick` then `llm`. Quick entries
+carry, when the model answered, `answers`: the reversible and contained
+probabilities and the full hazard probability map. A below-threshold answer
+records defer reason `model-verdict`. A request skipped as a duplicate (see
+"The old chain name `classifier`") writes no entry.
 
-## Choosing the judge model
+## Choosing the judges
 
-The judge is the model that reviews each ask. With no `provider` and
-`model` in the config it is the session's active model. Three ways to
-change it:
+Everything is chosen with `/permission-model` and saved to this package's
+global config file. You never edit another package's config for it, and
+choosing a judge never changes pi's session model or your default model:
+`/model` and `/permission-model` are independent.
 
 ### The /permission-model command
 
-- `/permission-model` with no argument opens pi's own searchable model
-  picker (the same list as `/model`, scoped models included) with the
-  current judge preselected. Pick a model to make it the judge; cancel to
-  change nothing. Outside the TUI (rpc, json, print modes) the command
-  prints the current judge and the usage line instead. The searchable picker
-  needs pi 0.84.3 or newer: its constructor changed in 0.84.3, so on an
-  older pi the command errors before the picker mounts, writes nothing, and
-  leaves the judge on its previous rule - loud and safe, not a silent fallback. If your pi version does not
-  expose the registry runtime the picker needs, the command warns that the
-  picker degraded and offers a plain list of `provider/id` labels.
-- `/permission-model <provider>/<id>` sets the judge by reference. The pair
-  must be in pi's model registry: an unknown pair is rejected and nothing
-  changes. A known model without configured auth is accepted with a
-  warning, and asks defer until the auth exists. Tab completion offers the
-  `provider/id` labels of the available models plus `session` and
-  `system-one`.
-- `/permission-model session` removes `provider` and `model` so the
-  session's active model judges again.
+- `/permission-model` with no argument opens a two-step picker. Step 1
+  lists the modes in the order `quick-then-llm`, `llm`, `quick`, each with
+  a one-line description, the current mode marked `(current)`. Step 2 shows
+  only the model lists that mode needs, each with the current model
+  preselected: the quick list holds the available classifier models; the
+  LLM list holds `Same as the chat model (follows /model)` and the
+  available chat models. `quick-then-llm` shows the quick list, then the
+  LLM list. Nothing is written until the last step; then the mode and the
+  models are saved in one write. Press escape at any step to change
+  nothing.
+- Outside the TUI (rpc, json, print modes), `/permission-model` with no
+  argument prints the mode, the model of each judge the mode runs, and the
+  usage line, and writes nothing.
+- `/permission-model mode <llm|quick|quick-then-llm>` sets the mode. Mode
+  `quick` or `quick-then-llm` with no quick judge model set writes nothing
+  and says to set one first.
+- `/permission-model llm <provider>/<id>` sets the LLM judge. The pair must
+  be a chat model in pi's model registry: an unknown pair or a classifier
+  model is rejected and nothing changes. A known model without configured
+  auth is accepted with a warning, and asks defer until the auth exists.
+- `/permission-model llm chat-model` removes `provider` and `model`, so the
+  LLM judge follows the session's chat model (it changes with `/model`).
+- `/permission-model quick <provider>/<id>` sets the quick judge. The pair
+  must be a classifier model: an unknown pair or a chat model is rejected
+  and nothing changes.
+- Setting a model never changes the mode.
+- Tab completion offers `mode`, `llm` and `quick`, then the mode values,
+  `chat-model` and the chat model labels, or the classifier model labels.
 
 A choice applies to the next reviewed ask immediately and is saved to the
 global config file
-(`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only
-`provider` and `model` are rewritten, every other field is preserved, and
-the write goes through a temporary file that is fsynced and then renamed, so
-neither a process crash nor an OS crash leaves a truncated config. The command
-never creates the file. Every write form refuses - nothing is written, and the
-setup hint names the global path - when the global config file is absent or
-there is no valid merged config, which means no config file was found this
-session or the files found failed validation. The precondition is the config,
-not registration: with a valid config and a link that never registers
-(`pi-permission-system` absent or older than 27.0.0) a write still succeeds,
-and the new judge applies as soon as the link does register.
-When the project config sets `provider` or `model`, the global write still
-happens but the command warns that the project file shadows the choice in
-that project.
-
-Choosing a judge never changes pi's session model or your default model:
-`/model` and `/permission-model` are independent.
+(`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only the
+fields the choice sets are rewritten (`mode`, `provider` and `model`, or
+`quickJudge.provider` and `quickJudge.model`), every other field is
+preserved, and the write goes through a temporary file that is fsynced and
+then renamed, so neither a process crash nor an OS crash leaves a truncated
+config. The command never creates the file. Every write form refuses -
+nothing is written, and the setup hint names the global path - when the
+global config file is absent or there is no valid merged config, which
+means no config file was found this session or the files found failed
+validation. The precondition is the config, not registration: with a valid
+config and a link that never registers (`pi-permission-system` absent or
+older than 27.0.0) a write still succeeds, and the new choice applies as
+soon as the link does register. When the project config sets its own value
+for a field the write changed, the global write still happens but the
+command warns that the project file shadows the choice in that project.
 
 ### The --permission-model launch flag
 
-`pi --permission-model <provider>/<id>` makes that model the judge for the
-session only. It takes precedence over the config and the session model,
-nothing is written, and it is dropped at session shutdown. The flag is read
-again at every session start in that pi process, so after `/reload` or a new
-session in the same process it applies again. A reference the registry does
-not know is ignored with a warning and the configured judge applies. An
-explicit `/permission-model` choice during the session replaces the flag for
-the rest of that session.
+`pi --permission-model <list>` sets the judges for the session only. The
+list is comma-separated, in any subset and order:
+
+- `quick:<provider>/<id>` - the quick judge model
+- `llm:<provider>/<id>` - the LLM judge model
+- `llm:chat-model` - the LLM judge follows the chat model
+- `mode:<llm|quick|quick-then-llm>` - the mode
+
+For example `pi --permission-model quick:typesafe/jev-latest,mode:quick-then-llm`.
+The values take precedence over the config, nothing is written, and they
+are dropped at session shutdown. The flag is read again at every session
+start in that pi process, so after `/reload` or a new session in the same
+process it applies again. An unknown model, an unknown prefix or a bad mode
+is ignored with a warning, and the rest of the list still applies. A bare
+`<provider>/<id>` is not accepted: the warning names the `llm:` form. A
+`/permission-model` choice during the session replaces the flag value it
+touches, for the rest of that session.
 
 ### The status bar entry
 
-Once the link registers, the footer shows the effective judge under the
-key `zz-permission-classifier`, in one of three states (pi sorts extension
-statuses by key on one footer line; the `zz-` prefix keeps the judge entry
-last, at the end of that line):
+Once the link registers, the footer shows the active judges under the key
+`zz-permission-classifier` (pi sorts extension statuses by key on one
+footer line; the `zz-` prefix keeps the entry last). There is a part for
+each judge the mode runs, the quick judge first, separated by a comma:
 
-- `judge:<provider>/<id>` - a configured or flag-set judge
-- `judge:session` - the session's active model judges
-- `judge:<provider>/<id> (unresolved)` - the configured pair is not in the
-  registry, so every ask defers until it resolves
+- `quick:<provider>/<id>` - the quick judge model
+- `llm:<provider>/<id>` - a configured or flag-set LLM judge
+- `llm:chat-model` - the session's chat model judges
+- ` (unresolved)` after a part - the pair is not in the registry, so that
+  judge's asks are `model-unresolved` until it resolves;
+  `quick:unset (unresolved)` means no quick judge model is set
 
-With the `system-one` link registered, its judge comes first, as
-`s1:<provider>/<id>` (with ` (unresolved)` when the classifier lookup fails,
-or `s1:unset (unresolved)` when `systemOne` names no pair), followed by a
-comma and the classifier judge. Each judge carries its own health suffix,
-for example `s1:typesafe/jev-latest | timeout x2, judge:session`. A link
-that is not registered is left out, so with `classifierEnabled: false` the
-entry shows only the `s1:` part.
+For example `quick:typesafe/jev-latest | timeout x2, llm:chat-model` in mode
+`quick-then-llm`. The entry follows `/permission-model` changes and `/model`
+switches and is cleared at session shutdown. No entry means the link did
+not register.
 
-The entry follows `/permission-model` changes and `/model` switches and is
-cleared at session shutdown. No entry means the link did not register.
-
-The judge text carries a health suffix once something went wrong this
-session. It refreshes after every decision, so the footer is the quickest
-read on how often the dialog fell back and why:
+Each part carries its own judge's health suffix once something went wrong
+this session. It refreshes after every decision, so the footer is the
+quickest read on how often the dialog fell back and why:
 
 - no suffix - no failure defers yet and the breaker is closed
 - ` | <reason> x<N>` - the last decision was a failure defer with that
@@ -560,16 +607,17 @@ read on how often the dialog fell back and why:
   over the others while it lasts
 
 Model verdicts are not health events: an allow clears the pending reason,
-a deny changes nothing, and neither shows in the footer. The judge's own
+a deny changes nothing, and neither shows in the footer. A judge's own
 defer verdict counts as a model verdict. Everything resets at session
 shutdown.
 
 ## How it works
 
-- The classifier only sees asks your policy routed to `ask`, on every
+- The judges only see asks your policy routed to `ask`, on every
   surface except the `path` and `external_directory` families. Anything
   else is untouched.
-- For each reviewed ask it renders the structured ask facts (surface, tool
+- The mode picks which judge runs (see "Modes"). For each ask the LLM
+  judge reviews, it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
   provenance) into a prompt, followed by the guidance files selected for
   this ask. Tool results and file contents never reach the judge, and the
@@ -577,19 +625,19 @@ shutdown.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
   The call is aborted after `timeoutMs`.
-- The link's `verdicts` and `onError` settings apply to the verdict and to
-  every failure; nothing else changes it. The engine's own
+- Each judge's `verdicts` and `onError` settings apply to its verdict and
+  to every failure; nothing else changes it. The engine's own
   bounded-delegation checkpoint enforces the `path` / `external_directory`
   line.
-- A circuit breaker opens after 3 consecutive model-call failures or
-  timeouts; asks then defer instantly for a 60 second cooldown, so a down
-  model never stalls your session.
+- Each judge has a circuit breaker that opens after 3 consecutive
+  model-call failures or timeouts; that judge's asks then defer instantly
+  for a 60 second cooldown, so a down model never stalls your session.
 - In-process subagents are handled correctly: registration is
   session-scoped, so the link always serves the session that raised the ask.
 
 ## Known issues
 
-- The classifier trusts the sessionId on the `permissions:ready` payload. A
+- The extension trusts the sessionId on the `permissions:ready` payload. A
   stray late ready that carries a previous session's id after a new
   `session_start` would register the link on the old session's
   still-published service. This is inherent to the pi-permission-system

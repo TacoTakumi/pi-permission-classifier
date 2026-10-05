@@ -220,33 +220,17 @@ describe("operator docs", () => {
     expect(readme).toMatch(/operator|you run|run yourself|steps the user runs/i);
   });
 
-  it("states the pi 0.84.3 picker floor in Requirements and the picker paragraph", () => {
+  it("states the pi 1.0 floor and no longer mentions pi 0.84.3", () => {
     const flat = readme.replace(/\s+/g, " ");
-    const requirements = readme.slice(
-      readme.indexOf("## Requirements"),
-      readme.indexOf("## Setup"),
-    );
-    const picker = readme
-      .slice(readme.indexOf("with no argument opens"))
-      .split("\n- ")[0]!;
-
-    const flatRequirements = requirements.replace(/\s+/g, " ");
-    const flatPicker = picker.replace(/\s+/g, " ");
-    for (const section of [flatRequirements, flatPicker]) {
-      expect(section).toContain("0.84.3 or newer");
-      // Stated as loud and safe: the command fails before the picker mounts.
-      expect(section).toContain("before the picker mounts");
-    }
     expect(flat).toContain("@earendil-works/pi-coding-agent >=1.0.0");
-    // Degradation is reserved for the runtime-shape case, not the version floor.
-    expect(flat).toMatch(/does not expose\s+the registry runtime/);
+    expect(readme).not.toContain("0.84.3");
   });
 
   it("documents the judge picker, the launch flag, and the status states", () => {
     for (const claim of [
       "/permission-model",
       "--permission-model",
-      "judge:session",
+      "llm:chat-model",
       "(unresolved)",
       "shadow",
     ]) {
@@ -265,7 +249,7 @@ describe("operator docs", () => {
     expect(refusal).not.toMatch(/link/i);
   });
 
-  it("tells the operator to list the classifier before pi-permission-system", () => {
+  it("tells the operator to list the package before pi-permission-system", () => {
     const flat = readme.replace(/\s+/g, " ");
     expect(flat).toContain(
       "List `pi-permission-classifier` before `pi-permission-system` in `packages`",
@@ -642,40 +626,78 @@ describe("guidance discipline", () => {
       }
     });
 
-    it("CHANGELOG's top heading is a dated version and the newest Added section covers system-one", () => {
+    it("CHANGELOG's top heading is a dated version listing the rename and the removed forms", () => {
       const headings = changelog.match(/^## .*$/gm) ?? [];
       expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
       expect(headings[0]).not.toMatch(/unreleased/i);
-      const added = changelog.slice(changelog.indexOf("### Added")).split(/\n##+ /)[0]!;
-      for (const claim of ["system-one", "verdicts", "onError", "classifierEnabled"]) {
-        expect(added).toContain(claim);
+      const newest = changelog
+        .slice(changelog.indexOf(headings[0]!) + headings[0]!.length)
+        .split(/\n## /)[0]!;
+      const flatNewest = newest.replace(/\s+/g, " ");
+      for (const claim of [
+        "### Added",
+        "### Changed",
+        "### Removed",
+        "`permission-judge`",
+        "`mode`",
+        "`quickJudge`",
+        "verdicts",
+        "onError",
+        "`/permission-model <provider>/<id>`",
+        "`/permission-model session`",
+        "`--permission-model <provider>/<id>`",
+      ]) {
+        expect(flatNewest).toContain(claim);
       }
+      expect(flatNewest).toMatch(/renamed from `classifier` to `permission-judge`/);
     });
 
-    it("README documents the system-one link, its config, cascade, key, egress and local route", () => {
-      expect(readme).toMatch(/^## The system-one link$/m);
+    it("README documents the single entry, the alias, the modes, the quick judge, key, egress and local route", () => {
+      expect(flat).toContain('"authorizerChain": ["permission-judge"]');
+      expect(readme).toMatch(/^### The old chain name `classifier`$/m);
+      expect(flat).toMatch(/deprecated/);
+      expect(flat).toMatch(/judged once/);
+      expect(flat).toContain("last 8 request ids");
+      expect(readme).toMatch(/^## Modes$/m);
+      for (const mode of ["`llm`", "`quick`", "`quick-then-llm`"]) {
+        expect(flat).toContain(mode);
+      }
+      expect(flat).toMatch(/System One decision model, such as TypeSafe's Jev/);
       expect(readme).toMatch(/^### Verdicts and onError$/m);
+      expect(readme).toMatch(/^### quickJudge settings$/m);
       for (const field of [
-        "classifierEnabled",
+        "`mode`",
         "`verdicts`",
         "`onError`",
-        "`systemOne`",
+        "`quickJudge`",
         "`allowThreshold`",
         "`denyThreshold`",
         "`guidance`",
       ]) {
         expect(readme).toContain(field);
       }
-      expect(flat).toContain('"authorizerChain": ["system-one", "classifier"]');
-      expect(flat).toMatch(/whatever its config says/);
+      expect(flat).toMatch(
+        /A project `quickJudge` object therefore replaces the global `quickJudge` object completely/,
+      );
       expect(flat).toContain("TYPESAFE_API_KEY");
       expect(flat).toContain("pi-dotenv");
       expect(flat).toContain("auth.json");
       expect(flat).toMatch(/leaves your machine/);
       expect(flat).toContain("/v1/systemone");
       expect(flat).toMatch(/cannot declare a classifier model in `models.json`/);
-      expect(flat).toContain("s1:<provider>/<id>");
-      expect(flat).toContain("/permission-model system-one");
+      expect(flat).toContain("quick:<provider>/<id>");
+      expect(flat).toContain("Same as the chat model (follows /model)");
+      expect(flat).toContain("/permission-model mode <llm|quick|quick-then-llm>");
+      expect(flat).toContain("/permission-model llm chat-model");
+      expect(flat).toContain("/permission-model quick <provider>/<id>");
+      expect(flat).toContain("pi --permission-model quick:typesafe/jev-latest,mode:quick-then-llm");
+      for (const item of ["llm:<provider>/<id>", "llm:chat-model", "mode:<llm|quick|quick-then-llm>"]) {
+        expect(flat).toContain(item);
+      }
+      expect(flat).not.toContain("/permission-model system-one");
+      expect(flat).not.toContain("/permission-model session");
+      expect(flat).not.toContain("judge:session");
+      expect(flat).not.toContain("classifierEnabled: false");
     });
 
     it("CLAUDE.md lists the quick judge modules and the revised failure rule", () => {

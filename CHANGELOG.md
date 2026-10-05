@@ -9,45 +9,80 @@ this project adheres to
 
 ### Added
 
-- A second chain link, `system-one`, registered when the config has a
-  `systemOne` object. It asks a System One classifier model (for example
-  `typesafe/jev-latest`) through pi's `findOfType("classifier", ...)` and
-  `classify` three fixed questions: reversible, contained, and one of eight
-  hazards. It allows when all three clear `allowThreshold` (default 0.9),
-  denies with the hazard named when one hazard reaches `denyThreshold`
-  (default 0.9), and otherwise treats the answer as uncertain. The model
-  sees the gated value, surface, tool, cwd, the full command within
-  `contextBudgetBytes`, and the selected guidance files when
-  `systemOne.guidance` is on (default). It has its own timeout, circuit
-  breaker and health record. An unset or unknown model never falls back to
-  the session model.
+- A quick judge beside the LLM judge. The quick judge asks a System One
+  classifier model (for example `typesafe/jev-latest`) through pi's
+  `findOfType("classifier", ...)` and `classify` three fixed questions:
+  reversible, contained, and one of eight hazards. It allows when all three
+  clear `allowThreshold` (default 0.9), denies with the hazard named when
+  one hazard reaches `denyThreshold` (default 0.9), and otherwise treats the
+  answer as uncertain. The model sees the gated value, surface, tool, cwd,
+  the full command within `contextBudgetBytes`, and the selected guidance
+  files when `quickJudge.guidance` is on (default). It has its own timeout,
+  circuit breaker and health record. An unset or unknown model never falls
+  back to the session model.
+- The `mode` config field (default `llm`) picks who judges: `llm`, `quick`,
+  or `quick-then-llm`, where the quick judge settles clear cases and the LLM
+  judge reviews everything it does not allow. In `quick-then-llm` the quick
+  judge always runs with `allow-defer` and `onError` defer, with one warning
+  per session when `quickJudge` asks for more. The mode is read on every
+  ask.
+- The `quickJudge` config object: `provider`, `model`, `verdicts` (default
+  `allow-defer`), `onError` (default `defer`), `allowThreshold`,
+  `denyThreshold`, `guidance` and `timeoutMs`.
 - `verdicts` (`allow-deny-defer`, `allow-defer`, `allow-deny`) and
-  `onError` (`defer`, `deny`) for both links, enforced in code. `onError`
+  `onError` (`defer`, `deny`) for each judge, enforced in code. `onError`
   deny turns a failure into a deny with a fixed reason that names the
   failure and says to retry later or take another route.
-- `classifierEnabled` (default `true`); `false` keeps the `classifier` link
-  off the chain so `system-one` can judge alone.
-- While the `classifier` link is enabled, `system-one` runs with
-  `allow-defer` and `onError` defer whatever its config says, with one
-  warning per session when the config asked for more.
-- `/permission-model system-one <provider>/<id>` writes a classifier pair to
-  `systemOne` in the global config; `/permission-model system-one` opens a
-  list of the available classifier models. Tab completion offers
-  `system-one` and the classifier labels.
-- The footer shows the system-one judge first, as `s1:<provider>/<id>`,
-  with its own health suffix.
-- Decision entries carry `link` (`classifier` or `system-one`); system-one
-  entries also carry the per-question answer probabilities.
+- `/permission-model` with no argument opens a two-step picker: the mode,
+  then only the models that mode needs, with the current choices
+  preselected. The LLM list offers "Same as the chat model (follows
+  /model)". One write at the end; a cancel at any step writes nothing.
+- Typed forms `/permission-model mode <llm|quick|quick-then-llm>`,
+  `/permission-model llm <provider>/<id>`, `/permission-model llm
+  chat-model` and `/permission-model quick <provider>/<id>`, with tab
+  completion for each. Setting a model never changes the mode. Outside the
+  TUI, `/permission-model` prints the mode, the active judges and the usage
+  line.
+- The `--permission-model` launch flag takes a comma list of
+  `quick:<provider>/<id>`, `llm:<provider>/<id>`, `llm:chat-model` and
+  `mode:<mode>`, in any subset, for the session only. An item that does not
+  resolve is ignored with a warning and the rest still applies.
+- The footer shows a part for each judge the mode runs, quick first:
+  `quick:<provider>/<id>` and `llm:<provider>/<id>` or `llm:chat-model`,
+  each with its own health suffix.
+- Decision entries carry `judge` (`quick` or `llm`); quick entries also
+  carry the per-question answer probabilities.
 
 ### Changed
 
+- The chain link is renamed from `classifier` to `permission-judge`. List
+  `permission-judge` in `authorizerChain`. For this release the link is
+  also registered as `classifier`, which logs a deprecation warning once per
+  session. With both names in the chain an ask is judged once: the second
+  name defers for a request the judge already reviewed, and a warning says
+  to remove `classifier`.
+- The LLM judge that follows the session's model is now called the chat
+  model: `llm:chat-model` in the footer, where it was `judge:session`.
 - Requires pi 1.0.0 or newer (`@earendil-works/pi-coding-agent >=1.0.0`).
-- An over-budget ask follows `verdicts` on the classifier link: it still
-  defers by default, and denies under `allow-deny`.
+  The picker no longer uses pi's model selector component, so the README
+  note about pi older than 0.84.3 is gone.
+- An over-budget ask follows `verdicts` on the LLM judge: it still defers
+  by default, and denies under `allow-deny`.
 - When `allow-defer` withholds a model deny, the entry records defer reason
   `deny-capped`.
 - The warning for an unreachable permission service now says no permission
   link is registered.
+
+### Removed
+
+- `/permission-model <provider>/<id>`: use `/permission-model llm
+  <provider>/<id>`.
+- `/permission-model session`: use `/permission-model llm chat-model`.
+- `--permission-model <provider>/<id>` without a prefix: use
+  `--permission-model llm:<provider>/<id>`. A bare pair is ignored with a
+  warning that names the `llm:` form.
+- The degraded `/permission-model` list for a pi whose model registry
+  hides its runtime: the picker no longer needs it.
 
 ## [0.5.2] - 2026-09-25
 
