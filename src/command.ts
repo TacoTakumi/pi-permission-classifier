@@ -201,6 +201,11 @@ export interface CommandDependencies {
    * `undefined` when invalid or absent.
    */
   getConfig(): ClassifierConfig | undefined;
+  /**
+   * The config loaded from the files, without the flag values: what a write
+   * builds on, so a mode is saved only with a quick model saved beside it.
+   */
+  getSavedConfig(): ClassifierConfig | undefined;
   /** The session's model registry (captured at `session_start`), for completion. */
   getRegistry(): CommandRegistryLike | undefined;
   /** Whether the global config file exists (the precondition for a write). */
@@ -384,9 +389,13 @@ export function createPermissionModelCommand(
     persist({ quick: { provider: model.provider, model: model.id } }, ctx);
   }
 
-  /** Set the mode; a mode that runs the quick judge needs a quick model first. */
+  /**
+   * Set the mode; a mode that runs the quick judge needs a saved quick model
+   * first. A quick model set only by the launch flag does not count: the
+   * saved mode would outlive the flag.
+   */
   function applyMode(mode: Mode, ctx: CommandContextLike): void {
-    const quickJudge = deps.getConfig()?.quickJudge;
+    const quickJudge = deps.getSavedConfig()?.quickJudge;
     if (mode !== "llm" && (quickJudge?.provider === undefined || quickJudge.model === undefined)) {
       ctx.ui.notify(
         `Mode ${mode} needs a quick judge model: set one first with /${COMMAND_NAME} ${QUICK_FORM} <provider>/<id>. Nothing changed.`,

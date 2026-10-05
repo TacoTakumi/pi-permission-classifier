@@ -1024,6 +1024,26 @@ describe("launch flag --permission-model", () => {
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
 
+  it.each(["quick", "quick-then-llm"])(
+    "typed mode %s is refused when only the flag sets the quick model",
+    async (mode) => {
+      const writeSelection = vi.fn();
+      const pi = makeFakePi();
+      pi.api.getFlag.mockReturnValue("quick:typesafe/jev-latest");
+      start(pi, { complete: allowingComplete(), loadConfig: () => CONFIG_QN_RESULT, writeSelection });
+      publishForSession();
+      const ctx = ctxWithJev();
+      pi.lifecycle.get("session_start")?.({}, ctx);
+      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+      await pi.commands.get("permission-model")?.handler(`mode ${mode}`, ctx);
+      expect(writeSelection).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("/permission-model quick <provider>/<id>"),
+        "warning",
+      );
+    },
+  );
+
   it("a command write of the quick model drops only the flag's quick value", async () => {
     const complete = allowingComplete();
     const classify = vi.fn(async () => ({ ...QUICK_ALLOW, answers: {} }));

@@ -302,6 +302,7 @@ export function createClassifierExtension(
     COMMAND_NAME,
     createPermissionModelCommand({
       getConfig: effectiveConfig,
+      getSavedConfig: () => config,
       getRegistry: () => registry,
       ...(dependencies.buildPicker
         ? { buildPicker: dependencies.buildPicker }
