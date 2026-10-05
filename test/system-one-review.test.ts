@@ -57,6 +57,18 @@ describe("SYSTEM_ONE_QUESTIONS", () => {
     expect(Object.keys(HAZARD_OPTIONS)).toEqual(Object.keys(hazard.criteria));
   });
 
+  it("defines contained and names project inspection as contained", () => {
+    const contained = SYSTEM_ONE_QUESTIONS.contained;
+    if (contained?.type !== "bool") {
+      throw new Error("contained is not a bool question");
+    }
+    expect(contained.instructions).toMatch(/Contained means/);
+    expect(contained.instructions).toMatch(/Inspecting the project/);
+    expect(contained.instructions).toMatch(/version-control status/);
+    expect(contained.criteria.true).toMatch(/^Contained:/);
+    expect(contained.criteria.false).toMatch(/^Not contained:/);
+  });
+
   it("says contained means the project tree or /tmp, no secret reads, no data sent out", () => {
     const contained = SYSTEM_ONE_QUESTIONS.contained;
     const text = JSON.stringify(contained);
