@@ -122,8 +122,9 @@ and installing it grants it no authority until you name it in the chain.
    Enable `debugLog` in the permission system config to also capture raw
    model replies and short-circuit traces.
 
-To disable, remove `permission-judge` from `authorizerChain` (or remove the
-package entry). The previous prompting behavior returns immediately.
+To disable, remove `permission-judge` from `authorizerChain`, and the old
+name `classifier` too if it is listed (or remove the package entry). The
+previous prompting behavior returns immediately.
 
 ### The old chain name `classifier`
 
@@ -650,7 +651,7 @@ shutdown.
 
     npm install
     npx tsc --noEmit    # typecheck
-    npx vitest run      # 200 tests
+    npx vitest run      # full test suite
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the
