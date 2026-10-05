@@ -718,7 +718,7 @@ describe("footer status", () => {
     expect(ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "llm:chat-model");
   });
 
-  it("sets judge:<provider>/<id> for a configured judge the registry knows", () => {
+  it("sets llm:<provider>/<id> for a configured judge the registry knows", () => {
     const pi = makeFakePi();
     start(pi, { loadConfig: () => CONFIG_PM_RESULT });
     publishForSession();
@@ -1044,7 +1044,8 @@ describe("launch flag --permission-model", () => {
     const reloaded = classifierConfigSchema.parse({
       provider: "q",
       model: "n",
-      mode: "quick-then-llm",
+      // Saved values that differ from the flag's, so a dropped flag value shows.
+      mode: "quick",
       quickJudge: { provider: "local", model: "kev" },
     });
     const loadConfig = vi
