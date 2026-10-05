@@ -369,8 +369,11 @@ describe("write failure", () => {
 });
 
 describe("no-argument form outside the TUI", () => {
+  const USAGE_LINE =
+    "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id>";
+
   it.each(["rpc", "json", "print"] as const)(
-    "in %s mode opens no picker and prints the current judge and usage",
+    "in %s mode opens no picker and prints the mode, the judge and the usage",
     async (mode) => {
       const { deps } = makeDeps(CONFIG_QN);
       const ctx = makeCtx(mode);
@@ -379,16 +382,37 @@ describe("no-argument form outside the TUI", () => {
       expect(ctx.ui.select).not.toHaveBeenCalled();
       expect(deps.write).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["info"]);
-      expect(notifyOf(ctx, "info")).toContain("llm:q/n");
-      expect(notifyOf(ctx, "info")).toContain("/permission-model");
+      expect(notifyOf(ctx, "info")).toBe(
+        `Permission judge mode llm: llm:q/n. Usage: ${USAGE_LINE}`,
+      );
     },
   );
 
-  it("prints llm:chat-model when the session model judges", async () => {
+  it("prints llm:chat-model when the LLM judge follows the chat model", async () => {
     const { deps } = makeDeps(EMPTY_CONFIG);
     const ctx = makeCtx("rpc");
     await createPermissionModelCommand(deps).handler("  ", ctx);
-    expect(notifyOf(ctx, "info")).toContain("llm:chat-model");
+    expect(notifyOf(ctx, "info")).toContain("mode llm: llm:chat-model.");
+  });
+
+  it("prints both judges, quick first, in mode quick-then-llm", async () => {
+    const { deps } = makeDeps({
+      ...WITH_QUICK,
+      mode: "quick-then-llm",
+      quickJudge: { ...QUICK_JUDGE, model: "jev-latest" },
+    });
+    const ctx = makeCtx("print");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(notifyOf(ctx, "info")).toContain(
+      "mode quick-then-llm: quick:typesafe/jev-latest, llm:chat-model.",
+    );
+  });
+
+  it("prints only the quick judge in mode quick, marking an unknown pair", async () => {
+    const { deps } = makeDeps({ ...WITH_QUICK, mode: "quick" });
+    const ctx = makeCtx("print");
+    await createPermissionModelCommand(deps).handler("", ctx);
+    expect(notifyOf(ctx, "info")).toContain("mode quick: quick:typesafe/jev (unresolved).");
   });
 
   it("prints the judge of the config it is handed, flag values included", async () => {
@@ -400,36 +424,57 @@ describe("no-argument form outside the TUI", () => {
 });
 
 describe("argument completion", () => {
-  it("offers provider/id labels whose label starts with the prefix", () => {
+  function values(prefix: string) {
     const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions(
-      "anth",
-    );
-    expect(items?.map((item) => item.value)).toEqual([
-      "anthropic/a",
-      "anthropic/b",
-    ]);
-    expect(items?.map((item) => item.label)).toEqual([
-      "anthropic/a",
-      "anthropic/b",
+    return createPermissionModelCommand(deps)
+      .getArgumentCompletions(prefix)
+      ?.map((item) => item.value);
+  }
+
+  it("offers the three forms for an empty prefix", () => {
+    expect(values("")).toEqual(["mode", "llm", "quick"]);
+  });
+
+  it("filters the forms by the typed prefix", () => {
+    expect(values("q")).toEqual(["quick"]);
+    expect(values("l")).toEqual(["llm"]);
+  });
+
+  it("offers the matching modes after 'mode q'", () => {
+    expect(values("mode q")).toEqual(["mode quick", "mode quick-then-llm"]);
+  });
+
+  it("offers every mode after 'mode '", () => {
+    expect(values("mode ")).toEqual(["mode llm", "mode quick", "mode quick-then-llm"]);
+  });
+
+  it("offers chat-model and the chat model labels after 'llm '", () => {
+    expect(values("llm ")).toEqual([
+      "llm chat-model",
+      "llm anthropic/a",
+      "llm anthropic/b",
+      "llm openai/c",
     ]);
   });
 
-  it("offers everything for an empty prefix", () => {
+  it("filters the chat model labels after 'llm an'", () => {
+    expect(values("llm an")).toEqual(["llm anthropic/a", "llm anthropic/b"]);
+  });
+
+  it("offers the classifier labels after 'quick ty'", () => {
+    expect(values("quick ty")).toEqual(["quick typesafe/jev-latest"]);
+  });
+
+  it("labels a second-level item with the value alone", () => {
     const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions("");
-    expect(items?.map((item) => item.value)).toEqual([
-      "anthropic/a",
-      "anthropic/b",
-      "openai/c",
-    ]);
+    const items = createPermissionModelCommand(deps).getArgumentCompletions("quick ");
+    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest", "local/kev-4b-q8"]);
   });
 
   it("returns null when nothing matches", () => {
-    const { deps } = makeDeps();
-    expect(
-      createPermissionModelCommand(deps).getArgumentCompletions("zzz"),
-    ).toBeNull();
+    expect(values("zzz")).toBeUndefined();
+    expect(values("quick zz")).toBeUndefined();
+    expect(values("session ")).toBeUndefined();
   });
 
   it("returns null before a session captured the registry", () => {
@@ -438,7 +483,7 @@ describe("argument completion", () => {
       ...deps,
       getRegistry: () => undefined,
     });
-    expect(command.getArgumentCompletions("anth")).toBeNull();
+    expect(command.getArgumentCompletions("llm ")).toBeNull();
   });
 });
 
@@ -633,7 +678,7 @@ describe("reload after a write (review round 1, F1)", () => {
 });
 
 describe("no-argument form without a valid config (review round 1, F3)", () => {
-  it("outside the TUI says the classifier is not set up instead of naming a judge", async () => {
+  it("outside the TUI says the judge is not set up instead of naming a judge", async () => {
     const { state, deps } = makeDeps();
     state.config = undefined;
     const ctx = makeCtx("rpc");

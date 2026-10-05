@@ -22,13 +22,14 @@
  *     changes nothing. When the runtime does not have the expected shape (a pi
  *     update moved it), the form degrades to `ctx.ui.select` over
  *     `provider/id` labels from `getAvailable()` with a warning.
- *   - no argument outside the TUI: print the current judge and the usage
- *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
+ *   - no argument outside the TUI: print the mode, the model of each judge
+ *     the mode runs, and the usage line (pi's `ctx.ui.custom` returns
+ *     nothing in rpc/json/print modes).
  *   - anything else, including the removed forms `<provider>/<id>`,
  *     `session` and `system-one`, gets the usage line and writes nothing.
  *
- * Argument completion offers `provider/id` labels from the registry's
- * available models whose label starts with the typed prefix.
+ * Argument completion offers the forms `mode`, `llm` and `quick`, then the
+ * values each takes (see `getArgumentCompletions`).
  *
  * Every write form refuses when the global config file is absent or there is
  * no valid merged config - no config file found, or the files found failed
@@ -63,9 +64,11 @@ import {
 import { type ClassifierConfig, type Mode, modeSchema } from "./config-schema";
 import {
   formatJudgeStatus,
+  formatQuickStatus,
   type JudgePair,
   parseJudgePair,
   resolveJudge,
+  resolveQuickJudge,
 } from "./judge";
 
 /** The slash command name (`/permission-model`). */
@@ -301,8 +304,16 @@ export function createPermissionModelCommand(
       ctx.ui.notify(setupHint(), "warning");
       return;
     }
+    const config = deps.getConfig()!;
+    const parts: string[] = [];
+    if (config.mode !== "llm") {
+      parts.push(formatQuickStatus(resolveQuickJudge(config.quickJudge ?? {}, ctx.modelRegistry)));
+    }
+    if (config.mode !== "quick") {
+      parts.push(formatJudgeStatus(currentJudge(ctx)));
+    }
     ctx.ui.notify(
-      `Permission classifier ${formatJudgeStatus(currentJudge(ctx))}. Usage: ${USAGE}`,
+      `Permission judge mode ${config.mode}: ${parts.join(", ")}. Usage: ${USAGE}`,
       "info",
     );
   }
@@ -414,17 +425,39 @@ export function createPermissionModelCommand(
     );
   }
 
+  /**
+   * Complete the form, then its value: the modes after `mode `, the
+   * chat-model option and the available chat model labels after `llm `, and
+   * the classifier model labels after `quick `, each filtered by the prefix.
+   */
   function getArgumentCompletions(prefix: string): ArgumentCompletions {
     const registry = deps.getRegistry();
     if (!registry) {
       return null;
     }
-    const wanted = prefix.trim().toLowerCase();
-    const items = registry
-      .getAvailable()
-      .map((model) => `${model.provider}/${model.id}`)
-      .filter((label) => label.toLowerCase().startsWith(wanted))
-      .map((label) => ({ value: label, label }));
+    const text = prefix.trimStart().toLowerCase();
+    const space = text.indexOf(" ");
+    if (space < 0) {
+      const items = [MODE_FORM, LLM_FORM, QUICK_FORM]
+        .filter((form) => form.startsWith(text))
+        .map((form) => ({ value: form, label: form }));
+      return items.length > 0 ? items : null;
+    }
+    const form = text.slice(0, space);
+    const wanted = text.slice(space + 1).trim();
+    const options =
+      form === MODE_FORM
+        ? [...MODES]
+        : form === LLM_FORM
+          ? [CHAT_MODEL, ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`)]
+          : form === QUICK_FORM
+            ? registry
+                .getModelsOfType("classifier")
+                .map((model) => `${model.provider}/${model.id}`)
+            : [];
+    const items = options
+      .filter((option) => option.toLowerCase().startsWith(wanted))
+      .map((option) => ({ value: `${form} ${option}`, label: option }));
     return items.length > 0 ? items : null;
   }
 
