@@ -1255,12 +1255,17 @@ describe("picker selection through the extension", () => {
     steps[0]!.onSelect("llm");
     await vi.waitFor(() => expect(steps).toHaveLength(2));
     steps[1]!.onSelect("q/n");
+    await vi.waitFor(() => expect(steps).toHaveLength(3));
+    steps[2]!.onSelect("allow-deny-defer");
+    await vi.waitFor(() => expect(steps).toHaveLength(4));
+    steps[3]!.onSelect("defer");
     await pending;
 
     expect(writeSelection).toHaveBeenCalledTimes(1);
     expect(writeSelection).toHaveBeenCalledWith({
       mode: "llm",
       llm: { provider: "q", model: "n" },
+      policy: { judge: "llm", verdicts: "allow-deny-defer", onError: "defer" },
     });
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     expect(pi.api.setModel).not.toHaveBeenCalled();
