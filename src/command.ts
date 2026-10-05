@@ -27,9 +27,11 @@
  *     Step 2 shows only the lists that mode needs, the current model
  *     preselected: the available classifier models for the quick judge, then
  *     "Same as the chat model (follows /model)" and the available chat
- *     models for the LLM judge. Nothing is written until the last step;
- *     then the mode and the models go out in one write. A cancel at any step
- *     writes nothing.
+ *     models for the LLM judge. Then a verdicts list and an onError list
+ *     for the last judge of the chosen mode, each with a one-line
+ *     description per value, the current value marked and preselected.
+ *     Nothing is written until the last step; then the mode, the models and
+ *     the policy go out in one write. A cancel at any step writes nothing.
  *   - no argument outside the TUI: print the mode, the model of each judge
  *     the mode runs, the last judge's policy, and the usage line (pi's `ctx.ui.custom` returns
  *     nothing in rpc/json/print modes).
@@ -243,6 +245,19 @@ const MODE_ITEMS: readonly { mode: Mode; description: string }[] = [
     mode: "quick",
     description: "A System One decision model answers three fixed questions, fast.",
   },
+];
+
+/** The picker's verdicts step, in schema order. */
+const VERDICTS_ITEMS: readonly { value: Verdicts; description: string }[] = [
+  { value: "allow-deny-defer", description: "Allow, deny, or send the ask to you when unsure." },
+  { value: "allow-defer", description: "Never denies: a deny or an unsure answer goes to you." },
+  { value: "allow-deny", description: "Never asks you: an unsure answer denies." },
+];
+
+/** The picker's onError step, in schema order. */
+const ON_ERROR_ITEMS: readonly { value: OnError; description: string }[] = [
+  { value: "defer", description: "A failure (timeout, no reply) sends the ask to you." },
+  { value: "deny", description: "A failure denies with a retry hint. It never allows." },
 ];
 
 /** The LLM list entry that makes the LLM judge follow the chat model. */
@@ -495,7 +510,8 @@ export function createPermissionModelCommand(
 
   /**
    * The no-argument TUI form: pick the mode, then the models it needs, then
-   * write them all at once. Any cancel returns before the write.
+   * the last judge's verdicts and onError, then write them all at once. Any
+   * cancel returns before the write.
    */
   async function pick(ctx: CommandContextLike): Promise<void> {
     const config = deps.getConfig();
@@ -574,6 +590,33 @@ export function createPermissionModelCommand(
         selection.llm = { provider: llmModel.provider, model: llmModel.id };
       }
     }
+
+    const judge = lastJudge(mode.data);
+    const current = config === undefined ? undefined : policyOf(config, judge);
+    const title = judge === "llm" ? "LLM judge" : "Quick judge";
+    const verdicts = verdictsSchema.safeParse(
+      await step(
+        ctx,
+        `${title} verdicts`,
+        markCurrent(VERDICTS_ITEMS, current?.verdicts),
+        current?.verdicts,
+      ),
+    );
+    if (!verdicts.success) {
+      return;
+    }
+    const onError = onErrorSchema.safeParse(
+      await step(
+        ctx,
+        `${title} onError`,
+        markCurrent(ON_ERROR_ITEMS, current?.onError),
+        current?.onError,
+      ),
+    );
+    if (!onError.success) {
+      return;
+    }
+    selection.policy = { judge, verdicts: verdicts.data, onError: onError.data };
 
     if (persist(selection, ctx) && llmModel) {
       warnWithoutAuth(llmModel, ctx);
@@ -693,6 +736,18 @@ export function createPermissionModelCommand(
     getArgumentCompletions,
     handler,
   };
+}
+
+/** Picker items for fixed values, the current one labelled `(current)`. */
+function markCurrent(
+  items: readonly { value: string; description: string }[],
+  current: string | undefined,
+): SelectItem[] {
+  return items.map(({ value, description }) => ({
+    value,
+    label: value === current ? `${value} (current)` : value,
+    description,
+  }));
 }
 
 /** `text` ending in exactly one period, whether or not it had one. */

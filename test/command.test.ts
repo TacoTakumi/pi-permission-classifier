@@ -639,12 +639,15 @@ describe("two-step picker in the TUI", () => {
     ]);
     expect(quick.selectedValue).toBe("typesafe/jev-latest");
     quick.onSelect("local/kev-4b-q8");
+    (await stepRequest(deps, 2)).onSelect("allow-deny");
+    (await stepRequest(deps, 3)).onSelect("deny");
     await pending;
-    expect(deps.buildPicker).toHaveBeenCalledTimes(2);
+    expect(deps.buildPicker).toHaveBeenCalledTimes(4);
     expect(deps.write).toHaveBeenCalledTimes(1);
     expect(deps.write).toHaveBeenCalledWith({
       mode: "quick",
       quick: { provider: "local", model: "kev-4b-q8" },
+      policy: { judge: "quick", verdicts: "allow-deny", onError: "deny" },
     });
   });
 
@@ -661,12 +664,16 @@ describe("two-step picker in the TUI", () => {
     expect(llm.title).toMatch(/LLM judge/);
     expect(deps.write).not.toHaveBeenCalled();
     llm.onSelect("chat-model");
+    (await stepRequest(deps, 3)).onSelect("allow-defer");
+    expect(deps.write).not.toHaveBeenCalled();
+    (await stepRequest(deps, 4)).onSelect("defer");
     await pending;
     expect(deps.write).toHaveBeenCalledTimes(1);
     expect(deps.write).toHaveBeenCalledWith({
       mode: "quick-then-llm",
       quick: { provider: "typesafe", model: "jev-latest" },
       llm: null,
+      policy: { judge: "llm", verdicts: "allow-defer", onError: "defer" },
     });
     expect(deps.reload).toHaveBeenCalledTimes(1);
     expect(state.config).toBe(reloaded.config);
@@ -678,10 +685,13 @@ describe("two-step picker in the TUI", () => {
     const pending = createPermissionModelCommand(deps).handler("", makeCtx("tui"));
     (await stepRequest(deps, 0)).onSelect("llm");
     (await stepRequest(deps, 1)).onSelect("anthropic/b");
+    (await stepRequest(deps, 2)).onSelect("allow-deny-defer");
+    (await stepRequest(deps, 3)).onSelect("defer");
     await pending;
     expect(deps.write).toHaveBeenCalledWith({
       mode: "llm",
       llm: { provider: "anthropic", model: "b" },
+      policy: { judge: "llm", verdicts: "allow-deny-defer", onError: "defer" },
     });
   });
 
@@ -696,6 +706,8 @@ describe("two-step picker in the TUI", () => {
     const pending = createPermissionModelCommand(deps).handler("", ctx);
     (await stepRequest(deps, 0)).onSelect("llm");
     (await stepRequest(deps, 1)).onSelect("anthropic/b");
+    (await stepRequest(deps, 2)).onSelect("allow-deny-defer");
+    (await stepRequest(deps, 3)).onSelect("defer");
     await pending;
     expect(deps.write).toHaveBeenCalledTimes(1);
     expect(notifyTypes(ctx)).toEqual(["info", "warning"]);
@@ -706,6 +718,12 @@ describe("two-step picker in the TUI", () => {
     ["step 1", 0, []],
     ["the quick list", 1, ["quick-then-llm"]],
     ["the LLM list", 2, ["quick-then-llm", "typesafe/jev-latest"]],
+    ["the verdicts step", 3, ["quick-then-llm", "typesafe/jev-latest", "chat-model"]],
+    [
+      "the onError step",
+      4,
+      ["quick-then-llm", "typesafe/jev-latest", "chat-model", "allow-deny"],
+    ],
   ] as const)("a cancel at %s writes nothing", async (_label, cancelAt, choices) => {
     const { state, deps } = makeDeps(CONFIG_QN);
     const before = structuredClone(state.config);
@@ -722,6 +740,65 @@ describe("two-step picker in the TUI", () => {
     expect(state.config).toEqual(before);
     expect(ctx.ui.notify).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["llm", 2, { ...WITH_QUICK, verdicts: "allow-defer", onError: "deny" }, "LLM", "allow-defer", "deny"],
+    [
+      "quick-then-llm",
+      3,
+      { ...WITH_QUICK, verdicts: "allow-deny", onError: "deny" },
+      "LLM",
+      "allow-deny",
+      "deny",
+    ],
+    [
+      "quick",
+      2,
+      { ...WITH_QUICK, quickJudge: { ...JEV_LATEST, verdicts: "allow-deny", onError: "deny" } },
+      "Quick",
+      "allow-deny",
+      "deny",
+    ],
+  ] as const)(
+    "mode %s ends with the last judge's verdicts and onError steps, current values preselected",
+    async (mode, first, config, judge, verdicts, onError) => {
+      const { deps } = makeDeps(config as ClassifierConfig);
+      const pending = createPermissionModelCommand(deps).handler("", makeCtx("tui"));
+      (await stepRequest(deps, 0)).onSelect(mode);
+      if (mode !== "llm") {
+        (await stepRequest(deps, 1)).onSelect("typesafe/jev-latest");
+      }
+      if (mode !== "quick") {
+        (await stepRequest(deps, first - 1)).onSelect("chat-model");
+      }
+      const verdictsStep = await stepRequest(deps, first);
+      expect(verdictsStep.title).toBe(`${judge} judge verdicts`);
+      expect(verdictsStep.items.map((item) => item.value)).toEqual([
+        "allow-deny-defer",
+        "allow-defer",
+        "allow-deny",
+      ]);
+      expect(verdictsStep.items.find((item) => item.value === verdicts)?.label).toBe(
+        `${verdicts} (current)`,
+      );
+      for (const item of verdictsStep.items) {
+        expect(item.description).toMatch(/\S/);
+        expect(item.description).not.toContain("\n");
+      }
+      expect(verdictsStep.selectedValue).toBe(verdicts);
+      verdictsStep.onSelect(verdicts);
+      const onErrorStep = await stepRequest(deps, first + 1);
+      expect(onErrorStep.title).toBe(`${judge} judge onError`);
+      expect(onErrorStep.items.map((item) => item.value)).toEqual(["defer", "deny"]);
+      expect(onErrorStep.items.find((item) => item.value === onError)?.label).toBe(
+        `${onError} (current)`,
+      );
+      expect(onErrorStep.selectedValue).toBe(onError);
+      onErrorStep.onCancel();
+      await pending;
+      expect(deps.write).not.toHaveBeenCalled();
+    },
+  );
 
   it("warns and writes nothing when no classifier model is available", async () => {
     const { deps } = makeDeps(CONFIG_QN);
