@@ -1,12 +1,18 @@
 /**
- * The `/permission-model` command: choose the judge model for the permission
- * classifier.
+ * The `/permission-model` command: choose who judges permission asks (the
+ * mode) and each judge's model.
  *
  * Forms:
- *   - `<provider>/<id>`: validate through the model registry, persist the
- *     pair to the global config, reload, and apply live for the next ask.
- *   - `session`: remove the pair from the global config so the session's
- *     active model judges again.
+ *   - `mode <llm|quick|quick-then-llm>`: persist the mode. A mode that runs
+ *     the quick judge is refused while no quick judge model is set.
+ *   - `llm <provider>/<id>`: validate through the chat model registry,
+ *     persist the LLM judge pair, reload, and apply live for the next ask.
+ *     A classifier model is refused.
+ *   - `llm chat-model`: remove the LLM judge pair so the LLM judge follows
+ *     the session's chat model.
+ *   - `quick <provider>/<id>`: validate through the classifier lookup only
+ *     and persist the quick judge pair. A chat model is refused.
+ *   - Setting a model never changes the mode.
  *   - no argument in the TUI: mount pi's own searchable model selector
  *     through `ctx.ui.custom`, built from the registry's runtime (reached
  *     behind a shape check, since it is a private field), the session's
@@ -18,28 +24,20 @@
  *     `provider/id` labels from `getAvailable()` with a warning.
  *   - no argument outside the TUI: print the current judge and the usage
  *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
- *   - `system-one <provider>/<id>`: validate through the registry's
- *     classifier lookup only, persist the pair to `systemOne` in the global
- *     config, reload, and apply live for the next ask. A chat model or an
- *     unknown pair is refused and nothing is written.
- *   - `system-one` in the TUI: a plain list of the available classifier
- *     models, the current system-one model first. A selection applies like
- *     the typed form; a cancel changes nothing. Outside the TUI it prints the
- *     current system-one model and the usage line.
+ *   - anything else, including the removed forms `<provider>/<id>`,
+ *     `session` and `system-one`, gets the usage line and writes nothing.
  *
  * Argument completion offers `provider/id` labels from the registry's
- * available models whose label starts with the typed prefix, plus the
- * literals `session` and `system-one` when they match. After `system-one `
- * it offers the registry's classifier model labels.
+ * available models whose label starts with the typed prefix.
  *
  * Every write form refuses when the global config file is absent or there is
  * no valid merged config - no config file found, or the files found failed
  * validation: nothing is written and the operator gets the setup hint naming
  * the global path. The precondition is the config, not registration: with a
  * valid config and a link that never registers a write still succeeds, and the
- * new judge applies once the link does. Writes always target the global file;
- * when the project layer sets its own pair the operator is warned that it
- * shadows the choice.
+ * new judge applies once the link does. Every write is one atomic write of
+ * the global file; when the project layer sets its own value for a field the
+ * write changed, the operator is warned that it shadows the choice.
  *
  * Choosing a judge never touches pi's session model or the operator's default
  * model. This module performs no filesystem or network access of its own:
@@ -57,8 +55,12 @@ import {
   type ScopedModel,
 } from "@earendil-works/pi-coding-agent";
 
-import { formatConfigIssue, type LoadConfigResult } from "./config-loader";
-import type { ClassifierConfig } from "./config-schema";
+import {
+  formatConfigIssue,
+  type JudgeSelection,
+  type LoadConfigResult,
+} from "./config-loader";
+import { type ClassifierConfig, type Mode, modeSchema } from "./config-schema";
 import {
   formatJudgeStatus,
   type JudgePair,
@@ -69,11 +71,20 @@ import {
 /** The slash command name (`/permission-model`). */
 export const COMMAND_NAME = "permission-model";
 
-const SESSION_FORM = "session";
+const MODE_FORM = "mode";
 
-const SYSTEM_ONE_FORM = "system-one";
+const LLM_FORM = "llm";
 
-const USAGE = `/${COMMAND_NAME} <provider>/<id> | ${SESSION_FORM} | ${SYSTEM_ONE_FORM} <provider>/<id>`;
+const QUICK_FORM = "quick";
+
+/** The `llm` argument that makes the LLM judge follow the chat model. */
+const CHAT_MODEL = "chat-model";
+
+const MODES = modeSchema.options;
+
+const USAGE =
+  `/${COMMAND_NAME} ${MODE_FORM} <${MODES.join("|")}> | ${LLM_FORM} <provider>/<id> | ` +
+  `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id>`;
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
 /** pi's completion result, restricted to the synchronous half this command returns. */
@@ -180,16 +191,15 @@ export interface CommandDependencies {
   globalConfigPath(): string;
   /** The project config path for `cwd`, for the shadow warning. */
   projectConfigPath(cwd: string): string;
-  /** Persist the pair to the global config (both `undefined` removes it). */
-  writeJudge(provider: string | undefined, model: string | undefined): void;
-  /** Persist the pair to `systemOne` in the global config. */
-  writeSystemOne(provider: string, model: string): void;
+  /** Persist a selection to the global config in one atomic write. */
+  write(selection: JudgeSelection): void;
   /** Reload the merged config from disk after a write. */
   reload(cwd: string): LoadConfigResult;
-  /** Replace the live config, drop any flag override, refresh the status. */
-  apply(config: ClassifierConfig): void;
-  /** Replace the live config after a systemOne write; the classifier judge's flag override stays. */
-  applySystemOne(config: ClassifierConfig): void;
+  /**
+   * Replace the live config and refresh the status. `selection` is what the
+   * write set, so a session-only flag value for those fields is dropped.
+   */
+  apply(config: ClassifierConfig, selection: JudgeSelection): void;
   /** Builds the picker component; defaults to {@link buildModelSelector}. */
   buildPicker?: PickerSeam;
 }
@@ -229,23 +239,19 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Run a write, reload, and apply. Returns the reload result once the new
-   * config went live, else `undefined` after telling the operator why.
+   * Write the selection, reload, apply, and report. Returns whether the new
+   * config went live; every failure leaves the live config as it was.
    */
-  function writeAndApply(
-    write: () => void,
-    apply: (config: ClassifierConfig) => void,
-    ctx: CommandContextLike,
-  ): LoadConfigResult | undefined {
+  function persist(selection: JudgeSelection, ctx: CommandContextLike): boolean {
     try {
-      write();
+      deps.write(selection);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(
         `Could not write ${deps.globalConfigPath()}: ${message}. Nothing changed.`,
         "error",
       );
-      return undefined;
+      return false;
     }
     const result = deps.reload(ctx.cwd);
     if (result.config === undefined) {
@@ -257,47 +263,20 @@ export function createPermissionModelCommand(
         `Saved to ${deps.globalConfigPath()}, but the merged config is now invalid (${describeIssues(result.issues)}). The previous judge stays active for this session; fix the config and restart.`,
         "error",
       );
-      return undefined;
+      return false;
     }
-    apply(result.config);
-    return result;
-  }
-
-  function reportReloadIssues(result: LoadConfigResult, ctx: CommandContextLike): void {
+    deps.apply(result.config, selection);
+    ctx.ui.notify(`${describeSelection(selection)} (saved to the global config).`, "info");
     if (result.issues.length > 0) {
       ctx.ui.notify(
         `Config issues after reload: ${describeIssues(result.issues)}.`,
         "warning",
       );
     }
-  }
-
-  /**
-   * Write the pair (or its removal), reload, apply, and report. Returns
-   * whether the new config went live.
-   */
-  function persist(
-    pair: JudgePair | undefined,
-    ctx: CommandContextLike,
-  ): boolean {
-    const result = writeAndApply(
-      () => deps.writeJudge(pair?.provider, pair?.model),
-      deps.apply,
-      ctx,
-    );
-    if (!result) {
-      return false;
-    }
-    ctx.ui.notify(
-      pair
-        ? `Permission judge set to ${pair.provider}/${pair.model} (saved to the global config).`
-        : "Permission judge follows the session model (provider/model removed from the global config).",
-      "info",
-    );
-    reportReloadIssues(result, ctx);
-    if (result.projectSetsJudge) {
+    const shadowed = shadowedFields(selection, result.config);
+    if (shadowed.length > 0) {
       ctx.ui.notify(
-        `${deps.projectConfigPath(ctx.cwd)} sets its own provider/model and shadows this choice in this project.`,
+        `${deps.projectConfigPath(ctx.cwd)} sets its own ${shadowed.join(" and ")} and shadows this choice in this project.`,
         "warning",
       );
     }
@@ -327,11 +306,11 @@ export function createPermissionModelCommand(
     );
   }
 
-  /** Persist a registry model as the judge; warn when it has no auth. */
+  /** Persist a chat model as the LLM judge; warn when it has no auth. */
   function applyModel(model: Model<any>, ctx: CommandContextLike): void {
-    const pair: JudgePair = { provider: model.provider, model: model.id };
+    const pair = { provider: model.provider, model: model.id };
     const hasAuth = ctx.modelRegistry.hasConfiguredAuth(model);
-    if (persist(pair, ctx) && !hasAuth) {
+    if (persist({ llm: pair }, ctx) && !hasAuth) {
       ctx.ui.notify(
         `No auth is configured for ${pair.provider}/${pair.model}; permission asks will defer to the prompt until it is.`,
         "warning",
@@ -339,12 +318,15 @@ export function createPermissionModelCommand(
     }
   }
 
-  /** Resolve a `<provider>/<id>` pair through the registry and apply it. */
+  /** Resolve a pair through the chat model registry and set it as the LLM judge. */
   function applyPair(pair: JudgePair, ctx: CommandContextLike): void {
+    const label = `${pair.provider}/${pair.model}`;
     const model = ctx.modelRegistry.find(pair.provider, pair.model);
     if (!model) {
       ctx.ui.notify(
-        `Unknown model ${pair.provider}/${pair.model}: not in the model registry. Nothing changed.`,
+        ctx.modelRegistry.findOfType("classifier", pair.provider, pair.model)
+          ? `${label} is a classifier model, not a chat model; set it with /${COMMAND_NAME} ${QUICK_FORM} ${label}. Nothing changed.`
+          : `Unknown model ${label}: not in the model registry. Nothing changed.`,
         "error",
       );
       return;
@@ -353,93 +335,35 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Resolve a `<provider>/<id>` pair through the classifier lookup only and
-   * persist it to `systemOne`. The session model, the classifier judge and
-   * the default model are never touched.
+   * Resolve a pair through the classifier lookup only and set it as the
+   * quick judge. The session model and the LLM judge are never touched.
    */
-  function applySystemOnePair(pair: JudgePair, ctx: CommandContextLike): void {
+  function applyQuickPair(pair: JudgePair, ctx: CommandContextLike): void {
+    const label = `${pair.provider}/${pair.model}`;
     const model = ctx.modelRegistry.findOfType("classifier", pair.provider, pair.model);
     if (!model) {
       ctx.ui.notify(
-        `Unknown classifier model ${pair.provider}/${pair.model}: the model registry has no classifier by that name. Nothing changed.`,
+        ctx.modelRegistry.find(pair.provider, pair.model)
+          ? `${label} is a chat model; the quick judge needs a classifier model. Set it with /${COMMAND_NAME} ${LLM_FORM} ${label}. Nothing changed.`
+          : `Unknown classifier model ${label}: the model registry has no classifier by that name. Nothing changed.`,
         "error",
       );
       return;
     }
-    const hadSystemOne = deps.getConfig()?.systemOne !== undefined;
-    const result = writeAndApply(
-      () => deps.writeSystemOne(model.provider, model.id),
-      deps.applySystemOne,
-      ctx,
-    );
-    if (!result) {
-      return;
-    }
-    ctx.ui.notify(
-      `System One judge set to ${model.provider}/${model.id} (saved to systemOne in the global config).`,
-      "info",
-    );
-    if (!hadSystemOne) {
-      ctx.ui.notify(
-        "The system-one link registers at the next session start; add it to authorizerChain to use it.",
-        "info",
-      );
-    }
-    reportReloadIssues(result, ctx);
-    const applied = result.config?.systemOne;
-    if (applied?.provider !== model.provider || applied?.model !== model.id) {
-      ctx.ui.notify(
-        `${deps.projectConfigPath(ctx.cwd)} sets its own systemOne and shadows this choice in this project.`,
-        "warning",
-      );
-    }
+    persist({ quick: { provider: model.provider, model: model.id } }, ctx);
   }
 
-  /** The configured system-one pair as a label, if any. */
-  function currentSystemOneLabel(): string | undefined {
-    const systemOne = deps.getConfig()?.systemOne;
-    return systemOne?.provider !== undefined && systemOne.model !== undefined
-      ? `${systemOne.provider}/${systemOne.model}`
-      : undefined;
-  }
-
-  function printSystemOne(ctx: CommandContextLike): void {
-    if (deps.getConfig() === undefined) {
-      ctx.ui.notify(setupHint(), "warning");
-      return;
-    }
-    ctx.ui.notify(
-      `System One judge: ${currentSystemOneLabel() ?? "not set"}. Usage: ${USAGE}`,
-      "info",
-    );
-  }
-
-  /** The `system-one` picker: available classifier models, the current one first. */
-  async function pickSystemOne(ctx: CommandContextLike): Promise<void> {
-    const current = currentSystemOneLabel();
-    const labels = (await ctx.modelRegistry.getAvailableOfType("classifier")).map(
-      (model) => `${model.provider}/${model.id}`,
-    );
-    if (labels.length === 0) {
+  /** Set the mode; a mode that runs the quick judge needs a quick model first. */
+  function applyMode(mode: Mode, ctx: CommandContextLike): void {
+    const quickJudge = deps.getConfig()?.quickJudge;
+    if (mode !== "llm" && (quickJudge?.provider === undefined || quickJudge.model === undefined)) {
       ctx.ui.notify(
-        "No classifier models are available to pick from. Nothing changed.",
+        `Mode ${mode} needs a quick judge model: set one first with /${COMMAND_NAME} ${QUICK_FORM} <provider>/<id>. Nothing changed.`,
         "warning",
       );
       return;
     }
-    const ordered =
-      current !== undefined && labels.includes(current)
-        ? [current, ...labels.filter((label) => label !== current)]
-        : labels;
-    const chosen = await ctx.ui.select(
-      `System One judge model (current: ${current ?? "not set"})`,
-      ordered,
-    );
-    // Labels are built as provider/id above, so the parse cannot fail.
-    const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
-    if (pair) {
-      applySystemOnePair(pair, ctx);
-    }
+    persist({ mode }, ctx);
   }
 
   /** The degraded picker: a plain list of `provider/id` labels. */
@@ -494,23 +418,10 @@ export function createPermissionModelCommand(
     if (!registry) {
       return null;
     }
-    const systemOnePrefix = `${SYSTEM_ONE_FORM} `;
-    if (prefix.trimStart().toLowerCase().startsWith(systemOnePrefix)) {
-      const wanted = prefix.trimStart().slice(systemOnePrefix.length).trim().toLowerCase();
-      const items = registry
-        .getModelsOfType("classifier")
-        .map((model) => `${model.provider}/${model.id}`)
-        .filter((label) => label.toLowerCase().startsWith(wanted))
-        .map((label) => ({ value: `${systemOnePrefix}${label}`, label }));
-      return items.length > 0 ? items : null;
-    }
     const wanted = prefix.trim().toLowerCase();
-    const labels = [
-      ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`),
-      SESSION_FORM,
-      SYSTEM_ONE_FORM,
-    ];
-    const items = labels
+    const items = registry
+      .getAvailable()
+      .map((model) => `${model.provider}/${model.id}`)
       .filter((label) => label.toLowerCase().startsWith(wanted))
       .map((label) => ({ value: label, label }));
     return items.length > 0 ? items : null;
@@ -526,45 +437,88 @@ export function createPermissionModelCommand(
       }
       return;
     }
-    if (text === SESSION_FORM) {
-      if (canWrite(ctx)) {
-        persist(undefined, ctx);
-      }
-      return;
-    }
     const [head, ...tail] = text.split(/\s+/);
-    if (head === SYSTEM_ONE_FORM) {
-      if (tail.length === 0) {
-        if (ctx.mode !== "tui") {
-          printSystemOne(ctx);
-        } else if (canWrite(ctx)) {
-          await pickSystemOne(ctx);
-        }
-        return;
-      }
-      const systemOnePair = tail.length === 1 ? parseJudgePair(tail[0]!) : undefined;
-      if (!systemOnePair) {
-        ctx.ui.notify(`Expected a classifier model reference. Usage: ${USAGE}`, "error");
+    const value = tail.length === 1 ? tail[0]! : undefined;
+    if (head === MODE_FORM && value !== undefined) {
+      const mode = modeSchema.safeParse(value);
+      if (!mode.success) {
+        ctx.ui.notify(`Unknown mode ${value}. Usage: ${USAGE}`, "error");
         return;
       }
       if (canWrite(ctx)) {
-        applySystemOnePair(systemOnePair, ctx);
+        applyMode(mode.data, ctx);
       }
       return;
     }
-    const pair = parseJudgePair(text);
-    if (!pair) {
-      ctx.ui.notify(`Expected a model reference. Usage: ${USAGE}`, "error");
+    if (head === LLM_FORM && value === CHAT_MODEL) {
+      if (canWrite(ctx)) {
+        persist({ llm: null }, ctx);
+      }
       return;
     }
-    if (canWrite(ctx)) {
-      applyPair(pair, ctx);
+    const pair = value === undefined ? undefined : parseJudgePair(value);
+    if (head === LLM_FORM && pair) {
+      if (canWrite(ctx)) {
+        applyPair(pair, ctx);
+      }
+      return;
     }
+    if (head === QUICK_FORM && pair) {
+      if (canWrite(ctx)) {
+        applyQuickPair(pair, ctx);
+      }
+      return;
+    }
+    ctx.ui.notify(`Unknown form ${text}. Usage: ${USAGE}`, "error");
   }
 
   return {
-    description: "Choose the judge model for the permission classifier",
+    description: "Choose who judges permission asks and each judge's model",
     getArgumentCompletions,
     handler,
   };
+}
+
+/** One sentence naming what a selection set. */
+function describeSelection(selection: JudgeSelection): string {
+  const parts: string[] = [];
+  if (selection.mode !== undefined) {
+    parts.push(`mode ${selection.mode}`);
+  }
+  if (selection.quick !== undefined) {
+    parts.push(`quick judge ${selection.quick.provider}/${selection.quick.model}`);
+  }
+  if (selection.llm === null) {
+    parts.push(`LLM judge follows the ${CHAT_MODEL.replace("-", " ")}`);
+  } else if (selection.llm !== undefined) {
+    parts.push(`LLM judge ${selection.llm.provider}/${selection.llm.model}`);
+  }
+  return `Permission judge: ${parts.join(", ")}`;
+}
+
+/**
+ * The fields a write set that the merged config does not show: the project
+ * layer sets its own value and shadows the global one.
+ */
+function shadowedFields(selection: JudgeSelection, config: ClassifierConfig): string[] {
+  const shadowed: string[] = [];
+  if (selection.mode !== undefined && config.mode !== selection.mode) {
+    shadowed.push("mode");
+  }
+  const llmShadowed =
+    selection.llm === null
+      ? config.provider !== undefined || config.model !== undefined
+      : selection.llm !== undefined &&
+        (config.provider !== selection.llm.provider || config.model !== selection.llm.model);
+  if (llmShadowed) {
+    shadowed.push("provider/model");
+  }
+  if (
+    selection.quick !== undefined &&
+    (config.quickJudge?.provider !== selection.quick.provider ||
+      config.quickJudge?.model !== selection.quick.model)
+  ) {
+    shadowed.push("quickJudge");
+  }
+  return shadowed;
 }

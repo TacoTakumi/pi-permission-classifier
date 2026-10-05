@@ -135,6 +135,7 @@ function ctxWithModel() {
     isProjectTrusted: vi.fn(() => true),
     modelRegistry: {
       find: vi.fn(),
+      findOfType: vi.fn(),
       getApiKeyAndHeaders: vi.fn(async () => ({
         ok: true as const,
         apiKey: "sk-test",
@@ -237,7 +238,7 @@ function start(
   overrides: {
     loadConfig?: ClassifierDependencies["loadConfig"];
     complete?: CompleteFn;
-    writeJudge?: ClassifierDependencies["writeJudge"];
+    writeSelection?: ClassifierDependencies["writeSelection"];
     buildPicker?: ClassifierDependencies["buildPicker"];
     loadGuidance?: ClassifierDependencies["loadGuidance"];
   } = {},
@@ -247,7 +248,7 @@ function start(
     agentDir: () => agentDir,
     loadConfig: overrides.loadConfig ?? (() => CONFIG_RESULT),
     complete: overrides.complete ?? vi.fn(),
-    writeJudge: overrides.writeJudge ?? vi.fn(),
+    writeSelection: overrides.writeSelection ?? vi.fn(),
     ...(overrides.buildPicker ? { buildPicker: overrides.buildPicker } : {}),
     loadGuidance: overrides.loadGuidance ?? (() => []),
   });
@@ -852,10 +853,10 @@ describe("launch flag --permission-model", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const complete = allowingComplete();
     const loadConfig = vi.fn(() => CONFIG_QN_RESULT);
-    const writeJudge = vi.fn();
+    const writeSelection = vi.fn();
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("p/m");
-    start(pi, { complete, loadConfig, writeJudge });
+    start(pi, { complete, loadConfig, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -866,7 +867,7 @@ describe("launch flag --permission-model", () => {
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(PM_MODEL);
     expect(loadConfig).toHaveBeenCalledTimes(1);
-    expect(writeJudge).not.toHaveBeenCalled();
+    expect(writeSelection).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -892,10 +893,10 @@ describe("launch flag --permission-model", () => {
   it("an unknown flag value warns once and the config judge applies", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const complete = allowingComplete();
-    const writeJudge = vi.fn();
+    const writeSelection = vi.fn();
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("nope/x");
-    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT, writeJudge });
+    start(pi, { complete, loadConfig: () => CONFIG_QN_RESULT, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -907,7 +908,7 @@ describe("launch flag --permission-model", () => {
       expect.stringContaining("nope/x"),
       "warning",
     );
-    expect(writeJudge).not.toHaveBeenCalled();
+    expect(writeSelection).not.toHaveBeenCalled();
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
@@ -948,14 +949,14 @@ describe("/permission-model command wiring", () => {
 
   it("a typed choice writes global, replaces the flag override, refreshes the status, and judges the next ask", async () => {
     const complete = allowingComplete();
-    const writeJudge = vi.fn();
+    const writeSelection = vi.fn();
     const loadConfig = vi
       .fn<() => LoadConfigResult>()
       .mockReturnValueOnce(CONFIG_RESULT)
       .mockReturnValue(CONFIG_QN_RESULT);
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("p/m");
-    start(pi, { complete, loadConfig, writeJudge });
+    start(pi, { complete, loadConfig, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -963,10 +964,10 @@ describe("/permission-model command wiring", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:p/m");
 
-    await pi.commands.get("permission-model")?.handler("q/n", ctx);
+    await pi.commands.get("permission-model")?.handler("llm q/n", ctx);
 
-    expect(writeJudge).toHaveBeenCalledTimes(1);
-    expect(writeJudge).toHaveBeenCalledWith("q", "n");
+    expect(writeSelection).toHaveBeenCalledTimes(1);
+    expect(writeSelection).toHaveBeenCalledWith({ llm: { provider: "q", model: "n" } });
     expect(loadConfig).toHaveBeenCalledTimes(2);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.any(String), "info");
@@ -974,12 +975,63 @@ describe("/permission-model command wiring", () => {
     expect(complete.mock.calls[0]?.[0]).toBe(QN_MODEL);
   });
 
+  it("a typed mode change applies on the next ask with no re-registration", async () => {
+    const JEV = { provider: "typesafe", id: "jev", type: "classifier" } as never;
+    const quick = classifierConfigSchema.parse({
+      quickJudge: { provider: "typesafe", model: "jev" },
+    });
+    const writeSelection = vi.fn();
+    const loadConfig = vi
+      .fn<() => LoadConfigResult>()
+      .mockReturnValueOnce({ config: quick, issues: [], projectSetsJudge: false })
+      .mockReturnValue({
+        config: { ...quick, mode: "quick-then-llm" },
+        issues: [],
+        projectSetsJudge: false,
+      });
+    const classify = vi.fn(async () => ({
+      api: "typesafe-system-one",
+      provider: "typesafe",
+      model: "jev",
+      answers: {},
+      stopReason: "error",
+      timestamp: 0,
+    }));
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    start(pi, { complete, loadConfig, writeSelection });
+    publishForSession();
+    const base = ctxWithModel();
+    const ctx = {
+      ...base,
+      modelRegistry: {
+        ...base.modelRegistry,
+        findOfType: vi.fn((type: string, provider: string, id: string) =>
+          type === "classifier" && provider === "typesafe" && id === "jev" ? JEV : undefined,
+        ),
+        classify,
+      },
+    };
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    const authorize = lastAuthorizer();
+    await authorize(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(classify).not.toHaveBeenCalled();
+
+    await pi.commands.get("permission-model")?.handler("mode quick-then-llm", ctx);
+
+    expect(writeSelection).toHaveBeenCalledWith({ mode: "quick-then-llm" });
+    await authorize(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
+  });
+
   it("a rejected typed pick writes nothing and the next ask keeps the configured judge", async () => {
     const complete = allowingComplete();
-    const writeJudge = vi.fn();
+    const writeSelection = vi.fn();
     const loadConfig = vi.fn<() => LoadConfigResult>(() => CONFIG_QN_RESULT);
     const pi = makeFakePi();
-    start(pi, { complete, loadConfig, writeJudge });
+    start(pi, { complete, loadConfig, writeSelection });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -987,9 +1039,9 @@ describe("/permission-model command wiring", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
 
-    await pi.commands.get("permission-model")?.handler("nope/x", ctx);
+    await pi.commands.get("permission-model")?.handler("llm nope/x", ctx);
 
-    expect(writeJudge).not.toHaveBeenCalled();
+    expect(writeSelection).not.toHaveBeenCalled();
     expect(loadConfig).toHaveBeenCalledTimes(1);
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("nope/x"),
@@ -1004,7 +1056,7 @@ describe("/permission-model command wiring", () => {
 describe("picker selection through the extension", () => {
   it("writes global, refreshes the status, judges the next ask, and never calls pi.setModel", async () => {
     const complete = allowingComplete();
-    const writeJudge = vi.fn();
+    const writeSelection = vi.fn();
     const loadConfig = vi
       .fn<() => LoadConfigResult>()
       .mockReturnValueOnce(CONFIG_RESULT)
@@ -1015,7 +1067,7 @@ describe("picker selection through the extension", () => {
       return { render: () => [], handleInput: () => {} };
     });
     const pi = makeFakePi();
-    start(pi, { complete, loadConfig, writeJudge, buildPicker: buildPicker as never });
+    start(pi, { complete, loadConfig, writeSelection, buildPicker: buildPicker as never });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.modelRegistry.find.mockImplementation(findKnown);
@@ -1027,7 +1079,7 @@ describe("picker selection through the extension", () => {
     onSelect?.(QN_MODEL);
     await pending;
 
-    expect(writeJudge).toHaveBeenCalledWith("q", "n");
+    expect(writeSelection).toHaveBeenCalledWith({ llm: { provider: "q", model: "n" } });
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "judge:q/n");
     expect(pi.api.setModel).not.toHaveBeenCalled();
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
@@ -1213,7 +1265,7 @@ describe("config trust gate wiring", () => {
       .fn<NonNullable<ClassifierDependencies["loadConfig"]>>()
       .mockReturnValue(CONFIG_RESULT);
     const pi = makeFakePi();
-    start(pi, { loadConfig, writeJudge: vi.fn() });
+    start(pi, { loadConfig, writeSelection: vi.fn() });
     publishForSession();
     const ctx = ctxWithModel();
     ctx.isProjectTrusted.mockReturnValue(false);
@@ -1223,7 +1275,7 @@ describe("config trust gate wiring", () => {
     expect(loadConfig).toHaveBeenLastCalledWith("/project", false);
 
     ctx.isProjectTrusted.mockReturnValue(true);
-    await pi.commands.get("permission-model")?.handler("q/n", ctx);
+    await pi.commands.get("permission-model")?.handler("llm q/n", ctx);
 
     expect(loadConfig).toHaveBeenCalledTimes(2);
     expect(loadConfig).toHaveBeenLastCalledWith("/project", true);

@@ -66,6 +66,7 @@ import {
   getGlobalConfigPath,
   getProjectConfigPath,
   globalConfigExists,
+  type JudgeSelection,
   type LoadConfigResult,
   loadClassifierConfig,
   writeGlobalSelection,
@@ -115,10 +116,8 @@ export interface ClassifierDependencies {
   /** Load the layered config; the project layer applies only when trusted. */
   loadConfig?: (cwd: string, projectTrusted: boolean) => LoadConfigResult;
   complete?: CompleteFn;
-  /** Persist a judge pair to the global config; both `undefined` removes it. */
-  writeJudge?: (provider: string | undefined, model: string | undefined) => void;
-  /** Persist a classifier pair to `systemOne` in the global config. */
-  writeSystemOne?: (provider: string, model: string) => void;
+  /** Persist a /permission-model selection to the global config. */
+  writeSelection?: (selection: JudgeSelection) => void;
   /** Builds the /permission-model picker; the default mounts pi's selector. */
   buildPicker?: PickerSeam;
   /** Reads the context files from disk; defaults to pi's context-file walk. */
@@ -145,16 +144,9 @@ export function createClassifierExtension(
   const complete: CompleteFn =
     dependencies.complete ??
     ((model, context, options) => realComplete(model, context, options));
-  const writeJudge =
-    dependencies.writeJudge ??
-    ((provider: string | undefined, model: string | undefined) =>
-      writeGlobalSelection(agentDir(), {
-        llm: provider === undefined || model === undefined ? null : { provider, model },
-      }));
-  const writeSystemOne =
-    dependencies.writeSystemOne ??
-    ((provider: string, model: string) =>
-      writeGlobalSelection(agentDir(), { quick: { provider, model } }));
+  const writeSelection =
+    dependencies.writeSelection ??
+    ((selection: JudgeSelection) => writeGlobalSelection(agentDir(), selection));
   const loadGuidance = dependencies.loadGuidance ?? loadGuidanceFromDisk;
 
   pi.registerFlag(FLAG_NAME, {
@@ -325,19 +317,15 @@ export function createClassifierExtension(
       globalConfigExists: () => globalConfigExists(agentDir()),
       globalConfigPath: () => getGlobalConfigPath(agentDir()),
       projectConfigPath: getProjectConfigPath,
-      writeJudge,
-      writeSystemOne,
+      write: writeSelection,
       reload: (cwd) => loadConfig(cwd, projectTrusted()),
-      apply: (next) => {
-        // An explicit choice replaces a flag override for the rest of the session.
+      apply: (next, selection) => {
+        // An explicit choice replaces the flag value it touches for the rest
+        // of the session.
         config = next;
-        override = undefined;
-        refreshStatus();
-      },
-      applySystemOne: (next) => {
-        // The flag override names the classifier judge; a systemOne write
-        // leaves it alone.
-        config = next;
+        if (selection.llm !== undefined) {
+          override = undefined;
+        }
         refreshStatus();
       },
     }),

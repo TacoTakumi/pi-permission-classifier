@@ -32,6 +32,17 @@ const EMPTY_CONFIG: ClassifierConfig = {
   onError: "defer",
 };
 const CONFIG_QN: ClassifierConfig = { ...EMPTY_CONFIG, provider: "q", model: "n" };
+const QUICK_JUDGE = {
+  provider: "typesafe",
+  model: "jev",
+  verdicts: "allow-defer",
+  onError: "defer",
+  allowThreshold: 0.9,
+  denyThreshold: 0.9,
+  guidance: true,
+  timeoutMs: 5000,
+} as const;
+const WITH_QUICK: ClassifierConfig = { ...EMPTY_CONFIG, quickJudge: QUICK_JUDGE };
 
 const GLOBAL_PATH = "/agent/extensions/pi-permission-classifier/config.json";
 const PROJECT_PATH = "/project/.pi/extensions/pi-permission-classifier/config.json";
@@ -128,15 +139,13 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
     globalConfigPath: () => GLOBAL_PATH,
     projectConfigPath: (cwd: string) =>
       `${cwd}/.pi/extensions/pi-permission-classifier/config.json`,
-    writeJudge: vi.fn<CommandDependencies["writeJudge"]>(),
-    writeSystemOne: vi.fn<CommandDependencies["writeSystemOne"]>(),
+    write: vi.fn<CommandDependencies["write"]>(),
     reload: vi.fn<CommandDependencies["reload"]>(() => reloaded),
-    apply: vi.fn<CommandDependencies["apply"]>((config) => {
+    apply: vi.fn<CommandDependencies["apply"]>((config, selection) => {
       state.config = config;
-      state.override = undefined;
-    }),
-    applySystemOne: vi.fn<CommandDependencies["applySystemOne"]>((config) => {
-      state.config = config;
+      if (selection.llm !== undefined) {
+        state.override = undefined;
+      }
     }),
   } satisfies CommandDependencies;
   return { state, reloaded, deps, registry };
@@ -161,19 +170,21 @@ describe("/permission-model registration surface", () => {
   });
 });
 
-describe("typed form /permission-model <provider>/<id>", () => {
+describe("typed form /permission-model llm <provider>/<id>", () => {
   it("writes p/m, reloads through the loader, applies the reloaded config, and notifies info", async () => {
     const { state, reloaded, deps } = makeDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
     expect(deps.reload).toHaveBeenCalledTimes(1);
     expect(deps.reload).toHaveBeenCalledWith("/project");
     expect(deps.reload.mock.invocationCallOrder[0]).toBeGreaterThan(
-      deps.writeJudge.mock.invocationCallOrder[0]!,
+      deps.write.mock.invocationCallOrder[0]!,
     );
-    expect(deps.apply).toHaveBeenCalledWith(reloaded.config);
+    expect(deps.apply).toHaveBeenCalledWith(reloaded.config, {
+      llm: { provider: "p", model: "m" },
+    });
     expect(state.config).toBe(reloaded.config);
     expect(notifyTypes(ctx)).toEqual(["info"]);
     expect(notifyOf(ctx, "info")).toContain("p/m");
@@ -182,16 +193,31 @@ describe("typed form /permission-model <provider>/<id>", () => {
   it("resolves the pair through the registry", async () => {
     const { deps } = makeDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
     expect(ctx.modelRegistry.find).toHaveBeenCalledWith("p", "m");
+  });
+
+  it("never changes the mode", async () => {
+    const { deps } = makeDeps({ ...EMPTY_CONFIG, mode: "quick-then-llm" });
+    await createPermissionModelCommand(deps).handler("llm p/m", makeCtx());
+    expect(deps.write.mock.calls[0]![0]).not.toHaveProperty("mode");
+  });
+
+  it("refuses a classifier model and names the quick form", async () => {
+    const { deps } = makeDeps();
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("llm typesafe/jev-latest", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("/permission-model quick typesafe/jev-latest");
   });
 
   it("rejects a pair the registry does not know: nothing written, config unchanged, error names the pair", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
     const before = structuredClone(state.config);
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("nope/x", ctx);
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("llm nope/x", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.reload).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
@@ -202,8 +228,8 @@ describe("typed form /permission-model <provider>/<id>", () => {
   it("rejects a reference without a slash with an error naming the usage", async () => {
     const { deps } = makeDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("nonsense", ctx);
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("llm nonsense", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
     expect(notifyTypes(ctx)).toEqual(["error"]);
     expect(notifyOf(ctx, "error")).toContain("<provider>/<id>");
   });
@@ -212,16 +238,16 @@ describe("typed form /permission-model <provider>/<id>", () => {
     const { deps } = makeDeps();
     const ctx = makeCtx();
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
     expect(ctx.modelRegistry.hasConfiguredAuth).toHaveBeenCalledWith(PM_MODEL);
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
     expect(notifyTypes(ctx)).toContain("warning");
     expect(notifyOf(ctx, "warning")).toMatch(/defer/);
   });
 });
 
-describe("session form /permission-model session", () => {
+describe("chat-model form /permission-model llm chat-model", () => {
   it("removes both keys, applies the reloaded config, and the session model judges again", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
     deps.reload.mockReturnValue({
@@ -230,9 +256,9 @@ describe("session form /permission-model session", () => {
       projectSetsJudge: false,
     });
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("session", ctx);
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith(undefined, undefined);
+    await createPermissionModelCommand(deps).handler("llm chat-model", ctx);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: null });
     expect(deps.reload).toHaveBeenCalledWith("/project");
     expect(state.config?.provider).toBeUndefined();
     expect(state.config?.model).toBeUndefined();
@@ -241,33 +267,33 @@ describe("session form /permission-model session", () => {
         .model,
     ).toBe(SESSION_MODEL);
     expect(notifyTypes(ctx)).toEqual(["info"]);
-    expect(notifyOf(ctx, "info")).toMatch(/session/);
+    expect(notifyOf(ctx, "info")).toMatch(/chat model/);
   });
 
   it("does not consult the registry", async () => {
     const { deps } = makeDeps(CONFIG_QN);
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("session", ctx);
+    await createPermissionModelCommand(deps).handler("llm chat-model", ctx);
     expect(ctx.modelRegistry.find).not.toHaveBeenCalled();
   });
 });
 
 describe("refusal when there is no valid config or no global file", () => {
-  it.each(["p/m", "session"])(
+  it.each(["llm p/m", "llm chat-model", "mode llm", "quick typesafe/jev-latest"])(
     "%j refuses with a warning naming the global path when the link is not registered",
     async (args) => {
       const { state, deps } = makeDeps();
       state.config = undefined;
       const ctx = makeCtx();
       await createPermissionModelCommand(deps).handler(args, ctx);
-      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(deps.write).not.toHaveBeenCalled();
       expect(deps.reload).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["warning"]);
       expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
     },
   );
 
-  it.each(["p/m", "session"])(
+  it.each(["llm p/m", "llm chat-model", "mode llm", "quick typesafe/jev-latest"])(
     "%j refuses with a warning naming the global path when the global file is absent",
     async (args) => {
       const { state, deps } = makeDeps(CONFIG_QN);
@@ -275,7 +301,7 @@ describe("refusal when there is no valid config or no global file", () => {
       const before = structuredClone(state.config);
       const ctx = makeCtx();
       await createPermissionModelCommand(deps).handler(args, ctx);
-      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(deps.write).not.toHaveBeenCalled();
       expect(state.config).toEqual(before);
       expect(notifyTypes(ctx)).toEqual(["warning"]);
       expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
@@ -292,24 +318,55 @@ describe("project layer shadowing the choice", () => {
       projectSetsJudge: true,
     });
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
-    expect(deps.apply).toHaveBeenCalledWith(CONFIG_QN);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
+    expect(deps.apply).toHaveBeenCalledWith(CONFIG_QN, { llm: { provider: "p", model: "m" } });
     expect(notifyTypes(ctx)).toContain("warning");
     expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+    expect(notifyOf(ctx, "warning")).toContain("provider/model");
+  });
+
+  it.each([
+    ["mode quick-then-llm", { mode: "llm" as const }, "mode"],
+    ["quick typesafe/jev-latest", { quickJudge: { ...QUICK_JUDGE, model: "other" } }, "quickJudge"],
+    ["llm chat-model", { provider: "q", model: "n" }, "provider/model"],
+  ])("warns when the project layer shadows %j", async (args, merged, field) => {
+    const { deps } = makeDeps(WITH_QUICK);
+    deps.reload.mockReturnValue({
+      config: { ...WITH_QUICK, ...merged },
+      issues: [],
+      projectSetsJudge: false,
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler(args, ctx);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+    expect(notifyOf(ctx, "warning")).toContain(field);
+  });
+
+  it("does not warn when the merged config shows the choice", async () => {
+    const { deps } = makeDeps(WITH_QUICK);
+    deps.reload.mockReturnValue({
+      config: { ...WITH_QUICK, mode: "quick" },
+      issues: [],
+      projectSetsJudge: false,
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("mode quick", ctx);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
   });
 });
 
 describe("write failure", () => {
   it("leaves the config unchanged, skips the reload, and notifies error", async () => {
     const { state, deps } = makeDeps(CONFIG_QN);
-    deps.writeJudge.mockImplementation(() => {
+    deps.write.mockImplementation(() => {
       throw new Error("EACCES: permission denied");
     });
     const before = structuredClone(state.config);
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
     expect(deps.reload).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
@@ -327,7 +384,7 @@ describe("no-argument form outside the TUI", () => {
       await createPermissionModelCommand(deps).handler("", ctx);
       expect(ctx.ui.custom).not.toHaveBeenCalled();
       expect(ctx.ui.select).not.toHaveBeenCalled();
-      expect(deps.writeJudge).not.toHaveBeenCalled();
+      expect(deps.write).not.toHaveBeenCalled();
       expect(notifyTypes(ctx)).toEqual(["info"]);
       expect(notifyOf(ctx, "info")).toContain("judge:q/n");
       expect(notifyOf(ctx, "info")).toContain("/permission-model");
@@ -366,14 +423,6 @@ describe("argument completion", () => {
     ]);
   });
 
-  it("offers the literal session when it matches", () => {
-    const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions(
-      "ses",
-    );
-    expect(items?.map((item) => item.value)).toEqual(["session"]);
-  });
-
   it("offers everything for an empty prefix", () => {
     const { deps } = makeDeps();
     const items = createPermissionModelCommand(deps).getArgumentCompletions("");
@@ -381,8 +430,6 @@ describe("argument completion", () => {
       "anthropic/a",
       "anthropic/b",
       "openai/c",
-      "session",
-      "system-one",
     ]);
   });
 
@@ -439,8 +486,8 @@ describe("picker in the TUI", () => {
     const pending = createPermissionModelCommand(deps).handler("", ctx);
     pickerRequest(deps).onSelect(PM_MODEL);
     await pending;
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
     expect(deps.reload).toHaveBeenCalledWith("/project");
     expect(state.config).toBe(reloaded.config);
     expect(notifyTypes(ctx)).toEqual(["info"]);
@@ -454,7 +501,7 @@ describe("picker in the TUI", () => {
     const pending = createPermissionModelCommand(deps).handler("", ctx);
     pickerRequest(deps).onSelect(PM_MODEL);
     await pending;
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledTimes(1);
     expect(notifyTypes(ctx)).toContain("warning");
   });
 
@@ -465,7 +512,7 @@ describe("picker in the TUI", () => {
     const pending = createPermissionModelCommand(deps).handler("", ctx);
     pickerRequest(deps).onCancel();
     await pending;
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
     expect(ctx.ui.notify).not.toHaveBeenCalled();
@@ -505,8 +552,8 @@ describe("degraded picker without a runtime shape", () => {
     ctx.ui.select.mockResolvedValue("p/m");
     await createPermissionModelCommand(deps).handler("", ctx);
     expect(ctx.modelRegistry.find).toHaveBeenCalledWith("p", "m");
-    expect(deps.writeJudge).toHaveBeenCalledTimes(1);
-    expect(deps.writeJudge).toHaveBeenCalledWith("p", "m");
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "p", model: "m" } });
     expect(state.config).toBe(reloaded.config);
     expect(notifyTypes(ctx)).toContain("info");
   });
@@ -517,7 +564,7 @@ describe("degraded picker without a runtime shape", () => {
     const ctx = makeCtx("tui", { runtime: false });
     ctx.ui.select.mockResolvedValue(undefined);
     await createPermissionModelCommand(deps).handler("", ctx);
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
   });
@@ -532,7 +579,7 @@ describe("degraded picker without a runtime shape", () => {
     expect(ctx.ui.custom).not.toHaveBeenCalled();
     expect(notifyTypes(ctx)).toEqual(["warning"]);
     expect(notifyOf(ctx, "warning")).toMatch(/no models are available/i);
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
   });
@@ -564,8 +611,8 @@ describe("reload after a write (review round 1, F1)", () => {
       projectSetsJudge: true,
     });
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("session", ctx);
-    expect(deps.writeJudge).toHaveBeenCalledWith(undefined, undefined);
+    await createPermissionModelCommand(deps).handler("llm chat-model", ctx);
+    expect(deps.write).toHaveBeenCalledWith({ llm: null });
     expect(deps.apply).not.toHaveBeenCalled();
     expect(state.config).toEqual(before);
     expect(notifyTypes(ctx)).toEqual(["error"]);
@@ -582,8 +629,10 @@ describe("reload after a write (review round 1, F1)", () => {
       ],
     });
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
-    expect(deps.apply).toHaveBeenCalledWith(reloaded.config);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
+    expect(deps.apply).toHaveBeenCalledWith(reloaded.config, {
+      llm: { provider: "p", model: "m" },
+    });
     expect(state.config).toBe(reloaded.config);
     expect(notifyTypes(ctx)).toEqual(["info", "warning"]);
     expect(notifyOf(ctx, "warning")).toContain("bad json");
@@ -606,12 +655,12 @@ describe("no-argument form without a valid config (review round 1, F3)", () => {
 describe("auth warning only after a successful write (review round 2)", () => {
   it("does not warn about auth when the write failed", async () => {
     const { deps } = makeDeps(CONFIG_QN);
-    deps.writeJudge.mockImplementation(() => {
+    deps.write.mockImplementation(() => {
       throw new Error("EACCES: permission denied");
     });
     const ctx = makeCtx();
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
-    await createPermissionModelCommand(deps).handler("p/m", ctx);
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
     expect(notifyTypes(ctx)).toEqual(["error"]);
   });
 });
@@ -640,140 +689,83 @@ describe("the ui slice is pi's own ExtensionUIContext (T-21)", () => {
   });
 });
 
-describe("/permission-model system-one <provider>/<id>", () => {
-  const SYSTEM_ONE_RELOADED: LoadConfigResult = {
-    config: {
-      ...EMPTY_CONFIG,
-      systemOne: {
-        provider: "typesafe",
-        model: "jev-latest",
-        verdicts: "allow-defer",
-        onError: "defer",
-        allowThreshold: 0.9,
-        denyThreshold: 0.9,
-        guidance: true,
-        timeoutMs: 5000,
-      },
-    },
+describe("typed form /permission-model quick <provider>/<id>", () => {
+  const QUICK_RELOADED: LoadConfigResult = {
+    config: { ...WITH_QUICK, quickJudge: { ...QUICK_JUDGE, model: "jev-latest" } },
     issues: [],
     projectSetsJudge: false,
   };
 
-  function withSystemOne() {
-    const made = makeDeps({ ...EMPTY_CONFIG, systemOne: SYSTEM_ONE_RELOADED.config!.systemOne! });
-    made.deps.reload.mockImplementation(() => SYSTEM_ONE_RELOADED);
+  function quickDeps(initial: ClassifierConfig = EMPTY_CONFIG) {
+    const made = makeDeps(initial);
+    made.deps.reload.mockImplementation(() => QUICK_RELOADED);
     return made;
   }
 
-  it("writes a known classifier pair to systemOne, reloads and applies it", async () => {
-    const { deps, state } = withSystemOne();
+  it("writes a known classifier pair, reloads and applies it", async () => {
+    const { deps, state } = quickDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    await createPermissionModelCommand(deps).handler("quick typesafe/jev-latest", ctx);
     expect(ctx.modelRegistry.findOfType).toHaveBeenCalledWith(
       "classifier",
       "typesafe",
       "jev-latest",
     );
-    expect(deps.writeSystemOne).toHaveBeenCalledWith("typesafe", "jev-latest");
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({
+      quick: { provider: "typesafe", model: "jev-latest" },
+    });
     expect(deps.reload).toHaveBeenCalledWith("/project");
-    expect(deps.applySystemOne).toHaveBeenCalledWith(SYSTEM_ONE_RELOADED.config);
-    expect(deps.apply).not.toHaveBeenCalled();
-    expect(state.config?.systemOne?.model).toBe("jev-latest");
-    expect(notifyOf(ctx, "info")).toMatch(/typesafe\/jev-latest/);
-    expect(notifyTypes(ctx)).not.toContain("error");
+    expect(deps.apply).toHaveBeenCalledWith(QUICK_RELOADED.config, {
+      quick: { provider: "typesafe", model: "jev-latest" },
+    });
+    expect(state.config?.quickJudge?.model).toBe("jev-latest");
+    expect(notifyOf(ctx, "info")).toMatch(/quick judge typesafe\/jev-latest/);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+  });
+
+  it("never changes the mode", async () => {
+    const { deps } = quickDeps();
+    await createPermissionModelCommand(deps).handler("quick typesafe/jev-latest", makeCtx());
+    expect(deps.write.mock.calls[0]![0]).not.toHaveProperty("mode");
   });
 
   it("refuses an unknown pair and writes nothing", async () => {
-    const { deps } = withSystemOne();
+    const { deps } = quickDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/nope", ctx);
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("quick typesafe/nope", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.reload).not.toHaveBeenCalled();
-    expect(deps.applySystemOne).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
     expect(notifyOf(ctx, "error")).toMatch(/typesafe\/nope/);
     expect(notifyOf(ctx, "error")).toMatch(/classifier/);
   });
 
-  it("refuses a chat model: only the classifier lookup counts", async () => {
-    const { deps } = withSystemOne();
+  it("refuses a chat model and names the llm form", async () => {
+    const { deps } = quickDeps();
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one p/m", ctx);
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
-    expect(notifyTypes(ctx)).toContain("error");
-  });
-
-  it("refuses a malformed reference with the usage line", async () => {
-    const { deps } = withSystemOne();
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one not-a-pair", ctx);
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
-    expect(notifyOf(ctx, "error")).toMatch(/system-one <provider>\/<id>/);
-  });
-
-  it("refuses with the setup hint when the global config is absent", async () => {
-    const { deps } = withSystemOne();
-    deps.globalConfigExists.mockReturnValue(false);
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
-    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+    await createPermissionModelCommand(deps).handler("quick p/m", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("/permission-model llm p/m");
   });
 
   it("reports a failed write and changes nothing", async () => {
-    const { deps } = withSystemOne();
-    deps.writeSystemOne.mockImplementation(() => {
+    const { deps } = quickDeps();
+    deps.write.mockImplementation(() => {
       throw new Error("disk full");
     });
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(deps.applySystemOne).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("quick typesafe/jev-latest", ctx);
+    expect(deps.apply).not.toHaveBeenCalled();
     expect(notifyOf(ctx, "error")).toMatch(/disk full/);
   });
 
-  it("keeps the previous config live when the reload no longer validates", async () => {
-    const { deps } = withSystemOne();
-    deps.reload.mockImplementation(() => ({
-      config: undefined,
-      issues: [{ path: "systemOne", message: "bad", sourcePath: GLOBAL_PATH }],
-      projectSetsJudge: false,
-    }));
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(deps.applySystemOne).not.toHaveBeenCalled();
-    expect(notifyTypes(ctx)).toContain("error");
-  });
-
-  it("warns when the project config shadows the choice", async () => {
-    const { deps } = withSystemOne();
-    deps.reload.mockImplementation(() => ({
-      ...SYSTEM_ONE_RELOADED,
-      config: {
-        ...SYSTEM_ONE_RELOADED.config!,
-        systemOne: { ...SYSTEM_ONE_RELOADED.config!.systemOne!, model: "other" },
-      },
-    }));
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
-  });
-
-  it("says the link registers at the next session when systemOne was absent", async () => {
-    const { deps } = makeDeps();
-    deps.reload.mockImplementation(() => SYSTEM_ONE_RELOADED);
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(deps.writeSystemOne).toHaveBeenCalled();
-    const messages = ctx.ui.notify.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(messages).toMatch(/next session/);
-  });
-
-  it("never touches the classifier judge, its flag override or the session model", async () => {
-    const { deps, state } = withSystemOne();
+  it("never touches the LLM judge, its flag override or the session model", async () => {
+    const { deps, state } = quickDeps();
     state.override = { provider: "q", model: "n" };
     const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("quick typesafe/jev-latest", ctx);
     expect(ctx.modelRegistry.find).not.toHaveBeenCalled();
     expect(state.config?.provider).toBeUndefined();
     expect(state.override).toEqual({ provider: "q", model: "n" });
@@ -781,103 +773,75 @@ describe("/permission-model system-one <provider>/<id>", () => {
   });
 });
 
-describe("/permission-model system-one picker and completion", () => {
-  function withCurrent(provider: string, model: string) {
-    return makeDeps({
-      ...EMPTY_CONFIG,
-      systemOne: {
-        provider,
-        model,
-        verdicts: "allow-defer",
-        onError: "defer",
-        allowThreshold: 0.9,
-        denyThreshold: 0.9,
-        guidance: true,
-        timeoutMs: 5000,
-      },
-    });
-  }
+describe("typed form /permission-model mode <mode>", () => {
+  it.each(["llm", "quick", "quick-then-llm"] as const)(
+    "writes mode %s alone with a quick judge model set",
+    async (mode) => {
+      const { deps } = makeDeps(WITH_QUICK);
+      deps.reload.mockReturnValue({
+        config: { ...WITH_QUICK, mode },
+        issues: [],
+        projectSetsJudge: false,
+      });
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler(`mode ${mode}`, ctx);
+      expect(deps.write).toHaveBeenCalledTimes(1);
+      expect(deps.write).toHaveBeenCalledWith({ mode });
+      expect(deps.apply).toHaveBeenCalledWith({ ...WITH_QUICK, mode }, { mode });
+      expect(notifyOf(ctx, "info")).toContain(`mode ${mode}`);
+    },
+  );
 
-  it("lists available classifier models with the current one first", async () => {
-    const { deps } = withCurrent("local", "kev-4b-q8");
-    const ctx = makeCtx();
-    ctx.ui.select.mockResolvedValue(undefined);
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
-    expect(ctx.modelRegistry.getAvailableOfType).toHaveBeenCalledWith("classifier");
-    const [title, labels] = ctx.ui.select.mock.calls[0]!;
-    expect(labels).toEqual(["local/kev-4b-q8", "typesafe/jev-latest"]);
-    expect(String(title)).toMatch(/local\/kev-4b-q8/);
+  it.each(["quick", "quick-then-llm"])(
+    "refuses mode %s with no quick judge model and says to set one",
+    async (mode) => {
+      const { deps } = makeDeps(EMPTY_CONFIG);
+      const ctx = makeCtx();
+      await createPermissionModelCommand(deps).handler(`mode ${mode}`, ctx);
+      expect(deps.write).not.toHaveBeenCalled();
+      expect(notifyTypes(ctx)).toEqual(["warning"]);
+      expect(notifyOf(ctx, "warning")).toContain("/permission-model quick <provider>/<id>");
+    },
+  );
+
+  it("writes mode llm with no quick judge model", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    deps.reload.mockReturnValue({ config: EMPTY_CONFIG, issues: [], projectSetsJudge: false });
+    await createPermissionModelCommand(deps).handler("mode llm", makeCtx());
+    expect(deps.write).toHaveBeenCalledWith({ mode: "llm" });
   });
 
-  it("writes a selection like the typed form", async () => {
-    const { deps } = withCurrent("local", "kev-4b-q8");
+  it("refuses an unknown mode with the usage line", async () => {
+    const { deps } = makeDeps(WITH_QUICK);
     const ctx = makeCtx();
-    ctx.ui.select.mockResolvedValue("typesafe/jev-latest");
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
-    expect(deps.writeSystemOne).toHaveBeenCalledWith("typesafe", "jev-latest");
-    expect(deps.applySystemOne).toHaveBeenCalled();
-    expect(deps.writeJudge).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler("mode system-one", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("mode <llm|quick|quick-then-llm>");
   });
+});
 
-  it("writes nothing on cancel", async () => {
-    const { deps } = withCurrent("local", "kev-4b-q8");
+describe("removed and malformed forms", () => {
+  it.each([
+    "p/m",
+    "session",
+    "system-one",
+    "system-one typesafe/jev-latest",
+    "mode",
+    "llm",
+    "quick",
+    "llm p/m extra",
+    "quick chat-model",
+  ])("%j writes nothing and reports the usage line", async (args) => {
+    const { deps } = makeDeps(WITH_QUICK);
     const ctx = makeCtx();
-    ctx.ui.select.mockResolvedValue(undefined);
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    await createPermissionModelCommand(deps).handler(args, ctx);
+    expect(deps.write).not.toHaveBeenCalled();
     expect(deps.reload).not.toHaveBeenCalled();
-  });
-
-  it("warns and writes nothing when no classifier model is available", async () => {
-    const { deps } = makeDeps();
-    const ctx = makeCtx();
-    ctx.modelRegistry.getAvailableOfType.mockResolvedValue([]);
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
     expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
-    expect(notifyOf(ctx, "warning")).toMatch(/classifier/);
-  });
-
-  it("refuses with the setup hint and opens no picker without a config", async () => {
-    const { deps, state } = makeDeps();
-    state.config = undefined;
-    const ctx = makeCtx();
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
-  });
-
-  it("prints the current system-one model and usage outside the TUI", async () => {
-    const { deps } = withCurrent("typesafe", "jev-latest");
-    const ctx = makeCtx("print");
-    await createPermissionModelCommand(deps).handler("system-one", ctx);
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(deps.writeSystemOne).not.toHaveBeenCalled();
-    expect(notifyOf(ctx, "info")).toMatch(/typesafe\/jev-latest/);
-    expect(notifyOf(ctx, "info")).toMatch(/system-one <provider>\/<id>/);
-  });
-
-  it("offers classifier labels for 'system-one ty'", () => {
-    const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions("system-one ty");
-    expect(items?.map((item) => item.value)).toEqual(["system-one typesafe/jev-latest"]);
-    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest"]);
-  });
-
-  it("offers every classifier label after 'system-one '", () => {
-    const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions("system-one ");
-    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest", "local/kev-4b-q8"]);
-  });
-
-  it("offers the literal system-one when it matches", () => {
-    const { deps } = makeDeps();
-    const items = createPermissionModelCommand(deps).getArgumentCompletions("sys");
-    expect(items?.map((item) => item.value)).toEqual(["system-one"]);
-  });
-
-  it("returns null for 'system-one zz'", () => {
-    const { deps } = makeDeps();
-    expect(createPermissionModelCommand(deps).getArgumentCompletions("system-one zz")).toBeNull();
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain(
+      "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id>",
+    );
   });
 });
