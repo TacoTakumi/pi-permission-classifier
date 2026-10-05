@@ -8,12 +8,15 @@
  * it the judge is unresolved and every ask defers (fail-safe), which the
  * status text surfaces with an ` (unresolved)` suffix.
  *
+ * The system-one judge resolves only through the registry's classifier
+ * lookup and renders as `s1:<provider>/<id>`, with the same suffix.
+ *
  * This module has no side effects and imports nothing from pi beyond types.
  */
 
-import type { Model } from "@earendil-works/pi-ai";
+import type { ClassifierApi, ClassifierModel, Model } from "@earendil-works/pi-ai";
 
-import type { ClassifierConfig } from "./config-schema";
+import type { ClassifierConfig, SystemOneConfig } from "./config-schema";
 
 /** A provider/id pair naming a judge model. */
 export interface JudgePair {
@@ -90,5 +93,47 @@ export function formatJudgeStatus(judge: ResolvedJudge): string {
     return "judge:session";
   }
   const text = `judge:${judge.pair.provider}/${judge.pair.model}`;
+  return judge.model === undefined ? `${text} (unresolved)` : text;
+}
+
+/** The narrow registry projection the system-one resolver needs. */
+export interface SystemOneJudgeRegistryLike {
+  findOfType(
+    type: "classifier",
+    provider: string,
+    modelId: string,
+  ): ClassifierModel<ClassifierApi> | undefined;
+}
+
+/** The configured system-one judge and the classifier model it names. */
+export interface ResolvedSystemOneJudge {
+  /** The configured pair; `undefined` when systemOne names none. */
+  pair: JudgePair | undefined;
+  /** The classifier model; `undefined` means every ask is model-unresolved. */
+  model: ClassifierModel<ClassifierApi> | undefined;
+}
+
+/** Resolve the system-one pair through the classifier lookup only. */
+export function resolveSystemOneJudge(
+  systemOne: Pick<SystemOneConfig, "provider" | "model">,
+  registry: SystemOneJudgeRegistryLike | undefined,
+): ResolvedSystemOneJudge {
+  if (systemOne.provider === undefined || systemOne.model === undefined) {
+    return { pair: undefined, model: undefined };
+  }
+  const pair: JudgePair = { provider: systemOne.provider, model: systemOne.model };
+  return { pair, model: registry?.findOfType("classifier", pair.provider, pair.model) };
+}
+
+/**
+ * The footer text for the system-one judge: `s1:<provider>/<id>`, with
+ * ` (unresolved)` when the classifier lookup fails, and
+ * `s1:unset (unresolved)` when systemOne names no pair.
+ */
+export function formatSystemOneStatus(judge: ResolvedSystemOneJudge): string {
+  if (judge.pair === undefined) {
+    return "s1:unset (unresolved)";
+  }
+  const text = `s1:${judge.pair.provider}/${judge.pair.model}`;
   return judge.model === undefined ? `${text} (unresolved)` : text;
 }

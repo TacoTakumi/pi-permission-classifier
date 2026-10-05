@@ -84,9 +84,11 @@ import {
 import { formatHealthSuffix, SessionHealth } from "./health";
 import {
   formatJudgeStatus,
+  formatSystemOneStatus,
   type JudgePair,
   parseJudgePair,
   resolveJudge,
+  resolveSystemOneJudge,
 } from "./judge";
 import type { CompleteFn } from "./model-review";
 import {
@@ -304,15 +306,34 @@ export function createClassifierExtension(
    * a no-op until the link registers. Refreshed on judge changes and after
    * every reviewer outcome.
    */
+  /**
+   * Repaint the footer: the system-one judge first (it is the front link),
+   * then the classifier judge, each with its own health suffix. A link that
+   * is not registered is left out; with neither, nothing is set.
+   */
   function refreshStatus(): void {
-    if (!dispose) {
+    const parts: string[] = [];
+    if (disposeSystemOne && config?.systemOne) {
+      parts.push(
+        formatSystemOneStatus(resolveSystemOneJudge(config.systemOne, registry)) +
+          formatHealthSuffix(systemOneHealth, systemOneBreaker.remainingMs()),
+      );
+    }
+    if (dispose) {
+      parts.push(
+        formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
+          formatHealthSuffix(health, breaker.remainingMs()),
+      );
+    }
+    if (parts.length === 0) {
       return;
     }
-    ui?.setStatus(
-      STATUS_KEY,
-      formatJudgeStatus(resolveJudge(override, config, registry, sessionModel)) +
-        formatHealthSuffix(health, breaker.remainingMs()),
-    );
+    ui?.setStatus(STATUS_KEY, parts.join(", "));
+  }
+
+  /** The longer of the two breakers' remaining cooldowns. */
+  function breakerRemainingMs(): number {
+    return Math.max(breaker.remainingMs(), systemOneBreaker.remainingMs());
   }
 
   function stopCountdown(): void {
@@ -329,7 +350,7 @@ export function createClassifierExtension(
    * closed. The interval never keeps the process alive.
    */
   function syncCountdown(): void {
-    if (breaker.remainingMs() === 0) {
+    if (breakerRemainingMs() === 0) {
       stopCountdown();
       return;
     }
@@ -338,7 +359,7 @@ export function createClassifierExtension(
     }
     countdown = setInterval(() => {
       refreshStatus();
-      if (breaker.remainingMs() === 0) {
+      if (breakerRemainingMs() === 0) {
         stopCountdown();
       }
     }, COUNTDOWN_TICK_MS);
@@ -433,7 +454,11 @@ export function createClassifierExtension(
         getCwd: sessionCwd,
         getGuidance,
         breaker: systemOneBreaker,
-        onOutcome: (outcome) => systemOneHealth.record(outcome),
+        onOutcome: (outcome) => {
+          systemOneHealth.record(outcome);
+          refreshStatus();
+          syncCountdown();
+        },
       });
       disposeSystemOne = service.registerAuthorizer(
         SYSTEM_ONE_LINK_NAME,
@@ -441,6 +466,7 @@ export function createClassifierExtension(
       );
     }
     if (!wantClassifier) {
+      refreshStatus();
       return;
     }
     const authorize = createClassifierReviewer({
@@ -461,7 +487,7 @@ export function createClassifierExtension(
   });
 
   pi.on("session_shutdown", () => {
-    if (dispose) {
+    if (dispose || disposeSystemOne) {
       ui?.setStatus(STATUS_KEY, undefined);
     }
     dispose?.();

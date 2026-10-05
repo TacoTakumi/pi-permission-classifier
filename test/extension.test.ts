@@ -1436,3 +1436,109 @@ describe("system-one link registration", () => {
     expect(context.state.cwd).toBe("/project");
   });
 });
+
+describe("footer status with the system-one link", () => {
+  const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
+
+  function ctxWith(classify: () => Promise<unknown> = async () => ({
+    api: "typesafe-system-one",
+    provider: "typesafe",
+    model: "jev-latest",
+    answers: {},
+    stopReason: "error",
+    errorMessage: "503",
+    timestamp: 0,
+  })) {
+    const ctx = ctxWithModel();
+    return {
+      ...ctx,
+      modelRegistry: {
+        ...ctx.modelRegistry,
+        findOfType: vi.fn((type: string, provider: string, id: string) =>
+          type === "classifier" && provider === "typesafe" && id === "jev-latest" ? JEV : undefined,
+        ),
+        classify: vi.fn(classify),
+      },
+    };
+  }
+
+  function boot(top: Record<string, unknown>, ctx = ctxWith()) {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () => ({
+        config: classifierConfigSchema.parse(top),
+        issues: [],
+        projectSetsJudge: false,
+      }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    return { pi, ctx };
+  }
+
+  function lastStatus(ctx: ReturnType<typeof ctxWith>): unknown {
+    return ctx.ui.setStatus.mock.calls.at(-1)?.[1];
+  }
+
+  it("shows the system-one judge beside the classifier judge", () => {
+    const { ctx } = boot({ systemOne: { provider: "typesafe", model: "jev-latest" } });
+    expect(lastStatus(ctx)).toBe("s1:typesafe/jev-latest, judge:session");
+  });
+
+  it("marks an unresolved system-one judge", () => {
+    const { ctx } = boot({ systemOne: { provider: "typesafe", model: "nope" } });
+    expect(lastStatus(ctx)).toBe("s1:typesafe/nope (unresolved), judge:session");
+  });
+
+  it("omits the classifier judge when classifierEnabled is false", () => {
+    const { ctx } = boot({
+      classifierEnabled: false,
+      systemOne: { provider: "typesafe", model: "jev-latest" },
+    });
+    expect(lastStatus(ctx)).toBe("s1:typesafe/jev-latest");
+  });
+
+  it("omits the system-one judge without a systemOne object", () => {
+    const { ctx } = boot({});
+    expect(lastStatus(ctx)).toBe("judge:session");
+  });
+
+  it("sets no status when neither link registers", () => {
+    const { ctx } = boot({ classifierEnabled: false });
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("gives the system-one judge its own health suffix", async () => {
+    const { ctx } = boot({ systemOne: { provider: "typesafe", model: "jev-latest" } });
+    const authorize = service.registerAuthorizer.mock.calls.find(
+      (call) => call[0] === "system-one",
+    )?.[1] as RegisteredAuthorizer;
+    await authorize(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    expect(lastStatus(ctx)).toBe("s1:typesafe/jev-latest | call-failed x1, judge:session");
+  });
+
+  it("shows the system-one breaker countdown while it is open", async () => {
+    const { ctx } = boot({
+      classifierEnabled: false,
+      systemOne: { provider: "typesafe", model: "jev-latest" },
+    });
+    const authorize = service.registerAuthorizer.mock.calls.find(
+      (call) => call[0] === "system-one",
+    )?.[1] as RegisteredAuthorizer;
+    for (let i = 0; i < 3; i += 1) {
+      await authorize(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });
+    }
+    expect(lastStatus(ctx)).toMatch(/^s1:typesafe\/jev-latest \| breaker open \d+s$/);
+  });
+
+  it("clears the status at shutdown when only system-one registered", () => {
+    const { pi, ctx } = boot({
+      classifierEnabled: false,
+      systemOne: { provider: "typesafe", model: "jev-latest" },
+    });
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, undefined);
+  });
+});

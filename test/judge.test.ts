@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { ClassifierConfig } from "#src/config-schema";
 import {
   formatJudgeStatus,
+  formatSystemOneStatus,
   type JudgeRegistryLike,
   parseJudgePair,
   resolveJudge,
+  resolveSystemOneJudge,
 } from "#src/judge";
 
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
@@ -177,5 +179,43 @@ describe("parseJudgePair", () => {
 
   it.each(["", "p", "/m", "p/", "/"])("rejects %j", (text) => {
     expect(parseJudgePair(text)).toBeUndefined();
+  });
+});
+
+describe("system-one judge status", () => {
+  const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
+  const registry = {
+    findOfType: vi.fn((type: string, provider: string, id: string) =>
+      type === "classifier" && provider === "typesafe" && id === "jev-latest" ? JEV : undefined,
+    ),
+  };
+
+  it("renders s1:<provider>/<id> for a classifier the registry knows", () => {
+    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, registry);
+    expect(judge.model).toBe(JEV);
+    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/jev-latest");
+  });
+
+  it("appends (unresolved) when the classifier lookup fails", () => {
+    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "nope" }, registry);
+    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/nope (unresolved)");
+  });
+
+  it("appends (unresolved) before a registry is captured", () => {
+    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, undefined);
+    expect(formatSystemOneStatus(judge)).toBe("s1:typesafe/jev-latest (unresolved)");
+  });
+
+  it("renders s1:unset (unresolved) for a systemOne object with no pair", () => {
+    const judge = resolveSystemOneJudge({}, registry);
+    expect(judge.pair).toBeUndefined();
+    expect(formatSystemOneStatus(judge)).toBe("s1:unset (unresolved)");
+  });
+
+  it("never looks the pair up as a chat model", () => {
+    const chatRegistry = { findOfType: vi.fn(() => undefined), find: vi.fn(() => JEV) };
+    const judge = resolveSystemOneJudge({ provider: "typesafe", model: "jev-latest" }, chatRegistry);
+    expect(chatRegistry.find).not.toHaveBeenCalled();
+    expect(judge.model).toBeUndefined();
   });
 });
