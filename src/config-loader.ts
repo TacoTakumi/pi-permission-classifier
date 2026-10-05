@@ -33,6 +33,8 @@ import {
   type ClassifierConfig,
   classifierConfigSchema,
   type Mode,
+  type OnError,
+  type Verdicts,
 } from "./config-schema";
 
 const CONFIG_FILE_NAME = "config.json";
@@ -300,6 +302,16 @@ export interface ModelPair {
 }
 
 /**
+ * The verdicts and onError of one judge: the LLM judge's top-level fields or
+ * the quick judge's `quickJudge` fields. An absent field is left as it is.
+ */
+export interface JudgePolicy {
+  judge: "llm" | "quick";
+  verdicts?: Verdicts;
+  onError?: OnError;
+}
+
+/**
  * What one /permission-model choice sets. An absent field is left as it is;
  * `llm: null` removes the top-level `provider` and `model`, so the LLM judge
  * follows the chat model.
@@ -308,13 +320,15 @@ export interface JudgeSelection {
   mode?: Mode;
   llm?: ModelPair | null;
   quick?: ModelPair;
+  policy?: JudgePolicy;
 }
 
 /**
  * Write a selection to the global config file in one atomic write: `mode`,
- * the top-level LLM pair, and `quickJudge.provider`/`quickJudge.model`
- * (creating the `quickJudge` object when absent). Every field the selection
- * does not set is preserved, inside `quickJudge` too. See
+ * the top-level LLM pair, `quickJudge.provider`/`quickJudge.model`, and the
+ * policy, top-level for the LLM judge and inside `quickJudge` for the quick
+ * judge (creating the `quickJudge` object when absent). Every field the
+ * selection does not set is preserved, inside `quickJudge` too. See
  * {@link rewriteGlobalConfig}.
  */
 export function writeGlobalSelection(agentDir: string, selection: JudgeSelection): void {
@@ -337,6 +351,22 @@ export function writeGlobalSelection(agentDir: string, selection: JudgeSelection
         provider: selection.quick.provider,
         model: selection.quick.model,
       };
+    }
+    const policy = selection.policy;
+    if (policy !== undefined) {
+      const fields: Record<string, unknown> = {};
+      if (policy.verdicts !== undefined) {
+        fields.verdicts = policy.verdicts;
+      }
+      if (policy.onError !== undefined) {
+        fields.onError = policy.onError;
+      }
+      if (policy.judge === "llm") {
+        next = { ...next, ...fields };
+      } else {
+        const existing = isRecord(next.quickJudge) ? next.quickJudge : {};
+        next.quickJudge = { ...existing, ...fields };
+      }
     }
     return next;
   });

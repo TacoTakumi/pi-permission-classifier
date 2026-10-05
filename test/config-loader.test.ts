@@ -599,6 +599,69 @@ describe("writeGlobalSelection", () => {
     expect(result.config?.provider).toBeUndefined();
   });
 
+  it("sets the LLM judge's policy at the top level only", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({ ...existing, quickJudge: { provider: "typesafe", model: "jev" } }),
+    );
+    writeGlobalSelection(agentDir, {
+      policy: { judge: "llm", verdicts: "allow-deny", onError: "deny" },
+    });
+    expect(readGlobal()).toEqual({
+      ...existing,
+      quickJudge: { provider: "typesafe", model: "jev" },
+      verdicts: "allow-deny",
+      onError: "deny",
+    });
+  });
+
+  it("sets the quick judge's policy inside quickJudge and keeps its other keys", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        ...existing,
+        verdicts: "allow-defer",
+        quickJudge: { provider: "typesafe", model: "jev", allowThreshold: 0.8 },
+      }),
+    );
+    writeGlobalSelection(agentDir, {
+      policy: { judge: "quick", verdicts: "allow-deny", onError: "deny" },
+    });
+    expect(readGlobal()).toEqual({
+      ...existing,
+      verdicts: "allow-defer",
+      quickJudge: {
+        provider: "typesafe",
+        model: "jev",
+        allowThreshold: 0.8,
+        verdicts: "allow-deny",
+        onError: "deny",
+      },
+    });
+  });
+
+  it("creates quickJudge for a quick judge policy when the file has none", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, { policy: { judge: "quick", onError: "deny" } });
+    expect(readGlobal()).toEqual({ ...existing, quickJudge: { onError: "deny" } });
+  });
+
+  it("writes a quick pair and a quick policy together in one write", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    fsCalls.length = 0;
+    writeGlobalSelection(agentDir, {
+      mode: "quick",
+      quick: { provider: "typesafe", model: "jev-latest" },
+      policy: { judge: "quick", verdicts: "allow-deny-defer" },
+    });
+    expect(fsCalls.filter((call) => call.name === "renameSync")).toHaveLength(1);
+    expect(readGlobal()).toEqual({
+      ...existing,
+      mode: "quick",
+      quickJudge: { provider: "typesafe", model: "jev-latest", verdicts: "allow-deny-defer" },
+    });
+  });
+
   it("leaves the file's fields as they are for an empty selection", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     writeGlobalSelection(agentDir, {});
