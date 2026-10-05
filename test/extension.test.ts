@@ -1544,6 +1544,28 @@ describe("permission-judge modes", () => {
     expect(deprecated).toHaveLength(2);
   });
 
+  it("keeps permission-judge when registering the alias throws, and never retries", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    service.registerAuthorizer.mockImplementation((name: string) => {
+      if (name === "classifier") {
+        throw new Error("authorizer classifier is already registered");
+      }
+      return service.disposer;
+    });
+    const pi = makeFakePi();
+    start(pi);
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(registeredNames()).toEqual(["permission-judge", "classifier"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("classifier");
+    expect(warn.mock.calls[0]?.[0]).toContain("already registered");
+    pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
+    expect(service.disposer).toHaveBeenCalledTimes(1);
+  });
+
   it("judges an ask once when both names are in the chain", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const complete = vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "defer" }));

@@ -405,9 +405,18 @@ export function createClassifierExtension(
         },
       },
     });
-    const disposers = createNamedAuthorizers(judge, { warn }).map(({ name, authorize }) =>
-      service.registerAuthorizer(name, authorize),
-    );
+    // Register each name on its own: a name another extension already holds
+    // is skipped with a warning, the others stay registered, and dispose is
+    // set either way so a repeated ready never retries a taken name.
+    const disposers: (() => void)[] = [];
+    for (const { name, authorize } of createNamedAuthorizers(judge, { warn })) {
+      try {
+        disposers.push(service.registerAuthorizer(name, authorize));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        warn(`could not register the chain link ${name}: ${reason}`);
+      }
+    }
     dispose = () => {
       for (const disposeName of disposers) {
         disposeName();
