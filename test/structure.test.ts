@@ -71,6 +71,8 @@ describe("no path-based allow capping in link code", () => {
     "quick-judge.ts",
     "system-one-review.ts",
     "verdict-policy.ts",
+    "judge-link.ts",
+    "name-alias.ts",
   ])(
     "%s decides without filesystem or cwd inspection",
     (name) => {
@@ -381,6 +383,86 @@ describe("quick judge module guards", () => {
     const link = src("quick-judge.ts");
     expect(importsOf(link)).not.toContain("./extension");
     expect(link).not.toContain("setStatus");
+  });
+});
+
+describe("permission-judge link guards", () => {
+  const COMPOSER_FILES = ["judge-link.ts", "name-alias.ts"];
+
+  it("the link-file set includes the judge-link, name-alias and quick judge modules", () => {
+    for (const name of [...COMPOSER_FILES, "quick-judge.ts"]) {
+      expect(LINK_FILES).toContain(name);
+    }
+  });
+
+  it.each(COMPOSER_FILES)("%s imports no node builtins, calls no fetch, and takes no pi values", (name) => {
+    const source = src(name);
+    expect(importsOf(source).filter((imported) => imported.startsWith("node:"))).toEqual([]);
+    expect(referencesMember(source, "fetch"), `${name} references fetch`).toBe(false);
+    expect(source).not.toMatch(/\bXMLHttpRequest\b|\bWebSocket\b/);
+    expect(source).not.toMatch(/^import (?!type\b)[^;]*from "@earendil-works\//m);
+    expect(source).not.toMatch(/^import (?!type\b)[^;]*from "@gotgenes\//m);
+  });
+
+  it.each(COMPOSER_FILES)("%s reaches no model: neither complete nor classify", (name) => {
+    const source = src(name);
+    expect(source).not.toMatch(/\bcomplete\s*\(|\.classify\s*\(/);
+    expect(importsOf(source)).not.toContain("./model-review");
+  });
+
+  it("classify is called in the quick judge only, and complete in the model review only", () => {
+    for (const name of LINK_FILES) {
+      const source = src(name);
+      const classifies = /\.classify\s*\(/.test(source);
+      const completes = /\.complete\s*\(/.test(source);
+      expect(classifies, `${name} calls classify`).toBe(name === "quick-judge.ts");
+      expect(completes, `${name} calls complete`).toBe(name === "model-review.ts");
+    }
+  });
+
+  it.each(COMPOSER_FILES)("%s builds no allow or deny of its own", (name) => {
+    expect(src(name)).not.toMatch(/kind:\s*"(?:allow|deny)"/);
+  });
+
+  it("allow and deny are built only where a model answer is mapped or the policy applies", () => {
+    const builders = LINK_FILES.filter((name) => /kind:\s*"(?:allow|deny)"/.test(src(name)));
+    expect(builders).toEqual([
+      "model-review.ts",
+      "reviewer.ts",
+      "system-one-review.ts",
+      "verdict-policy.ts",
+    ]);
+  });
+
+  it("the judge link passes on only a quick allow, everything else goes to the LLM judge", () => {
+    const source = src("judge-link.ts");
+    expect(source).toMatch(
+      /quick\.kind === "allow" \? quick : llmJudge\(details, query, log\)/,
+    );
+  });
+
+  it("the judge link imports nothing from the extension and calls no setStatus", () => {
+    for (const name of COMPOSER_FILES) {
+      const source = src(name);
+      expect(importsOf(source)).not.toContain("./extension");
+      expect(source).not.toContain("setStatus");
+    }
+  });
+
+  it("no source file names another package's config path", () => {
+    for (const name of LINK_FILES) {
+      const source = src(name);
+      expect(source, name).not.toMatch(/extensions[/"', ]+pi-permission-system/);
+      expect(source, name).not.toContain("authorizerChain:");
+    }
+    // Both config paths are built from this package's own extension id.
+    const loader = src("config-loader.ts");
+    for (const fn of ["getGlobalConfigPath", "getProjectConfigPath"]) {
+      expect(functionSource(loader, fn)).toContain("CLASSIFIER_EXTENSION_ID");
+    }
+    expect(functionSource(loader, "rewriteGlobalConfig")).toContain(
+      "getGlobalConfigPath(agentDir)",
+    );
   });
 });
 
