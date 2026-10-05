@@ -23,8 +23,7 @@ import {
   getProjectConfigPath,
   globalConfigExists,
   loadClassifierConfig,
-  writeGlobalJudge,
-  writeGlobalSystemOne,
+  writeGlobalSelection,
 } from "#src/config-loader";
 
 /**
@@ -465,7 +464,7 @@ describe("globalConfigExists", () => {
   });
 });
 
-describe("writeGlobalJudge", () => {
+describe("writeGlobalSelection", () => {
   let root: string;
   let agentDir: string;
   let globalPath: string;
@@ -497,9 +496,9 @@ describe("writeGlobalJudge", () => {
     >;
   }
 
-  it("replaces provider and model and preserves every other field", () => {
+  it("sets the LLM pair and preserves every other field", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
     expect(readGlobal()).toEqual({
       instructions: "Be strict.",
       surfaces: ["bash", "mcp"],
@@ -509,9 +508,9 @@ describe("writeGlobalJudge", () => {
     });
   });
 
-  it("removes both keys when provider and model are undefined", () => {
+  it("removes provider and model for the chat model", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
-    writeGlobalJudge(agentDir, undefined, undefined);
+    writeGlobalSelection(agentDir, { llm: null });
     expect(readGlobal()).toEqual({
       instructions: "Be strict.",
       surfaces: ["bash", "mcp"],
@@ -519,15 +518,86 @@ describe("writeGlobalJudge", () => {
     });
   });
 
+  it("sets mode alone and preserves every other field", () => {
+    writeFileSync(globalPath, JSON.stringify({ ...existing, quickJudge: { provider: "typesafe", model: "jev" } }));
+    writeGlobalSelection(agentDir, { mode: "quick-then-llm" });
+    expect(readGlobal()).toEqual({
+      ...existing,
+      quickJudge: { provider: "typesafe", model: "jev" },
+      mode: "quick-then-llm",
+    });
+  });
+
+  it("adds a quickJudge object with the quick pair", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, { quick: { provider: "typesafe", model: "jev-latest" } });
+    expect(readGlobal()).toEqual({
+      ...existing,
+      quickJudge: { provider: "typesafe", model: "jev-latest" },
+    });
+  });
+
+  it("replaces only the pair inside an existing quickJudge object", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        mode: "quick",
+        quickJudge: { provider: "typesafe", model: "jev", verdicts: "allow-deny", allowThreshold: 0.8 },
+      }),
+    );
+    writeGlobalSelection(agentDir, { quick: { provider: "local", model: "kev-4b-q8" } });
+    expect(readGlobal()).toEqual({
+      mode: "quick",
+      quickJudge: {
+        provider: "local",
+        model: "kev-4b-q8",
+        verdicts: "allow-deny",
+        allowThreshold: 0.8,
+      },
+    });
+  });
+
+  it("sets mode and both judges in one write", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    fsCalls.length = 0;
+    writeGlobalSelection(agentDir, {
+      mode: "quick-then-llm",
+      llm: null,
+      quick: { provider: "typesafe", model: "jev-latest" },
+    });
+    expect(fsCalls.filter((call) => call.name === "renameSync")).toHaveLength(1);
+    expect(readGlobal()).toEqual({
+      instructions: "Be strict.",
+      surfaces: ["bash", "mcp"],
+      timeoutMs: 750,
+      mode: "quick-then-llm",
+      quickJudge: { provider: "typesafe", model: "jev-latest" },
+    });
+    const result = loadClassifierConfig({
+      cwd: join(root, "project"),
+      agentDir,
+      projectTrusted: true,
+    });
+    expect(result.config?.mode).toBe("quick-then-llm");
+    expect(result.config?.quickJudge?.model).toBe("jev-latest");
+    expect(result.config?.provider).toBeUndefined();
+  });
+
+  it("leaves the file's fields as they are for an empty selection", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, {});
+    expect(readGlobal()).toEqual(existing);
+  });
+
   it("leaves only config.json in the directory after writing", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
     expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
   });
 
   it("writes a file the loader accepts", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
     const result = loadClassifierConfig({
       cwd: join(root, "project"),
       agentDir,
@@ -544,7 +614,7 @@ describe("writeGlobalJudge", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     fsCalls.length = 0;
 
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
 
     expect(writePathCalls()).toEqual([
       "openSync",
@@ -565,7 +635,7 @@ describe("writeGlobalJudge", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     fsCalls.length = 0;
 
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
 
     const target = realpathSync(globalPath);
     expect(directWriteCalls([globalPath, target])).toEqual([]);
@@ -584,7 +654,7 @@ describe("writeGlobalJudge", () => {
     symlinkSync(target, globalPath);
 
     fsCalls.length = 0;
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
 
     // Neither the link nor its target is written directly.
     expect(directWriteCalls([globalPath, target])).toEqual([]);
@@ -608,7 +678,7 @@ describe("writeGlobalJudge", () => {
   it("creates the replacement with the original file's mode", () => {
     writeFileSync(globalPath, JSON.stringify(existing), { mode: 0o600 });
 
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
 
     expect(fsCall("openSync")?.args[2]).toBe(0o600);
     expect(statSync(globalPath).mode & 0o777).toBe(0o600);
@@ -618,13 +688,13 @@ describe("writeGlobalJudge", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     chmodSync(globalPath, 0o666);
 
-    writeGlobalJudge(agentDir, "openai", "gpt-5");
+    writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } });
 
     expect(statSync(globalPath).mode & 0o777).toBe(0o666);
   });
 
   it("throws and writes nothing when the global file is absent", () => {
-    expect(() => writeGlobalJudge(agentDir, "openai", "gpt-5")).toThrow(
+    expect(() => writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } })).toThrow(
       globalPath,
     );
     expect(readdirSync(dirname(globalPath))).toEqual([]);
@@ -633,103 +703,12 @@ describe("writeGlobalJudge", () => {
   it("throws and leaves the file untouched when it is not a JSON object", () => {
     writeFileSync(globalPath, "{ not json");
     fsCalls.length = 0;
-    expect(() => writeGlobalJudge(agentDir, "openai", "gpt-5")).toThrow();
+    expect(() => writeGlobalSelection(agentDir, { llm: { provider: "openai", model: "gpt-5" } })).toThrow();
     expect(readFileSync(globalPath, "utf-8")).toBe("{ not json");
     expect(readdirSync(dirname(globalPath))).toEqual(["config.json"]);
     expect(directWriteCalls([globalPath, realpathSync(globalPath)])).toEqual(
       [],
     );
-  });
-});
-
-describe("writeGlobalSystemOne", () => {
-  let root: string;
-  let agentDir: string;
-  let globalPath: string;
-
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "pi-permission-classifier-test-"));
-    agentDir = join(root, "agent");
-    globalPath = getGlobalConfigPath(agentDir);
-    mkdirSync(dirname(globalPath), { recursive: true });
-    fsCalls.length = 0;
-  });
-
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  function readGlobal(): Record<string, unknown> {
-    return JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>;
-  }
-
-  it("adds a systemOne object with the pair and preserves every other field", () => {
-    writeFileSync(
-      globalPath,
-      JSON.stringify({ provider: "anthropic", model: "claude-haiku", timeoutMs: 750 }),
-    );
-    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
-    expect(readGlobal()).toEqual({
-      provider: "anthropic",
-      model: "claude-haiku",
-      timeoutMs: 750,
-      systemOne: { provider: "typesafe", model: "jev-latest" },
-    });
-  });
-
-  it("replaces only the pair inside an existing systemOne object", () => {
-    writeFileSync(
-      globalPath,
-      JSON.stringify({
-        classifierEnabled: false,
-        systemOne: { provider: "typesafe", model: "jev", verdicts: "allow-deny", allowThreshold: 0.8 },
-      }),
-    );
-    writeGlobalSystemOne(agentDir, "local", "kev-4b-q8");
-    expect(readGlobal()).toEqual({
-      classifierEnabled: false,
-      systemOne: {
-        provider: "local",
-        model: "kev-4b-q8",
-        verdicts: "allow-deny",
-        allowThreshold: 0.8,
-      },
-    });
-  });
-
-  it("writes a file the loader accepts", () => {
-    writeFileSync(globalPath, "{}");
-    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
-    const result = loadClassifierConfig({
-      cwd: join(root, "project"),
-      agentDir,
-      projectTrusted: true,
-    });
-    expect(result.issues).toEqual([]);
-    expect(result.config?.systemOne?.provider).toBe("typesafe");
-    expect(result.config?.systemOne?.model).toBe("jev-latest");
-  });
-
-  it("writes through a temp file renamed over the config", () => {
-    writeFileSync(globalPath, "{}");
-    fsCalls.length = 0;
-    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
-    expect(writePathCalls()).toEqual([
-      "openSync",
-      "writeSync",
-      "fsyncSync",
-      "closeSync",
-      "renameSync",
-    ]);
-    const target = realpathSync(globalPath);
-    expect(directWriteCalls([globalPath, target])).toEqual([]);
-  });
-
-  it("throws and writes nothing when the global file is absent", () => {
-    expect(() => writeGlobalSystemOne(agentDir, "typesafe", "jev-latest")).toThrow(
-      /not found/,
-    );
-    expect(readdirSync(dirname(globalPath))).toEqual([]);
   });
 });
 

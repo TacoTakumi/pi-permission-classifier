@@ -32,6 +32,7 @@ import {
   CLASSIFIER_EXTENSION_ID,
   type ClassifierConfig,
   classifierConfigSchema,
+  type Mode,
 } from "./config-schema";
 
 const CONFIG_FILE_NAME = "config.json";
@@ -278,38 +279,51 @@ export function rewriteGlobalConfig(
   }
 }
 
-/**
- * Rewrite only `provider` and `model` in the global config file, preserving
- * every other field. When either argument is `undefined` both keys are
- * removed (the session model judges); the command passes both or neither.
- * Atomic and durable, see {@link rewriteGlobalConfig}.
- */
-export function writeGlobalJudge(
-  agentDir: string,
-  provider: string | undefined,
-  model: string | undefined,
-): void {
-  rewriteGlobalConfig(agentDir, (current) => {
-    const { provider: _provider, model: _model, ...rest } = current;
-    return provider === undefined || model === undefined
-      ? rest
-      : { ...rest, provider, model };
-  });
+/** A provider/model pair naming one judge's model. */
+export interface ModelPair {
+  provider: string;
+  model: string;
 }
 
 /**
- * Set `systemOne.provider` and `systemOne.model` in the global config file,
- * creating the `systemOne` object when absent and preserving every other
- * field inside and outside it. Atomic and durable, see
+ * What one /permission-model choice sets. An absent field is left as it is;
+ * `llm: null` removes the top-level `provider` and `model`, so the LLM judge
+ * follows the chat model.
+ */
+export interface JudgeSelection {
+  mode?: Mode;
+  llm?: ModelPair | null;
+  quick?: ModelPair;
+}
+
+/**
+ * Write a selection to the global config file in one atomic write: `mode`,
+ * the top-level LLM pair, and `quickJudge.provider`/`quickJudge.model`
+ * (creating the `quickJudge` object when absent). Every field the selection
+ * does not set is preserved, inside `quickJudge` too. See
  * {@link rewriteGlobalConfig}.
  */
-export function writeGlobalSystemOne(
-  agentDir: string,
-  provider: string,
-  model: string,
-): void {
+export function writeGlobalSelection(agentDir: string, selection: JudgeSelection): void {
   rewriteGlobalConfig(agentDir, (current) => {
-    const existing = isRecord(current.systemOne) ? current.systemOne : {};
-    return { ...current, systemOne: { ...existing, provider, model } };
+    let next = { ...current };
+    if (selection.mode !== undefined) {
+      next.mode = selection.mode;
+    }
+    if (selection.llm === null) {
+      const { provider: _provider, model: _model, ...rest } = next;
+      next = rest;
+    } else if (selection.llm !== undefined) {
+      next.provider = selection.llm.provider;
+      next.model = selection.llm.model;
+    }
+    if (selection.quick !== undefined) {
+      const existing = isRecord(current.quickJudge) ? current.quickJudge : {};
+      next.quickJudge = {
+        ...existing,
+        provider: selection.quick.provider,
+        model: selection.quick.model,
+      };
+    }
+    return next;
   });
 }

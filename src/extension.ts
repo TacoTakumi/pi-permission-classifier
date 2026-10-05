@@ -68,8 +68,7 @@ import {
   globalConfigExists,
   type LoadConfigResult,
   loadClassifierConfig,
-  writeGlobalJudge,
-  writeGlobalSystemOne,
+  writeGlobalSelection,
 } from "./config-loader";
 import { CircuitBreaker } from "./breaker";
 import {
@@ -149,11 +148,13 @@ export function createClassifierExtension(
   const writeJudge =
     dependencies.writeJudge ??
     ((provider: string | undefined, model: string | undefined) =>
-      writeGlobalJudge(agentDir(), provider, model));
+      writeGlobalSelection(agentDir(), {
+        llm: provider === undefined || model === undefined ? null : { provider, model },
+      }));
   const writeSystemOne =
     dependencies.writeSystemOne ??
     ((provider: string, model: string) =>
-      writeGlobalSystemOne(agentDir(), provider, model));
+      writeGlobalSelection(agentDir(), { quick: { provider, model } }));
   const loadGuidance = dependencies.loadGuidance ?? loadGuidanceFromDisk;
 
   pi.registerFlag(FLAG_NAME, {

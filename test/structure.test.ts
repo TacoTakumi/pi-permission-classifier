@@ -428,7 +428,7 @@ describe("judge model picker guards", () => {
     }
   });
 
-  it("config writes rename over the target inside rewriteGlobalConfig, and both writers use it", () => {
+  it("config writes rename over the target inside rewriteGlobalConfig, and the selection writer uses it", () => {
     // Scoped to the writer body: a renameSync elsewhere in the file, or in a
     // comment, proves nothing about how config.json is replaced.
     const source = src("config-loader.ts");
@@ -436,9 +436,9 @@ describe("judge model picker guards", () => {
     expect(body).toMatch(/\brenameSync\s*\(/);
     expect(body).not.toMatch(/\bwriteFileSync\s*\(/);
     expect(source).not.toMatch(/\bwriteFileSync\s*\(/);
-    for (const writer of ["writeGlobalJudge", "writeGlobalSystemOne"]) {
-      expect(functionSource(source, writer)).toMatch(/\brewriteGlobalConfig\s*\(/);
-    }
+    expect(functionSource(source, "writeGlobalSelection")).toMatch(/\brewriteGlobalConfig\s*\(/);
+    // One writer: every config write goes through the selection writer.
+    expect(source.match(/\brewriteGlobalConfig\s*\(/g)).toHaveLength(2);
   });
 
   it("the picker is pi's own selector, built with the 0.84.3 six-argument form", () => {
