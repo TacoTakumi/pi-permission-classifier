@@ -191,8 +191,11 @@ function findKnown(provider: string, id: string): Model<any> | undefined {
 const allowingComplete = () =>
   vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "allow" }));
 
+/** The latest callback registered as permission-judge. */
 function lastAuthorizer(): RegisteredAuthorizer {
-  return service.registerAuthorizer.mock.calls.at(-1)?.[1] as RegisteredAuthorizer;
+  return service.registerAuthorizer.mock.calls
+    .filter((call) => call[0] === "permission-judge")
+    .at(-1)?.[1] as RegisteredAuthorizer;
 }
 
 let service: ReturnType<typeof makeService>;
@@ -259,7 +262,7 @@ describe("createClassifierExtension", () => {
     expect(service.registerAuthorizer).not.toHaveBeenCalled();
     publishForSession();
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(service.registerAuthorizer.mock.calls[0]?.[0]).toBe("permission-judge");
     expect(typeof service.registerAuthorizer.mock.calls[0]?.[1]).toBe(
       "function",
@@ -274,7 +277,7 @@ describe("createClassifierExtension", () => {
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -308,7 +311,7 @@ describe("createClassifierExtension", () => {
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(service.registerAuthorizer.mock.calls[0]?.[0]).toBe("permission-judge");
     expect(warn).not.toHaveBeenCalled();
   });
@@ -327,7 +330,7 @@ describe("createClassifierExtension", () => {
     publishForSession();
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(service.registerAuthorizer.mock.calls[0]?.[0]).toBe("permission-judge");
     // The defaults apply: a model defer stays defer under allow-deny-defer.
     const log = { review: vi.fn(), debug: vi.fn() };
@@ -355,7 +358,7 @@ describe("createClassifierExtension", () => {
     publishForSession();
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toMatch(/surfaces/);
     expect(warn.mock.calls[0]?.[0]).toMatch(/ignored/);
@@ -402,12 +405,12 @@ describe("createClassifierExtension", () => {
     publishForSession();
     pi.lifecycle.get("session_start")?.({}, ctxWithModel());
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     pi.lifecycle.get("session_shutdown")?.({}, ctxWithModel());
-    expect(service.disposer).toHaveBeenCalledTimes(1);
+    expect(service.disposer).toHaveBeenCalledTimes(2);
     // A late ready from the torn-down session must not re-register.
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     // A subsequent session registers on its own keyed service.
     const nextService = makeService();
     publishPermissionsService("session-2", nextService);
@@ -417,8 +420,8 @@ describe("createClassifierExtension", () => {
         sessionId: "session-2",
         adjudicatesLocally: true,
       });
-      expect(nextService.registerAuthorizer).toHaveBeenCalledTimes(1);
-      expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+      expect(nextService.registerAuthorizer).toHaveBeenCalledTimes(2);
+      expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     } finally {
       unpublishPermissionsService("session-2", nextService);
     }
@@ -754,7 +757,7 @@ describe("footer status", () => {
     pi.lifecycle.get("session_start")?.({}, ctx);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
     expect(ctx.ui.setStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -1288,7 +1291,7 @@ describe("permission-judge modes", () => {
   const log = () => ({ review: vi.fn(), debug: vi.fn() });
 
   it.each(["llm", "quick", "quick-then-llm"])(
-    "registers only permission-judge in mode %s, once across ready events, disposed at shutdown",
+    "registers permission-judge and the classifier alias in mode %s, once across ready events, disposed at shutdown",
     (mode) => {
       const pi = makeFakePi();
       start(pi, {
@@ -1299,11 +1302,56 @@ describe("permission-judge modes", () => {
       pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
       pi.events.get(READY_CHANNEL)?.(READY_EVENT);
       pi.events.get(READY_CHANNEL)?.(READY_EVENT);
-      expect(registeredNames()).toEqual(["permission-judge"]);
+      expect(registeredNames()).toEqual(["permission-judge", "classifier"]);
       pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
-      expect(service.disposer).toHaveBeenCalledTimes(1);
+      expect(service.disposer).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("judges under the classifier alias as under permission-judge, warning once per session", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = allowingComplete();
+    const pi = makeFakePi();
+    start(pi, { complete });
+    publishForSession();
+    for (let session = 0; session < 2; session += 1) {
+      pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+      pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+      const alias = service.registerAuthorizer.mock.calls
+        .filter((call) => call[0] === "classifier")
+        .at(-1)?.[1] as RegisteredAuthorizer;
+      expect(await alias({ ...askDetails(), requestId: "a1" }, {}, log())).toEqual({
+        kind: "allow",
+      });
+      await alias({ ...askDetails(), requestId: "a2" }, {}, log());
+      pi.lifecycle.get("session_shutdown")?.({}, ctxWithClassifier());
+    }
+    expect(complete).toHaveBeenCalledTimes(4);
+    const deprecated = warn.mock.calls.filter(([message]) =>
+      String(message).includes("deprecated"),
+    );
+    expect(deprecated).toHaveLength(2);
+  });
+
+  it("judges an ask once when both names are in the chain", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "defer" }));
+    const pi = makeFakePi();
+    start(pi, { complete });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithClassifier());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    const named = (name: string) =>
+      service.registerAuthorizer.mock.calls.find((call) => call[0] === name)?.[1] as RegisteredAuthorizer;
+    const details = { ...askDetails(), requestId: "same" };
+    const first = log();
+    const second = log();
+    expect(await named("permission-judge")(details, {}, first)).toEqual({ kind: "defer" });
+    expect(await named("classifier")(details, {}, second)).toEqual({ kind: "defer" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(first.review).toHaveBeenCalledTimes(1);
+    expect(second.review).not.toHaveBeenCalled();
+  });
 
   it("judges with the quick judge in mode quick, under its own policy", async () => {
     const classify = vi.fn(async () => DENY_RESULT);
@@ -1354,7 +1402,7 @@ describe("permission-judge modes", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(await authorize(askDetails(), {}, log())).toEqual({ kind: "allow" });
     expect(classify).toHaveBeenCalledTimes(1);
-    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(2);
   });
 
   it("warns once per session about a cascade policy override", async () => {

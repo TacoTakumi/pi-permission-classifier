@@ -1,8 +1,10 @@
 /**
  * Extension wiring: load the config at `session_start`, register the
- * `"permission-judge"` link from `permissions:ready`, and dispose it on
- * shutdown. The link reads the config's `mode` on every ask and runs the
- * LLM judge, the quick judge, or both (see `judge-link.ts`).
+ * `"permission-judge"` link and its deprecated alias `"classifier"` from
+ * `permissions:ready`, and dispose both on shutdown. The link reads the
+ * config's `mode` on every ask and runs the LLM judge, the quick judge, or
+ * both (see `judge-link.ts`); the names share one judge (see
+ * `name-alias.ts`).
  *
  * The ready handler is the sole registration site. pi-permission-system
  * >=27.0.0 emits `permissions:ready` at least once after every extension's
@@ -92,11 +94,10 @@ import {
 } from "./judge";
 import { createJudgeLink } from "./judge-link";
 import type { CompleteFn } from "./model-review";
+import { createNamedAuthorizers } from "./name-alias";
 import type { QuickJudgeRegistryLike } from "./quick-judge";
 import type { ModelRegistryLike } from "./reviewer";
 
-/** The operator-facing chain-link name referenced from `authorizerChain`. */
-const LINK_NAME = "permission-judge";
 
 /** The footer status key naming the effective judge. pi sorts extension
  * statuses by key on one footer line; the `zz-` prefix keeps this entry last. */
@@ -386,8 +387,8 @@ export function createClassifierExtension(
       warnUnreachableOnce();
       return;
     }
-    // One link per session: its once-per-session warnings live in the closure.
-    const authorize = createJudgeLink({
+    // One link per session: its once-per-session warnings live in the closures.
+    const judge = createJudgeLink({
       getConfig: effectiveConfig,
       warn,
       llm: {
@@ -414,7 +415,14 @@ export function createClassifierExtension(
         },
       },
     });
-    dispose = service.registerAuthorizer(LINK_NAME, authorize);
+    const disposers = createNamedAuthorizers(judge, { warn }).map(({ name, authorize }) =>
+      service.registerAuthorizer(name, authorize),
+    );
+    dispose = () => {
+      for (const disposeName of disposers) {
+        disposeName();
+      }
+    };
     refreshStatus();
   });
 
