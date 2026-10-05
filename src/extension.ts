@@ -67,6 +67,7 @@ import {
   type LoadConfigResult,
   loadClassifierConfig,
   writeGlobalJudge,
+  writeGlobalSystemOne,
 } from "./config-loader";
 import { CircuitBreaker } from "./breaker";
 import {
@@ -130,6 +131,8 @@ export interface ClassifierDependencies {
   complete?: CompleteFn;
   /** Persist a judge pair to the global config; both `undefined` removes it. */
   writeJudge?: (provider: string | undefined, model: string | undefined) => void;
+  /** Persist a classifier pair to `systemOne` in the global config. */
+  writeSystemOne?: (provider: string, model: string) => void;
   /** Builds the /permission-model picker; the default mounts pi's selector. */
   buildPicker?: PickerSeam;
   /** Reads the context files from disk; defaults to pi's context-file walk. */
@@ -160,6 +163,10 @@ export function createClassifierExtension(
     dependencies.writeJudge ??
     ((provider: string | undefined, model: string | undefined) =>
       writeGlobalJudge(agentDir(), provider, model));
+  const writeSystemOne =
+    dependencies.writeSystemOne ??
+    ((provider: string, model: string) =>
+      writeGlobalSystemOne(agentDir(), provider, model));
   const loadGuidance = dependencies.loadGuidance ?? loadGuidanceFromDisk;
 
   pi.registerFlag(FLAG_NAME, {
@@ -351,11 +358,18 @@ export function createClassifierExtension(
       globalConfigPath: () => getGlobalConfigPath(agentDir()),
       projectConfigPath: getProjectConfigPath,
       writeJudge,
+      writeSystemOne,
       reload: (cwd) => loadConfig(cwd, projectTrusted()),
       apply: (next) => {
         // An explicit choice replaces a flag override for the rest of the session.
         config = next;
         override = undefined;
+        refreshStatus();
+      },
+      applySystemOne: (next) => {
+        // The flag override names the classifier judge; a systemOne write
+        // leaves it alone.
+        config = next;
         refreshStatus();
       },
     }),

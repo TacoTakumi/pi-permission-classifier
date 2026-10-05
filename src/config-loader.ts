@@ -221,9 +221,8 @@ export function loadClassifierConfig(options: {
 }
 
 /**
- * Rewrite only `provider` and `model` in the global config file, preserving
- * every other field. When either argument is `undefined` both keys are
- * removed (the session model judges); the command passes both or neither.
+ * Rewrite the global config file through `transform`, which receives the
+ * parsed JSON object and returns the next one.
  *
  * The write is atomic and durable: the new content goes to a sibling temporary
  * file that is fsynced before it is renamed over `config.json`, so neither a
@@ -238,10 +237,9 @@ export function loadClassifierConfig(options: {
  * with the original file's mode, set exactly with `fchmodSync` so the process
  * umask cannot silently tighten it.
  */
-export function writeGlobalJudge(
+export function rewriteGlobalConfig(
   agentDir: string,
-  provider: string | undefined,
-  model: string | undefined,
+  transform: (current: Record<string, unknown>) => Record<string, unknown>,
 ): void {
   const path = getGlobalConfigPath(agentDir);
   if (!existsSync(path)) {
@@ -256,11 +254,7 @@ export function writeGlobalJudge(
     throw new Error(`Global config is not a JSON object: ${path}`);
   }
 
-  const { provider: _provider, model: _model, ...rest } = parsed;
-  const next: Record<string, unknown> =
-    provider === undefined || model === undefined
-      ? rest
-      : { ...rest, provider, model };
+  const next = transform(parsed);
 
   const tempPath = `${target}.${process.pid}.tmp`;
   try {
@@ -282,4 +276,40 @@ export function writeGlobalJudge(
     }
     throw error;
   }
+}
+
+/**
+ * Rewrite only `provider` and `model` in the global config file, preserving
+ * every other field. When either argument is `undefined` both keys are
+ * removed (the session model judges); the command passes both or neither.
+ * Atomic and durable, see {@link rewriteGlobalConfig}.
+ */
+export function writeGlobalJudge(
+  agentDir: string,
+  provider: string | undefined,
+  model: string | undefined,
+): void {
+  rewriteGlobalConfig(agentDir, (current) => {
+    const { provider: _provider, model: _model, ...rest } = current;
+    return provider === undefined || model === undefined
+      ? rest
+      : { ...rest, provider, model };
+  });
+}
+
+/**
+ * Set `systemOne.provider` and `systemOne.model` in the global config file,
+ * creating the `systemOne` object when absent and preserving every other
+ * field inside and outside it. Atomic and durable, see
+ * {@link rewriteGlobalConfig}.
+ */
+export function writeGlobalSystemOne(
+  agentDir: string,
+  provider: string,
+  model: string,
+): void {
+  rewriteGlobalConfig(agentDir, (current) => {
+    const existing = isRecord(current.systemOne) ? current.systemOne : {};
+    return { ...current, systemOne: { ...existing, provider, model } };
+  });
 }

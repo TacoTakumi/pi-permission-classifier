@@ -18,6 +18,10 @@
  *     `provider/id` labels from `getAvailable()` with a warning.
  *   - no argument outside the TUI: print the current judge and the usage
  *     line (pi's `ctx.ui.custom` returns nothing in rpc/json/print modes).
+ *   - `system-one <provider>/<id>`: validate through the registry's
+ *     classifier lookup only, persist the pair to `systemOne` in the global
+ *     config, reload, and apply live for the next ask. A chat model or an
+ *     unknown pair is refused and nothing is written.
  *
  * Argument completion offers `provider/id` labels from the registry's
  * available models whose label starts with the typed prefix, plus the
@@ -39,7 +43,7 @@
  * in-memory config as it was, so a bad pick can never widen a verdict.
  */
 
-import type { Model } from "@earendil-works/pi-ai";
+import type { ClassifierApi, ClassifierModel, Model } from "@earendil-works/pi-ai";
 import {
   type ExtensionAPI,
   type ExtensionUIContext,
@@ -62,7 +66,9 @@ export const COMMAND_NAME = "permission-model";
 
 const SESSION_FORM = "session";
 
-const USAGE = `/${COMMAND_NAME} <provider>/<id> | ${SESSION_FORM}`;
+const SYSTEM_ONE_FORM = "system-one";
+
+const USAGE = `/${COMMAND_NAME} <provider>/<id> | ${SESSION_FORM} | ${SYSTEM_ONE_FORM} <provider>/<id>`;
 
 type CommandOptions = Parameters<ExtensionAPI["registerCommand"]>[1];
 /** pi's completion result, restricted to the synchronous half this command returns. */
@@ -80,6 +86,11 @@ export type PickerComponent = ReturnType<PickerFactory>;
 /** The narrow registry projection the command needs. */
 export interface CommandRegistryLike {
   find(provider: string, modelId: string): Model<any> | undefined;
+  findOfType(
+    type: "classifier",
+    provider: string,
+    modelId: string,
+  ): ClassifierModel<ClassifierApi> | undefined;
   hasConfiguredAuth(model: Model<any>): boolean;
   getAvailable(): Model<any>[];
 }
@@ -164,10 +175,14 @@ export interface CommandDependencies {
   projectConfigPath(cwd: string): string;
   /** Persist the pair to the global config (both `undefined` removes it). */
   writeJudge(provider: string | undefined, model: string | undefined): void;
+  /** Persist the pair to `systemOne` in the global config. */
+  writeSystemOne(provider: string, model: string): void;
   /** Reload the merged config from disk after a write. */
   reload(cwd: string): LoadConfigResult;
   /** Replace the live config, drop any flag override, refresh the status. */
   apply(config: ClassifierConfig): void;
+  /** Replace the live config after a systemOne write; the classifier judge's flag override stays. */
+  applySystemOne(config: ClassifierConfig): void;
   /** Builds the picker component; defaults to {@link buildModelSelector}. */
   buildPicker?: PickerSeam;
 }
@@ -207,22 +222,23 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Write the pair (or its removal), reload, apply, and report. Returns
-   * whether the new config went live.
+   * Run a write, reload, and apply. Returns the reload result once the new
+   * config went live, else `undefined` after telling the operator why.
    */
-  function persist(
-    pair: JudgePair | undefined,
+  function writeAndApply(
+    write: () => void,
+    apply: (config: ClassifierConfig) => void,
     ctx: CommandContextLike,
-  ): boolean {
+  ): LoadConfigResult | undefined {
     try {
-      deps.writeJudge(pair?.provider, pair?.model);
+      write();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(
         `Could not write ${deps.globalConfigPath()}: ${message}. Nothing changed.`,
         "error",
       );
-      return false;
+      return undefined;
     }
     const result = deps.reload(ctx.cwd);
     if (result.config === undefined) {
@@ -234,21 +250,44 @@ export function createPermissionModelCommand(
         `Saved to ${deps.globalConfigPath()}, but the merged config is now invalid (${describeIssues(result.issues)}). The previous judge stays active for this session; fix the config and restart.`,
         "error",
       );
-      return false;
+      return undefined;
     }
-    deps.apply(result.config);
-    ctx.ui.notify(
-      pair
-        ? `Permission judge set to ${pair.provider}/${pair.model} (saved to the global config).`
-        : "Permission judge follows the session model (provider/model removed from the global config).",
-      "info",
-    );
+    apply(result.config);
+    return result;
+  }
+
+  function reportReloadIssues(result: LoadConfigResult, ctx: CommandContextLike): void {
     if (result.issues.length > 0) {
       ctx.ui.notify(
         `Config issues after reload: ${describeIssues(result.issues)}.`,
         "warning",
       );
     }
+  }
+
+  /**
+   * Write the pair (or its removal), reload, apply, and report. Returns
+   * whether the new config went live.
+   */
+  function persist(
+    pair: JudgePair | undefined,
+    ctx: CommandContextLike,
+  ): boolean {
+    const result = writeAndApply(
+      () => deps.writeJudge(pair?.provider, pair?.model),
+      deps.apply,
+      ctx,
+    );
+    if (!result) {
+      return false;
+    }
+    ctx.ui.notify(
+      pair
+        ? `Permission judge set to ${pair.provider}/${pair.model} (saved to the global config).`
+        : "Permission judge follows the session model (provider/model removed from the global config).",
+      "info",
+    );
+    reportReloadIssues(result, ctx);
     if (result.projectSetsJudge) {
       ctx.ui.notify(
         `${deps.projectConfigPath(ctx.cwd)} sets its own provider/model and shadows this choice in this project.`,
@@ -304,6 +343,49 @@ export function createPermissionModelCommand(
       return;
     }
     applyModel(model, ctx);
+  }
+
+  /**
+   * Resolve a `<provider>/<id>` pair through the classifier lookup only and
+   * persist it to `systemOne`. The session model, the classifier judge and
+   * the default model are never touched.
+   */
+  function applySystemOnePair(pair: JudgePair, ctx: CommandContextLike): void {
+    const model = ctx.modelRegistry.findOfType("classifier", pair.provider, pair.model);
+    if (!model) {
+      ctx.ui.notify(
+        `Unknown classifier model ${pair.provider}/${pair.model}: the model registry has no classifier by that name. Nothing changed.`,
+        "error",
+      );
+      return;
+    }
+    const hadSystemOne = deps.getConfig()?.systemOne !== undefined;
+    const result = writeAndApply(
+      () => deps.writeSystemOne(model.provider, model.id),
+      deps.applySystemOne,
+      ctx,
+    );
+    if (!result) {
+      return;
+    }
+    ctx.ui.notify(
+      `System One judge set to ${model.provider}/${model.id} (saved to systemOne in the global config).`,
+      "info",
+    );
+    if (!hadSystemOne) {
+      ctx.ui.notify(
+        "The system-one link registers at the next session start; add it to authorizerChain to use it.",
+        "info",
+      );
+    }
+    reportReloadIssues(result, ctx);
+    const applied = result.config?.systemOne;
+    if (applied?.provider !== model.provider || applied?.model !== model.id) {
+      ctx.ui.notify(
+        `${deps.projectConfigPath(ctx.cwd)} sets its own systemOne and shadows this choice in this project.`,
+        "warning",
+      );
+    }
   }
 
   /** The degraded picker: a plain list of `provider/id` labels. */
@@ -382,6 +464,18 @@ export function createPermissionModelCommand(
     if (text === SESSION_FORM) {
       if (canWrite(ctx)) {
         persist(undefined, ctx);
+      }
+      return;
+    }
+    const [head, ...tail] = text.split(/\s+/);
+    if (head === SYSTEM_ONE_FORM) {
+      const systemOnePair = tail.length === 1 ? parseJudgePair(tail[0]!) : undefined;
+      if (!systemOnePair) {
+        ctx.ui.notify(`Expected a classifier model reference. Usage: ${USAGE}`, "error");
+        return;
+      }
+      if (canWrite(ctx)) {
+        applySystemOnePair(systemOnePair, ctx);
       }
       return;
     }

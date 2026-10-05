@@ -24,6 +24,7 @@ import {
   globalConfigExists,
   loadClassifierConfig,
   writeGlobalJudge,
+  writeGlobalSystemOne,
 } from "#src/config-loader";
 
 /**
@@ -597,6 +598,97 @@ describe("writeGlobalJudge", () => {
     expect(directWriteCalls([globalPath, realpathSync(globalPath)])).toEqual(
       [],
     );
+  });
+});
+
+describe("writeGlobalSystemOne", () => {
+  let root: string;
+  let agentDir: string;
+  let globalPath: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pi-permission-classifier-test-"));
+    agentDir = join(root, "agent");
+    globalPath = getGlobalConfigPath(agentDir);
+    mkdirSync(dirname(globalPath), { recursive: true });
+    fsCalls.length = 0;
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function readGlobal(): Record<string, unknown> {
+    return JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>;
+  }
+
+  it("adds a systemOne object with the pair and preserves every other field", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({ provider: "anthropic", model: "claude-haiku", timeoutMs: 750 }),
+    );
+    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
+    expect(readGlobal()).toEqual({
+      provider: "anthropic",
+      model: "claude-haiku",
+      timeoutMs: 750,
+      systemOne: { provider: "typesafe", model: "jev-latest" },
+    });
+  });
+
+  it("replaces only the pair inside an existing systemOne object", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        classifierEnabled: false,
+        systemOne: { provider: "typesafe", model: "jev", verdicts: "allow-deny", allowThreshold: 0.8 },
+      }),
+    );
+    writeGlobalSystemOne(agentDir, "local", "kev-4b-q8");
+    expect(readGlobal()).toEqual({
+      classifierEnabled: false,
+      systemOne: {
+        provider: "local",
+        model: "kev-4b-q8",
+        verdicts: "allow-deny",
+        allowThreshold: 0.8,
+      },
+    });
+  });
+
+  it("writes a file the loader accepts", () => {
+    writeFileSync(globalPath, "{}");
+    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
+    const result = loadClassifierConfig({
+      cwd: join(root, "project"),
+      agentDir,
+      projectTrusted: true,
+    });
+    expect(result.issues).toEqual([]);
+    expect(result.config?.systemOne?.provider).toBe("typesafe");
+    expect(result.config?.systemOne?.model).toBe("jev-latest");
+  });
+
+  it("writes through a temp file renamed over the config", () => {
+    writeFileSync(globalPath, "{}");
+    fsCalls.length = 0;
+    writeGlobalSystemOne(agentDir, "typesafe", "jev-latest");
+    expect(writePathCalls()).toEqual([
+      "openSync",
+      "writeSync",
+      "fsyncSync",
+      "closeSync",
+      "renameSync",
+    ]);
+    const target = realpathSync(globalPath);
+    expect(directWriteCalls([globalPath, target])).toEqual([]);
+  });
+
+  it("throws and writes nothing when the global file is absent", () => {
+    expect(() => writeGlobalSystemOne(agentDir, "typesafe", "jev-latest")).toThrow(
+      /not found/,
+    );
+    expect(readdirSync(dirname(globalPath))).toEqual([]);
   });
 });
 

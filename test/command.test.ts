@@ -18,6 +18,7 @@ import { type JudgePair, resolveJudge } from "#src/judge";
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
 const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
+const JEV = { provider: "typesafe", id: "jev-latest", type: "classifier" } as never;
 
 const EMPTY_CONFIG: ClassifierConfig = {
   surfaces: ["bash"],
@@ -57,9 +58,16 @@ type CustomFactory<T> = (
   done: (result: T) => void,
 ) => PickerComponent;
 
+function findClassifier(type: string, provider: string, id: string) {
+  return type === "classifier" && provider === "typesafe" && id === "jev-latest"
+    ? JEV
+    : undefined;
+}
+
 function makeRegistry(options: { runtime?: boolean } = {}) {
   return {
     find: vi.fn(findKnown),
+    findOfType: vi.fn(findClassifier),
     hasConfiguredAuth: vi.fn(() => true),
     getAvailable: vi.fn(() => AVAILABLE),
     ...(options.runtime === false
@@ -116,10 +124,14 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
     projectConfigPath: (cwd: string) =>
       `${cwd}/.pi/extensions/pi-permission-classifier/config.json`,
     writeJudge: vi.fn<CommandDependencies["writeJudge"]>(),
+    writeSystemOne: vi.fn<CommandDependencies["writeSystemOne"]>(),
     reload: vi.fn<CommandDependencies["reload"]>(() => reloaded),
     apply: vi.fn<CommandDependencies["apply"]>((config) => {
       state.config = config;
       state.override = undefined;
+    }),
+    applySystemOne: vi.fn<CommandDependencies["applySystemOne"]>((config) => {
+      state.config = config;
     }),
   } satisfies CommandDependencies;
   return { state, reloaded, deps, registry };
@@ -619,5 +631,146 @@ describe("the ui slice is pi's own ExtensionUIContext (T-21)", () => {
       Pick<ExtensionUIContext, "notify" | "select" | "custom">
     > = true;
     expect(derived).toBe(true);
+  });
+});
+
+describe("/permission-model system-one <provider>/<id>", () => {
+  const SYSTEM_ONE_RELOADED: LoadConfigResult = {
+    config: {
+      ...EMPTY_CONFIG,
+      systemOne: {
+        provider: "typesafe",
+        model: "jev-latest",
+        verdicts: "allow-defer",
+        onError: "defer",
+        allowThreshold: 0.9,
+        denyThreshold: 0.9,
+        guidance: true,
+        timeoutMs: 5000,
+      },
+    },
+    issues: [],
+    projectSetsJudge: false,
+  };
+
+  function withSystemOne() {
+    const made = makeDeps({ ...EMPTY_CONFIG, systemOne: SYSTEM_ONE_RELOADED.config!.systemOne! });
+    made.deps.reload.mockImplementation(() => SYSTEM_ONE_RELOADED);
+    return made;
+  }
+
+  it("writes a known classifier pair to systemOne, reloads and applies it", async () => {
+    const { deps, state } = withSystemOne();
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(ctx.modelRegistry.findOfType).toHaveBeenCalledWith(
+      "classifier",
+      "typesafe",
+      "jev-latest",
+    );
+    expect(deps.writeSystemOne).toHaveBeenCalledWith("typesafe", "jev-latest");
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(deps.reload).toHaveBeenCalledWith("/project");
+    expect(deps.applySystemOne).toHaveBeenCalledWith(SYSTEM_ONE_RELOADED.config);
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config?.systemOne?.model).toBe("jev-latest");
+    expect(notifyOf(ctx, "info")).toMatch(/typesafe\/jev-latest/);
+    expect(notifyTypes(ctx)).not.toContain("error");
+  });
+
+  it("refuses an unknown pair and writes nothing", async () => {
+    const { deps } = withSystemOne();
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/nope", ctx);
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(deps.reload).not.toHaveBeenCalled();
+    expect(deps.applySystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "error")).toMatch(/typesafe\/nope/);
+    expect(notifyOf(ctx, "error")).toMatch(/classifier/);
+  });
+
+  it("refuses a chat model: only the classifier lookup counts", async () => {
+    const { deps } = withSystemOne();
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one p/m", ctx);
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toContain("error");
+  });
+
+  it("refuses a malformed reference with the usage line", async () => {
+    const { deps } = withSystemOne();
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one not-a-pair", ctx);
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "error")).toMatch(/system-one <provider>\/<id>/);
+  });
+
+  it("refuses with the setup hint when the global config is absent", async () => {
+    const { deps } = withSystemOne();
+    deps.globalConfigExists.mockReturnValue(false);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(deps.writeSystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "warning")).toContain(GLOBAL_PATH);
+  });
+
+  it("reports a failed write and changes nothing", async () => {
+    const { deps } = withSystemOne();
+    deps.writeSystemOne.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(deps.applySystemOne).not.toHaveBeenCalled();
+    expect(notifyOf(ctx, "error")).toMatch(/disk full/);
+  });
+
+  it("keeps the previous config live when the reload no longer validates", async () => {
+    const { deps } = withSystemOne();
+    deps.reload.mockImplementation(() => ({
+      config: undefined,
+      issues: [{ path: "systemOne", message: "bad", sourcePath: GLOBAL_PATH }],
+      projectSetsJudge: false,
+    }));
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(deps.applySystemOne).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toContain("error");
+  });
+
+  it("warns when the project config shadows the choice", async () => {
+    const { deps } = withSystemOne();
+    deps.reload.mockImplementation(() => ({
+      ...SYSTEM_ONE_RELOADED,
+      config: {
+        ...SYSTEM_ONE_RELOADED.config!,
+        systemOne: { ...SYSTEM_ONE_RELOADED.config!.systemOne!, model: "other" },
+      },
+    }));
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+  });
+
+  it("says the link registers at the next session when systemOne was absent", async () => {
+    const { deps } = makeDeps();
+    deps.reload.mockImplementation(() => SYSTEM_ONE_RELOADED);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(deps.writeSystemOne).toHaveBeenCalled();
+    const messages = ctx.ui.notify.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(messages).toMatch(/next session/);
+  });
+
+  it("never touches the classifier judge, its flag override or the session model", async () => {
+    const { deps, state } = withSystemOne();
+    state.override = { provider: "q", model: "n" };
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("system-one typesafe/jev-latest", ctx);
+    expect(deps.writeJudge).not.toHaveBeenCalled();
+    expect(ctx.modelRegistry.find).not.toHaveBeenCalled();
+    expect(state.config?.provider).toBeUndefined();
+    expect(state.override).toEqual({ provider: "q", model: "n" });
+    expect(ctx.model).toBe(SESSION_MODEL);
   });
 });
