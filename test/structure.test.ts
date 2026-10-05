@@ -71,8 +71,10 @@ describe("no path-based allow capping in link code", () => {
     },
   );
 
-  it("returns the model verdict object unmodified", () => {
-    expect(src("reviewer.ts")).toContain("return outcome.verdict");
+  it("passes the model verdict through the verdict policy, never path rules", () => {
+    const source = src("reviewer.ts");
+    expect(source).toContain("applyVerdictPolicy(linkOutcomeOf(outcome), policy)");
+    expect(source).not.toContain("return outcome.verdict");
   });
 });
 
@@ -297,7 +299,7 @@ describe("operator docs", () => {
   });
 });
 
-describe("fail-safe: no failure maps to deny", () => {
+describe("fail-safe: verdicts come only from the model or the policy", () => {
   it("the config schema exposes no field named after deny or failure", () => {
     const fields = Object.keys(classifierConfigSchema.parse({}));
     // Every declared field, read from the schema source so an optional field
@@ -311,9 +313,14 @@ describe("fail-safe: no failure maps to deny", () => {
     }
   });
 
-  it("the reviewer never returns deny from a defer site", () => {
+  it("the reviewer builds allow and deny only by mapping a model verdict", () => {
     const source = src("reviewer.ts");
-    expect(source).not.toMatch(/kind:\s*"deny"/);
+    const mapper = source.slice(source.indexOf("function linkOutcomeOf"));
+    for (const kind of ["allow", "deny"]) {
+      const pattern = new RegExp(`kind:\\s*"${kind}"`, "g");
+      expect(source.match(pattern)?.length, kind).toBe(1);
+      expect(mapper.match(pattern)?.length, kind).toBe(1);
+    }
   });
 });
 

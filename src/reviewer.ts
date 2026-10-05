@@ -16,13 +16,14 @@
  *   4. the judge model and its auth resolve (else defer, recorded),
  *   5. the guidance seam selects the operator and trusted-project guidance
  *      files for this ask (a throw defers, recorded — no model call),
- *   6. the model reviews the ask facts plus guidance and its verdict is
- *      returned uncapped.
+ *   6. the model reviews the ask facts plus guidance.
  *
- * Every failure path defers — more prompting, never less (ADR 0007
- * invariant). Each reviewed ask writes exactly one `classifier.decision`
- * review entry; raw model replies and the cheap short-circuits go to the
- * debug log.
+ * Once a config is loaded, every outcome from step 3 on goes through the
+ * verdict policy, which applies the link's `verdicts` and `onError`
+ * settings. A failure never allows: it defers, or denies with a fixed reason
+ * under `onError` deny. Each reviewed ask writes exactly one
+ * `classifier.decision` review entry tagged `link: "classifier"`; raw model
+ * replies and the cheap short-circuits go to the debug log.
  */
 
 import type { Model } from "@earendil-works/pi-ai";
@@ -38,7 +39,13 @@ import type { ClassifierConfig } from "./config-schema";
 import { extractFullCommandContext, type FullCommandContext } from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
-import { type CompleteFn, reviewAsk } from "./model-review";
+import { type CompleteFn, type ReviewOutcome, reviewAsk } from "./model-review";
+import {
+  applyVerdictPolicy,
+  type FailureKind,
+  type LinkOutcome,
+  type VerdictPolicy,
+} from "./verdict-policy";
 
 /**
  * Surface families the engine caps to defer; the classifier never even asks.
@@ -58,6 +65,13 @@ function isExcludedSurface(surface: string): boolean {
 
 /** Review-log event: one positive decision record per reviewed ask. */
 const DECISION_EVENT = "classifier.decision";
+/** The link name every decision entry of this reviewer carries. */
+const LINK_NAME = "classifier";
+/**
+ * The recorded reason when `allow-defer` turns a model deny into defer: the
+ * judge worked, the setting withheld the deny.
+ */
+const DENY_CAPPED_REASON = "deny-capped";
 /** Debug-log event: a cheap short-circuit before the model stage. */
 const SHORT_CIRCUIT_EVENT = "classifier.short_circuit";
 /** Debug-log event: the raw model reply, gated behind `debugLog`. */
@@ -71,6 +85,9 @@ type PreModelDeferReason =
   | "breaker-open"
   | "context-over-budget"
   | "guidance-load-failed";
+
+/** The policy when no config can be read: the schema defaults. */
+const DEFAULT_POLICY: VerdictPolicy = { verdicts: "allow-deny-defer", onError: "defer" };
 
 /** Model-call outcomes that count against the circuit breaker. */
 const BREAKER_FAILURE_REASONS = new Set(["timeout", "call-failed"]);
@@ -157,17 +174,20 @@ export function createClassifierReviewer(
     } catch {
       // The unconditional backstop: whatever threw — an injected seam
       // rejecting instead of returning ok:false, a malformed details bag,
-      // even the log itself — the ask defers (more prompting, never less).
+      // even the log itself — is an internal-error failure under the
+      // link's onError, and never an allow.
+      const verdict = backstopVerdict(deps);
       try {
         const context = extractFullCommandContext(details.payload);
         log.review(DECISION_EVENT, {
+          link: LINK_NAME,
           requestId: details.requestId,
           surface: gateSurfaceOf(details) ?? null,
           value: details.payload?.request?.value ?? null,
           modelCalled: false,
           modelId: null,
           latencyMs: null,
-          verdict: "defer",
+          verdict: verdict.kind,
           deferReason: "internal-error",
           ...contextFields(false, context),
           ...guidanceFields(trail.guidance),
@@ -176,9 +196,31 @@ export function createClassifierReviewer(
         // The log failed too; there is nothing left to record on.
       }
       report(deps, { verdict: "defer", deferReason: "internal-error" });
-      return { kind: "defer" };
+      return verdict;
     }
   };
+}
+
+/**
+ * The backstop verdict: internal-error under the configured policy, or the
+ * defaults when even reading the config throws. Never an allow.
+ */
+function backstopVerdict(deps: ClassifierReviewerDeps): AuthorizerVerdict {
+  let policy = DEFAULT_POLICY;
+  try {
+    const config = deps.getConfig();
+    if (config) {
+      policy = policyOf(config);
+    }
+  } catch {
+    // Keep the defaults.
+  }
+  return applyVerdictPolicy({ kind: "failure", failure: "internal-error" }, policy);
+}
+
+/** The classifier link's verdict policy from its config. */
+function policyOf(config: ClassifierConfig): VerdictPolicy {
+  return { verdicts: config.verdicts, onError: config.onError };
 }
 
 async function decide(
@@ -195,7 +237,7 @@ async function decide(
 
   const config = deps.getConfig();
   if (!config) {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, undefined, {
       requestId,
       surface: surface ?? null,
       value,
@@ -204,6 +246,8 @@ async function decide(
       context,
     });
   }
+
+  const policy = policyOf(config);
 
   if (surface === undefined) {
     log.debug(SHORT_CIRCUIT_EVENT, {
@@ -221,11 +265,11 @@ async function decide(
     return { kind: "defer" };
   }
   // The budget gate: an over-budget full command is never rendered,
-  // not even truncated — the ask defers to the human with the measurements on
-  // record. Decided before the breaker and model stages: it is a property of
-  // the ask and the config alone.
+  // not even truncated. The ask is uncertain under the policy, with the
+  // measurements on record. Decided before the breaker and model stages: it
+  // is a property of the ask and the config alone.
   if (context !== null && context.bytes > config.contextBudgetBytes) {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, policy, {
       requestId,
       surface,
       value,
@@ -236,7 +280,7 @@ async function decide(
   }
 
   if (breaker.isOpen()) {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, policy, {
       requestId,
       surface,
       value,
@@ -252,7 +296,7 @@ async function decide(
       ? registry?.find(config.provider, config.model)
       : deps.getSessionModel();
   if (!registry || !model) {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, policy, {
       requestId,
       surface,
       value,
@@ -268,7 +312,7 @@ async function decide(
 
   const auth = await registry.getApiKeyAndHeaders(model);
   if (!auth.ok) {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, policy, {
       requestId,
       surface,
       value,
@@ -287,7 +331,7 @@ async function decide(
     guidance = deps.getGuidance?.() ?? EMPTY_GUIDANCE;
     trail.guidance = guidance;
   } catch {
-    return deferWith(deps, log, {
+    return recordPreModel(deps, log, policy, {
       requestId,
       surface,
       value,
@@ -325,41 +369,68 @@ async function decide(
   // One reason for both the decision entry and the health seam, so the two
   // can never disagree. Set on every defer model-review produces; the
   // fallback only guards the type.
-  const deferReason =
+  const modelDeferReason =
     outcome.verdict.kind === "defer"
       ? (outcome.deferReason ?? "unrecognized-verdict")
       : null;
+  const verdict = applyVerdictPolicy(linkOutcomeOf(outcome), policy);
+  const deferReason =
+    modelDeferReason ??
+    (outcome.verdict.kind === "deny" && verdict.kind === "defer"
+      ? DENY_CAPPED_REASON
+      : null);
   log.review(DECISION_EVENT, {
+    link: LINK_NAME,
     requestId,
     surface,
     value,
     modelCalled: true,
     modelId,
     latencyMs: outcome.latencyMs,
-    verdict: outcome.verdict.kind,
+    verdict: verdict.kind,
     deferReason,
     ...contextFields(context !== null, context),
     ...guidanceFields(guidance),
   });
+  // Health folds in what the judge did, not what the policy made of it, so
+  // a failure counts under onError deny too.
   report(
     deps,
-    outcome.verdict.kind === "defer"
-      ? { verdict: "defer", deferReason: deferReason ?? "unrecognized-verdict" }
-      : { verdict: outcome.verdict.kind },
+    modelDeferReason !== null
+      ? { verdict: "defer", deferReason: modelDeferReason }
+      : { verdict: outcome.verdict.kind as "allow" | "deny" },
   );
-  // Returned uncapped: the engine envelope, not this link, owns any
-  // downgrade.
-  return outcome.verdict;
+  return verdict;
 }
 
 /**
- * Record a pre-model defer as a positive `classifier.decision` entry and
- * return the defer verdict — so a resolution failure leaves evidence on
- * record, not a silent absence.
+ * Reduce a model review to a link outcome. A timeout or failed call is a
+ * failure; every other defer (the model's own, a reply with no tool call,
+ * an unknown verdict) is uncertain.
  */
-function deferWith(
+function linkOutcomeOf(outcome: ReviewOutcome): LinkOutcome {
+  switch (outcome.verdict.kind) {
+    case "allow":
+      return { kind: "allow" };
+    case "deny":
+      return { kind: "deny", reason: outcome.verdict.reason ?? "" };
+    case "defer":
+      return outcome.deferReason === "timeout" || outcome.deferReason === "call-failed"
+        ? { kind: "failure", failure: outcome.deferReason }
+        : { kind: "uncertain" };
+  }
+}
+
+/**
+ * Record a pre-model outcome as a positive `classifier.decision` entry and
+ * return its verdict under the policy, so a resolution failure leaves
+ * evidence on record, not a silent absence. With no policy (no config) the
+ * ask defers.
+ */
+function recordPreModel(
   deps: ClassifierReviewerDeps,
   log: AuthorizerLog,
+  policy: VerdictPolicy | undefined,
   entry: {
     requestId: string;
     surface: string | null;
@@ -369,20 +440,34 @@ function deferWith(
     context: FullCommandContext | null;
   },
 ): AuthorizerVerdict {
+  const verdict: AuthorizerVerdict =
+    policy === undefined || entry.deferReason === "no-config"
+      ? { kind: "defer" }
+      : applyVerdictPolicy(preModelOutcome(entry.deferReason), policy);
   log.review(DECISION_EVENT, {
+    link: LINK_NAME,
     requestId: entry.requestId,
     surface: entry.surface,
     value: entry.value,
     modelCalled: false,
     modelId: entry.modelId,
     latencyMs: null,
-    verdict: "defer",
+    verdict: verdict.kind,
     deferReason: entry.deferReason,
     ...contextFields(false, entry.context),
     ...guidanceFields(EMPTY_GUIDANCE),
   });
   report(deps, { verdict: "defer", deferReason: entry.deferReason });
-  return { kind: "defer" };
+  return verdict;
+}
+
+/** A pre-model reason as a link outcome: over-budget, or a failure. */
+function preModelOutcome(
+  reason: Exclude<PreModelDeferReason, "no-config">,
+): LinkOutcome {
+  return reason === "context-over-budget"
+    ? { kind: "over-budget" }
+    : { kind: "failure", failure: reason satisfies FailureKind };
 }
 
 /**

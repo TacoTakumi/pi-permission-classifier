@@ -7,6 +7,7 @@ import type {
 } from "@gotgenes/pi-permission-system";
 import { describe, expect, it, vi } from "vitest";
 
+import { CircuitBreaker } from "#src/breaker";
 import { classifierConfigSchema } from "#src/config-schema";
 import type { HealthOutcome } from "#src/health";
 import type { CompleteFn } from "#src/model-review";
@@ -15,7 +16,12 @@ import {
   createClassifierReviewer,
   type ModelRegistryLike,
 } from "#src/reviewer";
-import { assistantToolCall } from "#test/fixtures/assistant-message";
+import {
+  COULD_NOT_CONFIRM_REASON,
+  failureDenyReason,
+  type FailureKind,
+} from "#src/verdict-policy";
+import { assistantText, assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
 
 const CONFIG = classifierConfigSchema.parse({});
@@ -824,5 +830,198 @@ describe("guidance seam", () => {
       guidanceIncluded: [],
       guidanceDropped: [],
     });
+  });
+});
+
+describe("verdicts and onError settings", () => {
+  const DENY_ON_ERROR = classifierConfigSchema.parse({ onError: "deny" });
+
+  function openBreaker(): CircuitBreaker {
+    const breaker = new CircuitBreaker();
+    const log = fakeLog();
+    for (let i = 0; i < 3; i += 1) {
+      breaker.recordFailure(log, "warm-up");
+    }
+    return breaker;
+  }
+
+  const abortingComplete = vi.fn<CompleteFn>(
+    (_model, _context, options) =>
+      new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      }),
+  );
+
+  const failingRegistry: ModelRegistryLike = {
+    find: vi.fn(),
+    getApiKeyAndHeaders: vi.fn(async () => ({ ok: false as const, error: "no key" })),
+  };
+
+  const throwingRegistry: ModelRegistryLike = {
+    find: vi.fn(),
+    getApiKeyAndHeaders: vi.fn(async () => {
+      throw new Error("registry blew up");
+    }),
+  };
+
+  it("turns a model defer into a could-not-confirm deny under allow-deny", async () => {
+    const config = classifierConfigSchema.parse({ verdicts: "allow-deny" });
+    const authorize = createClassifierReviewer(makeDeps({ getConfig: () => config }));
+    const log = fakeLog();
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "deny", reason: COULD_NOT_CONFIRM_REASON });
+    expect(decisionEntry(log)).toMatchObject({
+      verdict: "deny",
+      deferReason: "model-verdict",
+    });
+  });
+
+  it("turns a reply with no tool call into a could-not-confirm deny under allow-deny", async () => {
+    const config = classifierConfigSchema.parse({ verdicts: "allow-deny" });
+    const complete: CompleteFn = vi.fn(async () => assistantText("I think it is fine"));
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getConfig: () => config }),
+    );
+    const verdict = await authorize(askDetails(), QUERY, fakeLog());
+    expect(verdict).toEqual({ kind: "deny", reason: COULD_NOT_CONFIRM_REASON });
+  });
+
+  it("turns a model deny into defer under allow-defer", async () => {
+    const config = classifierConfigSchema.parse({ verdicts: "allow-defer" });
+    const complete = completeReporting({ verdict: "deny", reason: "no" });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getConfig: () => config }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(askDetails(), QUERY, log);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(decisionEntry(log)).toMatchObject({
+      verdict: "defer",
+      deferReason: "deny-capped",
+    });
+  });
+
+  it("keeps a model allow under every verdicts setting", async () => {
+    for (const verdicts of ["allow-deny-defer", "allow-defer", "allow-deny"]) {
+      const config = classifierConfigSchema.parse({ verdicts });
+      const complete = completeReporting({ verdict: "allow" });
+      const authorize = createClassifierReviewer(
+        makeDeps({ complete, getConfig: () => config }),
+      );
+      expect(await authorize(askDetails(), QUERY, fakeLog())).toEqual({ kind: "allow" });
+    }
+  });
+
+  const failureCases: [FailureKind, Partial<ClassifierReviewerDeps>, typeof CONFIG][] = [
+    [
+      "timeout",
+      { complete: abortingComplete },
+      classifierConfigSchema.parse({ onError: "deny", timeoutMs: 5 }),
+    ],
+    [
+      "call-failed",
+      {
+        complete: vi.fn(async () => {
+          throw new Error("boom");
+        }),
+      },
+      DENY_ON_ERROR,
+    ],
+    ["breaker-open", { breaker: openBreaker() }, DENY_ON_ERROR],
+    ["model-unresolved", { getSessionModel: () => undefined }, DENY_ON_ERROR],
+    ["auth-failed", { getRegistry: () => failingRegistry }, DENY_ON_ERROR],
+    [
+      "guidance-load-failed",
+      {
+        getGuidance: () => {
+          throw new Error("disk exploded");
+        },
+      },
+      DENY_ON_ERROR,
+    ],
+    ["internal-error", { getRegistry: () => throwingRegistry }, DENY_ON_ERROR],
+  ];
+
+  it.each(failureCases)(
+    "denies %s with its failure reason under onError deny",
+    async (failure, overrides, config) => {
+      const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
+      const authorize = createClassifierReviewer(
+        makeDeps({ ...overrides, getConfig: () => config, onOutcome }),
+      );
+      const log = fakeLog();
+      const verdict = await authorize(askDetails(), QUERY, log);
+      expect(verdict).toEqual({ kind: "deny", reason: failureDenyReason(failure) });
+      expect(decisionEntry(log)).toMatchObject({
+        link: "classifier",
+        verdict: "deny",
+        deferReason: failure,
+      });
+      // Health still counts the failure, whatever the final verdict.
+      expect(onOutcome).toHaveBeenCalledWith({ verdict: "defer", deferReason: failure });
+    },
+  );
+
+  it.each(failureCases)(
+    "never allows %s under any verdicts setting",
+    async (_failure, overrides, config) => {
+      for (const verdicts of ["allow-deny-defer", "allow-defer", "allow-deny"] as const) {
+        for (const onError of ["defer", "deny"] as const) {
+          const authorize = createClassifierReviewer(
+            makeDeps({
+              ...overrides,
+              complete: overrides.complete ?? completeReporting({ verdict: "allow" }),
+              getConfig: () => ({ ...config, verdicts, onError }),
+            }),
+          );
+          const verdict = await authorize(askDetails(), QUERY, fakeLog());
+          expect(verdict.kind).not.toBe("allow");
+        }
+      }
+    },
+  );
+
+  it("still defers on no config: there is no policy to apply", async () => {
+    const authorize = createClassifierReviewer(makeDeps({ getConfig: () => undefined }));
+    expect(await authorize(askDetails(), QUERY, fakeLog())).toEqual({ kind: "defer" });
+  });
+
+  it.each([
+    ["allow-deny-defer", { kind: "defer" }],
+    ["allow-defer", { kind: "defer" }],
+    ["allow-deny", { kind: "deny", reason: COULD_NOT_CONFIRM_REASON }],
+  ] as const)("an over-budget ask under %s yields %j with no model call", async (verdicts, expected) => {
+    const config = classifierConfigSchema.parse({
+      verdicts,
+      onError: "deny",
+      contextBudgetBytes: 8,
+    });
+    const complete = completeReporting({ verdict: "allow" });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getConfig: () => config }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(askWithFullCommand(FULL_COMMAND), QUERY, log);
+    expect(verdict).toEqual(expected);
+    expect(complete).not.toHaveBeenCalled();
+    expect(decisionEntry(log)).toMatchObject({
+      verdict: expected.kind,
+      deferReason: "context-over-budget",
+    });
+  });
+
+  it("tags every decision entry with link classifier", async () => {
+    const cases: Partial<ClassifierReviewerDeps>[] = [
+      { complete: completeReporting({ verdict: "allow" }) },
+      { getConfig: () => undefined },
+      { getSessionModel: () => undefined },
+      { getRegistry: () => throwingRegistry },
+    ];
+    for (const overrides of cases) {
+      const authorize = createClassifierReviewer(makeDeps(overrides));
+      const log = fakeLog();
+      await authorize(askDetails(), QUERY, log);
+      expect(decisionEntry(log)?.link).toBe("classifier");
+    }
   });
 });
