@@ -51,7 +51,8 @@ this project adheres to
   `quick:<provider>/<id>` and `llm:<provider>/<id>` or `llm:chat-model`,
   each with its own health suffix.
 - Decision entries carry `judge` (`quick` or `llm`); quick entries also
-  carry the per-question answer probabilities.
+  carry the per-question answer probabilities, with the hazard as
+  `[option, probability]` pairs, highest first.
 
 ### Changed
 

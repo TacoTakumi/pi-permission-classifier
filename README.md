@@ -491,7 +491,10 @@ Each judge that reviews an ask writes one `classifier.decision` entry with
 `judge` set to `quick` or `llm`. In mode `quick-then-llm` an ask the quick
 judge does not allow writes two entries, `quick` then `llm`. Quick entries
 carry, when the model answered, `answers`: the reversible and contained
-probabilities and the full hazard probability map. A below-threshold answer
+probabilities, and `hazard` as a list of `[option, probability]` pairs for all
+eight options, highest first. The pairs keep the option names out of the JSON
+keys, because the permission log masks any value whose key looks like a
+credential name, which would hide `credential_access`. A below-threshold answer
 records defer reason `model-verdict`. A request skipped as a duplicate (see
 "The old chain name `classifier`") writes no entry.
 

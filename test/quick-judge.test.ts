@@ -449,7 +449,9 @@ describe("decision entry", () => {
     expect(entry?.answers).toEqual({
       reversible: (result.answers.reversible as { probability: number }).probability,
       contained: (result.answers.contained as { probability: number }).probability,
-      hazard: (result.answers.hazard as { probabilities: Record<string, number> }).probabilities,
+      hazard: Object.entries(
+        (result.answers.hazard as { probabilities: Record<string, number> }).probabilities,
+      ).sort((x, y) => y[1] - x[1]),
     });
   });
 
@@ -731,5 +733,21 @@ describe("decision entry tag", () => {
     );
     expect(log.debug.mock.calls[0]?.[1]).toMatchObject({ judge: "quick" });
     expect(log.debug.mock.calls[0]?.[1]).not.toHaveProperty("link");
+  });
+});
+
+describe("hazard answers in the log", () => {
+  it("logs the hazard as [option, probability] pairs, highest first, so no option id is a key", async () => {
+    const log = fakeLog();
+    await createQuickJudge(
+      makeDeps({
+        getRegistry: () => fakeRegistry(async () => answered(0.9, 0.4, { credential_access: 0.97, none: 0.02 })),
+      }),
+    )(askDetails(), QUERY, log);
+    const hazard = (decisionEntry(log)?.answers as { hazard: [string, number][] }).hazard;
+    expect(hazard[0]).toEqual(["credential_access", 0.97]);
+    expect(hazard[1]).toEqual(["none", 0.02]);
+    expect(hazard).toHaveLength(Object.keys(HAZARD_OPTIONS).length);
+    expect(Array.isArray(hazard)).toBe(true);
   });
 });

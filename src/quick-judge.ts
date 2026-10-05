@@ -338,7 +338,12 @@ async function classifyWithin(
   }
 }
 
-/** Per-question answers for the log: bool probability, choice probabilities. */
+/**
+ * Per-question answers for the log: a bool's probability, a choice's
+ * `[option, probability]` pairs highest first. The pairs keep option ids out
+ * of the JSON keys: the permission log masks any value whose key looks like
+ * a credential name, which would hide `credential_access`.
+ */
 function summarizeAnswers(
   answers: Record<string, ClassifierAnswer>,
 ): Record<string, JsonValue> | undefined {
@@ -352,7 +357,10 @@ function summarizeAnswers(
         case "bool":
           return [id, answer.probability];
         case "choice":
-          return [id, answer.probabilities];
+          return [
+            id,
+            Object.entries(answer.probabilities).sort((left, right) => right[1] - left[1]),
+          ];
         case "score":
           return [id, answer.score];
       }
