@@ -57,15 +57,10 @@ export function formatConfigIssue(issue: ConfigIssue): string {
   return `${issue.sourcePath ?? "(merged)"} ${issue.path}: ${issue.message}`;
 }
 
-/**
- * Outcome of a config load: a validated config (or `undefined`) plus issues.
- * `projectSetsJudge` reports whether the project layer sets `provider` or
- * `model`, so a global judge write can warn that the project file shadows it.
- */
+/** Outcome of a config load: a validated config (or `undefined`) plus issues. */
 export interface LoadConfigResult {
   config: ClassifierConfig | undefined;
   issues: ConfigIssue[];
-  projectSetsJudge: boolean;
 }
 
 /** Global scope: `<agentDir>/extensions/<id>/config.json`. */
@@ -96,10 +91,6 @@ export function globalConfigExists(agentDir: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function setsJudge(layer: Record<string, unknown> | undefined): boolean {
-  return layer !== undefined && ("provider" in layer || "model" in layer);
 }
 
 /**
@@ -172,8 +163,7 @@ function readLayer(
  * from the SDK's `getAgentDir()` (which honors `PI_CODING_AGENT_DIR`) and `cwd`
  * from the session context, so this module reads no process globals of its own.
  * `projectTrusted` is the session's trust state at this load: when false the
- * project file is skipped unread and the global layer alone applies, with
- * `projectSetsJudge` false.
+ * project file is skipped unread and the global layer alone applies.
  *
  * When neither file exists, returns `{ config: undefined, issues: [] }` — the
  * normal not-configured state, reported without noise. When a present config is
@@ -194,10 +184,9 @@ export function loadClassifierConfig(options: {
   const projectPath = getProjectConfigPath(cwd);
   const global = readLayer(globalPath, issues);
   const project = projectTrusted ? readLayer(projectPath, issues) : undefined;
-  const projectSetsJudge = setsJudge(project);
 
   if (global === undefined && project === undefined) {
-    return { config: undefined, issues, projectSetsJudge };
+    return { config: undefined, issues };
   }
 
   reportIgnoredFields(global, globalPath, issues);
@@ -219,10 +208,10 @@ export function loadClassifierConfig(options: {
         sourcePath,
       });
     }
-    return { config: undefined, issues, projectSetsJudge };
+    return { config: undefined, issues };
   }
 
-  return { config: parsed.data, issues, projectSetsJudge };
+  return { config: parsed.data, issues };
 }
 
 /**

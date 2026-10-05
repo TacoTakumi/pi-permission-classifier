@@ -378,7 +378,6 @@ describe("loadClassifierConfig", () => {
       expect(result.config?.timeoutMs).toBe(250);
       expect(result.config?.provider).toBeUndefined();
       expect(result.config?.model).toBeUndefined();
-      expect(result.projectSetsJudge).toBe(false);
       expect(result.issues).toEqual([]);
     });
 
@@ -392,7 +391,7 @@ describe("loadClassifierConfig", () => {
     it("returns no config for an untrusted project with only a project file", () => {
       rmSync(getGlobalConfigPath(agentDir));
       const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: false });
-      expect(result).toEqual({ config: undefined, issues: [], projectSetsJudge: false });
+      expect(result).toEqual({ config: undefined, issues: [] });
     });
 
     it("merges the project layer as before when the project is trusted", () => {
@@ -401,45 +400,7 @@ describe("loadClassifierConfig", () => {
       expect(result.config?.timeoutMs).toBe(250);
       expect(result.config?.provider).toBe("p");
       expect(result.config?.model).toBe("m");
-      expect(result.projectSetsJudge).toBe(true);
       expect(result.issues).toHaveLength(1);
-    });
-  });
-
-  describe("projectSetsJudge", () => {
-    it("is false when no project layer exists", () => {
-      writeConfig(getGlobalConfigPath(agentDir), "{}");
-      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-      expect(result.projectSetsJudge).toBe(false);
-    });
-
-    it("is false when the project layer sets neither provider nor model", () => {
-      writeConfig(
-        getGlobalConfigPath(agentDir),
-        JSON.stringify({ provider: "anthropic", model: "claude-sonnet-5" }),
-      );
-      writeConfig(getProjectConfigPath(cwd), JSON.stringify({ timeoutMs: 100 }));
-      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-      expect(result.config?.provider).toBe("anthropic");
-      expect(result.projectSetsJudge).toBe(false);
-    });
-
-    it("is true when the project layer sets provider and model", () => {
-      writeConfig(getGlobalConfigPath(agentDir), "{}");
-      writeConfig(
-        getProjectConfigPath(cwd),
-        JSON.stringify({ provider: "openai", model: "gpt-5" }),
-      );
-      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-      expect(result.projectSetsJudge).toBe(true);
-    });
-
-    it("is true when the project layer sets only one of the pair, even if the merge is invalid", () => {
-      writeConfig(getGlobalConfigPath(agentDir), "{}");
-      writeConfig(getProjectConfigPath(cwd), JSON.stringify({ model: "gpt-5" }));
-      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-      expect(result.config).toBeUndefined();
-      expect(result.projectSetsJudge).toBe(true);
     });
   });
 });

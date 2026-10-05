@@ -123,7 +123,6 @@ function makeDeps(initial: ClassifierConfig | undefined = EMPTY_CONFIG) {
   const reloaded: LoadConfigResult = {
     config: { ...EMPTY_CONFIG, provider: "p", model: "m" },
     issues: [],
-    projectSetsJudge: false,
   };
   const registry = makeRegistry();
   const deps = {
@@ -248,7 +247,6 @@ describe("chat-model form /permission-model llm chat-model", () => {
     deps.reload.mockReturnValue({
       config: EMPTY_CONFIG,
       issues: [],
-      projectSetsJudge: false,
     });
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("llm chat-model", ctx);
@@ -310,7 +308,6 @@ describe("project layer shadowing the choice", () => {
     deps.reload.mockReturnValue({
       config: CONFIG_QN,
       issues: [],
-      projectSetsJudge: true,
     });
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("llm p/m", ctx);
@@ -331,7 +328,6 @@ describe("project layer shadowing the choice", () => {
     deps.reload.mockReturnValue({
       config: { ...WITH_QUICK, ...merged },
       issues: [],
-      projectSetsJudge: false,
     });
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler(args, ctx);
@@ -345,7 +341,6 @@ describe("project layer shadowing the choice", () => {
     deps.reload.mockReturnValue({
       config: { ...WITH_QUICK, mode: "quick" },
       issues: [],
-      projectSetsJudge: false,
     });
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("mode quick", ctx);
@@ -626,7 +621,6 @@ describe("two-step picker in the TUI", () => {
     deps.reload.mockReturnValue({
       config: { ...EMPTY_CONFIG, provider: "anthropic", model: "b" },
       issues: [],
-      projectSetsJudge: false,
     });
     const ctx = makeCtx("tui");
     ctx.modelRegistry.hasConfiguredAuth.mockReturnValue(false);
@@ -697,7 +691,6 @@ describe("reload after a write (review round 1, F1)", () => {
           sourcePath: `${GLOBAL_PATH}, ${PROJECT_PATH}`,
         },
       ],
-      projectSetsJudge: true,
     });
     const ctx = makeCtx();
     await createPermissionModelCommand(deps).handler("llm chat-model", ctx);
@@ -802,7 +795,6 @@ describe("typed form /permission-model quick <provider>/<id>", () => {
   const QUICK_RELOADED: LoadConfigResult = {
     config: { ...WITH_QUICK, quickJudge: { ...QUICK_JUDGE, model: "jev-latest" } },
     issues: [],
-    projectSetsJudge: false,
   };
 
   function quickDeps(initial: ClassifierConfig = EMPTY_CONFIG) {
@@ -888,7 +880,6 @@ describe("typed form /permission-model mode <mode>", () => {
       deps.reload.mockReturnValue({
         config: { ...WITH_QUICK, mode },
         issues: [],
-        projectSetsJudge: false,
       });
       const ctx = makeCtx();
       await createPermissionModelCommand(deps).handler(`mode ${mode}`, ctx);
@@ -929,7 +920,7 @@ describe("typed form /permission-model mode <mode>", () => {
 
   it("writes mode llm with no quick judge model", async () => {
     const { deps } = makeDeps(EMPTY_CONFIG);
-    deps.reload.mockReturnValue({ config: EMPTY_CONFIG, issues: [], projectSetsJudge: false });
+    deps.reload.mockReturnValue({ config: EMPTY_CONFIG, issues: [] });
     await createPermissionModelCommand(deps).handler("mode llm", makeCtx());
     expect(deps.write).toHaveBeenCalledWith({ mode: "llm" });
   });

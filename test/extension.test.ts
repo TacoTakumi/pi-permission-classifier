@@ -36,7 +36,6 @@ const CONFIG_RESULT: LoadConfigResult = {
     onError: "defer",
   },
   issues: [],
-  projectSetsJudge: false,
 };
 
 const SESSION_MODEL = { provider: "anthropic", id: "claude-opus" } as Model<any>;
@@ -170,14 +169,12 @@ const STATUS_KEY = "zz-permission-classifier";
 const CONFIG_PM_RESULT: LoadConfigResult = {
   config: { ...CONFIG_RESULT.config!, provider: "p", model: "m" },
   issues: [],
-  projectSetsJudge: false,
 };
 const PM_MODEL = { provider: "p", id: "m" } as Model<any>;
 
 const CONFIG_QN_RESULT: LoadConfigResult = {
   config: { ...CONFIG_RESULT.config!, provider: "q", model: "n" },
   issues: [],
-  projectSetsJudge: false,
 };
 const QN_MODEL = { provider: "q", id: "n" } as Model<any>;
 
@@ -288,7 +285,6 @@ describe("createClassifierExtension", () => {
       loadConfig: () => ({
         config: undefined,
         issues: [{ path: "provider", message: "must come with model" }],
-        projectSetsJudge: false,
       }),
     });
     publishForSession();
@@ -323,7 +319,6 @@ describe("createClassifierExtension", () => {
       loadConfig: () => ({
         config: classifierConfigSchema.parse({ instructions: "be strict", timeoutMs: 250 }),
         issues: [],
-        projectSetsJudge: false,
       }),
       complete,
     });
@@ -352,7 +347,6 @@ describe("createClassifierExtension", () => {
             sourcePath: "/project/.pi/extensions/pi-permission-classifier/config.json",
           },
         ],
-        projectSetsJudge: false,
       }),
     });
     publishForSession();
@@ -797,7 +791,6 @@ describe("footer status", () => {
       loadConfig: () => ({
         config: undefined,
         issues: [],
-        projectSetsJudge: false,
       }),
     });
     publishForSession();
@@ -1057,7 +1050,7 @@ describe("launch flag --permission-model", () => {
     const loadConfig = vi
       .fn<() => LoadConfigResult>()
       .mockReturnValueOnce(CONFIG_QN_RESULT)
-      .mockReturnValue({ config: reloaded, issues: [], projectSetsJudge: false });
+      .mockReturnValue({ config: reloaded, issues: [] });
     const pi = makeFakePi();
     pi.api.getFlag.mockReturnValue("quick:typesafe/jev-latest,llm:p/m,mode:quick-then-llm");
     start(pi, { complete, loadConfig, writeSelection: vi.fn() });
@@ -1135,11 +1128,10 @@ describe("/permission-model command wiring", () => {
     const writeSelection = vi.fn();
     const loadConfig = vi
       .fn<() => LoadConfigResult>()
-      .mockReturnValueOnce({ config: quick, issues: [], projectSetsJudge: false })
+      .mockReturnValueOnce({ config: quick, issues: [] })
       .mockReturnValue({
         config: { ...quick, mode: "quick-then-llm" },
         issues: [],
-        projectSetsJudge: false,
       });
     const classify = vi.fn(async () => ({
       api: "typesafe-system-one",
@@ -1490,7 +1482,6 @@ describe("permission-judge modes", () => {
     return {
       config: classifierConfigSchema.parse(top),
       issues: [],
-      projectSetsJudge: false,
     };
   }
 
@@ -1711,7 +1702,6 @@ describe("footer status by mode", () => {
       loadConfig: () => ({
         config: classifierConfigSchema.parse(loads++ === 0 ? top : next),
         issues: [],
-        projectSetsJudge: false,
       }),
     });
     publishForSession();
