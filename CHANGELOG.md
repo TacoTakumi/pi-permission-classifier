@@ -5,6 +5,50 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-05
+
+### Added
+
+- A second chain link, `system-one`, registered when the config has a
+  `systemOne` object. It asks a System One classifier model (for example
+  `typesafe/jev-latest`) through pi's `findOfType("classifier", ...)` and
+  `classify` three fixed questions: reversible, contained, and one of eight
+  hazards. It allows when all three clear `allowThreshold` (default 0.9),
+  denies with the hazard named when one hazard reaches `denyThreshold`
+  (default 0.9), and otherwise treats the answer as uncertain. The model
+  sees the gated value, surface, tool, cwd, the full command within
+  `contextBudgetBytes`, and the selected guidance files when
+  `systemOne.guidance` is on (default). It has its own timeout, circuit
+  breaker and health record. An unset or unknown model never falls back to
+  the session model.
+- `verdicts` (`allow-deny-defer`, `allow-defer`, `allow-deny`) and
+  `onError` (`defer`, `deny`) for both links, enforced in code. `onError`
+  deny turns a failure into a deny with a fixed reason that names the
+  failure and says to retry later or take another route.
+- `classifierEnabled` (default `true`); `false` keeps the `classifier` link
+  off the chain so `system-one` can judge alone.
+- While the `classifier` link is enabled, `system-one` runs with
+  `allow-defer` and `onError` defer whatever its config says, with one
+  warning per session when the config asked for more.
+- `/permission-model system-one <provider>/<id>` writes a classifier pair to
+  `systemOne` in the global config; `/permission-model system-one` opens a
+  list of the available classifier models. Tab completion offers
+  `system-one` and the classifier labels.
+- The footer shows the system-one judge first, as `s1:<provider>/<id>`,
+  with its own health suffix.
+- Decision entries carry `link` (`classifier` or `system-one`); system-one
+  entries also carry the per-question answer probabilities.
+
+### Changed
+
+- Requires pi 1.0.0 or newer (`@earendil-works/pi-coding-agent >=1.0.0`).
+- An over-budget ask follows `verdicts` on the classifier link: it still
+  defers by default, and denies under `allow-deny`.
+- When `allow-defer` withholds a model deny, the entry records defer reason
+  `deny-capped`.
+- The warning for an unreachable permission service now says no permission
+  link is registered.
+
 ## [0.5.2] - 2026-09-25
 
 ### Fixed

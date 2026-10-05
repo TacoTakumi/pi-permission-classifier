@@ -560,12 +560,53 @@ describe("guidance discipline", () => {
       }
     });
 
-    it("CHANGELOG's top heading is a dated version and the newest Added section mentions guidance", () => {
+    it("CHANGELOG's top heading is a dated version and the newest Added section covers system-one", () => {
       const headings = changelog.match(/^## .*$/gm) ?? [];
       expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
       expect(headings[0]).not.toMatch(/unreleased/i);
-      const added = changelog.slice(changelog.indexOf("### Added"));
-      expect(added.split(/\n##+ /)[0]).toMatch(/guidance/i);
+      const added = changelog.slice(changelog.indexOf("### Added")).split(/\n##+ /)[0]!;
+      for (const claim of ["system-one", "verdicts", "onError", "classifierEnabled"]) {
+        expect(added).toContain(claim);
+      }
+    });
+
+    it("README documents the system-one link, its config, cascade, key, egress and local route", () => {
+      expect(readme).toMatch(/^## The system-one link$/m);
+      expect(readme).toMatch(/^### Verdicts and onError$/m);
+      for (const field of [
+        "classifierEnabled",
+        "`verdicts`",
+        "`onError`",
+        "`systemOne`",
+        "`allowThreshold`",
+        "`denyThreshold`",
+        "`guidance`",
+      ]) {
+        expect(readme).toContain(field);
+      }
+      expect(flat).toContain('"authorizerChain": ["system-one", "classifier"]');
+      expect(flat).toMatch(/whatever its config says/);
+      expect(flat).toContain("TYPESAFE_API_KEY");
+      expect(flat).toContain("pi-dotenv");
+      expect(flat).toContain("auth.json");
+      expect(flat).toMatch(/leaves your machine/);
+      expect(flat).toContain("/v1/systemone");
+      expect(flat).toMatch(/cannot declare a classifier model in `models.json`/);
+      expect(flat).toContain("s1:<provider>/<id>");
+      expect(flat).toContain("/permission-model system-one");
+    });
+
+    it("CLAUDE.md lists the system-one modules and the revised failure rule", () => {
+      for (const module of [
+        "src/system-one-link.ts",
+        "src/system-one-review.ts",
+        "src/verdict-policy.ts",
+      ]) {
+        expect(guide).toContain(module);
+      }
+      expect(guide.replace(/\s+/g, " ")).toMatch(
+        /a failure never allows; it defers unless (?:the link's )?onError is deny/i,
+      );
     });
 
     it("CLAUDE.md lists the guidance module and names it as a disk reader", () => {

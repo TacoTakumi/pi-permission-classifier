@@ -12,9 +12,16 @@ Think of it as a Claude-Code-style auto-approve mode, without giving up the
 permission gate: your deterministic policy still runs first, and the
 classifier only sees the asks that policy would have sent to you anyway.
 
+A second, optional link named `system-one` asks a System One decision model
+(TypeSafe's Jev by default) three fixed questions about each ask and maps the
+answer probabilities to a verdict in about 200 ms. Put it in front of the
+`classifier` link to settle the clear cases fast and pass the rest on, or run
+it alone. See "The system-one link".
+
 Fail-safe by construction: a missing config, an unresolved model, an auth
-failure, a timeout, an unparseable reply, or any internal error resolves to
-defer. More prompting, never less.
+failure, a timeout, an unparseable reply, or any internal error never
+allows. A failure defers unless the link's `onError` is `deny`, which turns
+it into a deny that tells the agent to retry later or take another route.
 
 ## Requirements
 
@@ -97,8 +104,9 @@ and installing it grants it no authority until you name it in the chain.
 
        ~/.pi/agent/extensions/pi-permission-system/logs/pi-permission-system-permission-review.jsonl
 
-   Each entry records request id, surface, value, model id, latency,
-   verdict, defer reason, and three context fields: `contextIncluded`
+   Each entry records the link (`classifier` or `system-one`), request id,
+   surface, value, model id, latency, verdict, defer reason, and three
+   context fields: `contextIncluded`
    (true only when a full command was rendered to the judge),
    `contextBytes` (its UTF-8 byte length, null when absent), and
    `contextHash` (first 12 hex chars of its sha256, null when absent).
@@ -124,10 +132,44 @@ Config files (project overrides global, shallow merge):
 | `instructions` | built-in rubric | System prompt for the judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
 | `timeoutMs` | `5000` | Per-review model call budget in milliseconds (positive integer). |
-| `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer). An ask whose context exceeds the budget defers before any model call; context is never truncated to fit. |
+| `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer), for both links. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
+| `classifierEnabled` | `true` | `false` stops the `classifier` link registering, for a setup where `system-one` judges alone. |
+| `verdicts` | `"allow-deny-defer"` | Which verdicts the `classifier` link may return. See "Verdicts and onError". |
+| `onError` | `"defer"` | What the `classifier` link returns on a failure: `"defer"` or `"deny"`. Never allow. |
+| `systemOne` | unset | Settings for the `system-one` link. Its presence registers the link. See "The system-one link". |
+
+The top-level fields are the `classifier` link's settings, so a config file
+written before the `system-one` link existed still parses and behaves as
+before.
 
 A malformed or invalid config file means the link registers nothing and pi
 logs a warning - the gate falls back to normal prompting.
+
+### Verdicts and onError
+
+Each link enforces its own `verdicts` and `onError` in code, after the
+model answered:
+
+| `verdicts` | Model allow | Model deny | Uncertain (model defer, answer below thresholds, over budget) |
+| --- | --- | --- | --- |
+| `allow-deny-defer` | allow | deny | defer |
+| `allow-defer` | allow | defer | defer |
+| `allow-deny` | allow | deny | deny: "The permission reviewer denied this action because it could not be confirmed safe." |
+
+`onError` applies to every failure: `timeout`, `call-failed` (an error
+reply or a thrown call), `breaker-open`, `model-unresolved`, `auth-failed`,
+`guidance-load-failed` and `internal-error`. `"defer"` passes the ask on.
+`"deny"` denies with a fixed reason that names the failure and ends with
+"Retry later or take another route." It never says the action is unsafe,
+because nothing judged it. No failure ever allows.
+
+A front link in a cascade should use `allow-defer` with `onError: "defer"`,
+so everything it is not sure about reaches the next link. A link that judges
+alone in an unattended session can use `allow-deny` with `onError: "deny"`,
+so it never waits for a human.
+
+When `allow-defer` withholds a model deny, the decision entry records
+verdict `defer` with defer reason `deny-capped`.
 
 ### Example: a local judge model
 
@@ -292,6 +334,134 @@ classifier can never approve access outside the working directory or to a
 path your policy denies. To keep a tool out of the judge's hands, route it
 to `allow` or `deny` in the permission system policy instead of `ask`.
 
+## The system-one link
+
+The `system-one` link sends each ask to a classifier model through pi's
+model registry (`findOfType("classifier", ...)` and `classify`) and asks
+three fixed questions:
+
+- `reversible` (yes/no): can every effect be undone with ordinary tools?
+- `contained` (yes/no): does the action act only on the project tree (the
+  cwd) or /tmp, read no secret, and send no data off this machine?
+- `hazard` (one of eight): none, credential access, exfiltration, remote
+  code execution, force push, discard uncommitted work, disarm guards, other
+  destructive.
+
+The answer allows when P(reversible), P(contained) and P(hazard = none) all
+reach `allowThreshold`. It denies when one hazard other than none reaches
+`denyThreshold`, with a reason that names the hazard ("it looks like a force
+push"). A deny wins when both match. Anything else is uncertain and maps
+through `verdicts`. The question text is fixed in code.
+
+The model sees the gated value, the surface, the tool name, the cwd, the full
+command when it fits `contextBudgetBytes`, and the selected guidance files
+when `guidance` is on. It never sees tool results, file contents, evidence,
+annotations or the tool-input preview. The `path` and `external_directory`
+families and an undeterminable surface defer with no model call, whatever
+`verdicts` and `onError` say.
+
+### systemOne settings
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `provider` | unset | Classifier model provider, for example `typesafe`. Set together with `model`. |
+| `model` | unset | Classifier model id, for example `jev-latest`. An unset or unknown pair never falls back to the session model: every ask takes `onError` with reason `model-unresolved`. |
+| `verdicts` | `"allow-defer"` | See "Verdicts and onError". Forced to `allow-defer` while the `classifier` link is enabled. |
+| `onError` | `"defer"` | See "Verdicts and onError". Forced to `defer` while the `classifier` link is enabled. |
+| `allowThreshold` | `0.9` | Probability (0 to 1) that reversible, contained and hazard none must each reach to allow. |
+| `denyThreshold` | `0.9` | Probability (0 to 1) one hazard must reach to deny. |
+| `guidance` | `true` | Send the selected guidance files, chosen by the same rules as for the classifier link. |
+| `timeoutMs` | `5000` | Per-call budget in milliseconds, enforced with an abort signal. |
+
+The link has its own circuit breaker (3 failures open it for 60 seconds) and
+its own health record, so a System One outage never opens the classifier
+link's breaker.
+
+### A cascade: system-one in front of classifier
+
+    { "systemOne": { "provider": "typesafe", "model": "jev-latest" } }
+
+and in `~/.pi/agent/extensions/pi-permission-system/config.json`:
+
+    "authorizerChain": ["system-one", "classifier"]
+
+While the `classifier` link is enabled, `system-one` always runs with
+`verdicts: "allow-defer"` and `onError: "defer"`, whatever its config says:
+it may allow, and everything else goes on to the classifier. When the config
+asks for more, pi logs one warning per session that names the override.
+
+### system-one alone
+
+    {
+      "classifierEnabled": false,
+      "systemOne": {
+        "provider": "typesafe",
+        "model": "jev-latest",
+        "verdicts": "allow-deny",
+        "onError": "deny"
+      }
+    }
+
+with `"authorizerChain": ["system-one"]`. Here the configured `verdicts`
+and `onError` apply, so no ask waits for a human.
+
+### The TypeSafe API key
+
+Jev needs `TYPESAFE_API_KEY` in the pi process. Any of these works:
+
+- [pi-dotenv](https://github.com/TacoTakumi/pi-dotenv): put
+  `TYPESAFE_API_KEY=...` in `~/.pi/agent/.env` and list pi-dotenv in
+  `packages`.
+- Export it in the shell that starts pi: `export TYPESAFE_API_KEY=...`.
+- Store it in pi's `~/.pi/agent/auth.json` under the provider id:
+  `"typesafe": { "type": "api_key", "key": "..." }`. A stored key wins over
+  the environment variable.
+
+Without a key, Jev resolves but every call fails, and asks take `onError`
+with reason `call-failed`.
+
+### Data sent to a hosted provider
+
+With a hosted classifier such as `typesafe/jev-latest`, every judged ask
+leaves your machine: the gated value, the full command (within
+`contextBudgetBytes`), the surface, the tool name, the cwd path, and, with
+`guidance` on, the full text of the selected guidance files. Set
+`"guidance": false` to keep your guidance files local. Use a local model if
+none of this may leave the machine.
+
+### Local classifier models
+
+pi 1.0.3 cannot declare a classifier model in `models.json`: it reads every
+`models.json` entry as a chat model and ignores `"type": "classifier"`, so
+`findOfType` never finds it and the link defers with `model-unresolved`. A
+local System One model, such as Kev 4B behind llama-swap's
+`/upstream/<model>/v1/systemone`, works only when an extension registers it
+with `pi.registerProvider`, a `classifiers` entry for the
+`typesafe-system-one` api, and `"type": "classifier"` on the model. This
+package does not do that yet.
+
+### Choosing the system-one model
+
+- `/permission-model system-one <provider>/<id>` checks the pair with the
+  classifier lookup only (a chat model is rejected), writes it to
+  `systemOne.provider` and `systemOne.model` in the global config, and
+  applies it on the next ask. An unknown pair writes nothing. When the
+  config had no `systemOne` object before, the link registers at the next
+  session start. The classifier judge, its launch flag and your session and
+  default models are not touched.
+- `/permission-model system-one` with no pair opens a list of the available
+  classifier models, the current one first. Cancel to change nothing.
+  Outside the TUI it prints the current system-one model and the usage line.
+- Tab completion after `system-one ` offers the classifier model labels.
+
+### Decision entries
+
+Each `system-one` decision writes one `classifier.decision` entry with
+`link: "system-one"`, the same fields as the classifier link, and, when the
+model answered, `answers`: the reversible and contained probabilities and
+the full hazard probability map. A below-threshold answer records defer
+reason `model-verdict`.
+
 ## Choosing the judge model
 
 The judge is the model that reviews each ask. With no `provider` and
@@ -314,7 +484,8 @@ change it:
   must be in pi's model registry: an unknown pair is rejected and nothing
   changes. A known model without configured auth is accepted with a
   warning, and asks defer until the auth exists. Tab completion offers the
-  `provider/id` labels of the available models plus `session`.
+  `provider/id` labels of the available models plus `session` and
+  `system-one`.
 - `/permission-model session` removes `provider` and `model` so the
   session's active model judges again.
 
@@ -361,6 +532,14 @@ last, at the end of that line):
 - `judge:<provider>/<id> (unresolved)` - the configured pair is not in the
   registry, so every ask defers until it resolves
 
+With the `system-one` link registered, its judge comes first, as
+`s1:<provider>/<id>` (with ` (unresolved)` when the classifier lookup fails,
+or `s1:unset (unresolved)` when `systemOne` names no pair), followed by a
+comma and the classifier judge. Each judge carries its own health suffix,
+for example `s1:typesafe/jev-latest | timeout x2, judge:session`. A link
+that is not registered is left out, so with `classifierEnabled: false` the
+entry shows only the `s1:` part.
+
 The entry follows `/permission-model` changes and `/model` switches and is
 cleared at session shutdown. No entry means the link did not register.
 
@@ -398,7 +577,8 @@ shutdown.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
   The call is aborted after `timeoutMs`.
-- The verdict returns to the engine uncapped; the engine's own
+- The link's `verdicts` and `onError` settings apply to the verdict and to
+  every failure; nothing else changes it. The engine's own
   bounded-delegation checkpoint enforces the `path` / `external_directory`
   line.
 - A circuit breaker opens after 3 consecutive model-call failures or
