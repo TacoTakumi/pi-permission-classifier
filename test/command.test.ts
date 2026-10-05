@@ -703,6 +703,25 @@ describe("reload after a write (review round 1, F1)", () => {
     expect(notifyOf(ctx, "error")).toContain(GLOBAL_PATH);
   });
 
+  it("ends a reload issue that is already a sentence with one period", async () => {
+    const { reloaded, deps } = makeDeps(CONFIG_QN);
+    deps.reload.mockReturnValue({
+      ...reloaded,
+      issues: [
+        {
+          path: "systemOne",
+          message: "This field is ignored: it was renamed to quickJudge.",
+          sourcePath: GLOBAL_PATH,
+        },
+      ],
+    });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("llm p/m", ctx);
+    expect(notifyOf(ctx, "warning")).toBe(
+      `Config issues after reload: ${GLOBAL_PATH} systemOne: This field is ignored: it was renamed to quickJudge.`,
+    );
+  });
+
   it("applies a valid reload but surfaces loader issues as a warning", async () => {
     const { state, reloaded, deps } = makeDeps(CONFIG_QN);
     deps.reload.mockReturnValue({
@@ -719,6 +738,7 @@ describe("reload after a write (review round 1, F1)", () => {
     expect(state.config).toBe(reloaded.config);
     expect(notifyTypes(ctx)).toEqual(["info", "warning"]);
     expect(notifyOf(ctx, "warning")).toContain("bad json");
+    expect(notifyOf(ctx, "warning")).not.toContain("..");
     expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
   });
 });

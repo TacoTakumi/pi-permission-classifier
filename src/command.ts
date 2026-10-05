@@ -292,7 +292,7 @@ export function createPermissionModelCommand(
     ctx.ui.notify(`${describeSelection(selection)} (saved to the global config).`, "info");
     if (result.issues.length > 0) {
       ctx.ui.notify(
-        `Config issues after reload: ${describeIssues(result.issues)}.`,
+        `Config issues after reload: ${withPeriod(describeIssues(result.issues))}`,
         "warning",
       );
     }
@@ -599,6 +599,11 @@ export function createPermissionModelCommand(
     getArgumentCompletions,
     handler,
   };
+}
+
+/** `text` ending in exactly one period, whether or not it had one. */
+function withPeriod(text: string): string {
+  return text.endsWith(".") ? text : `${text}.`;
 }
 
 /** One sentence naming what a selection set. */
