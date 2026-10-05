@@ -14,6 +14,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getGlobalConfigPath, type LoadConfigResult } from "#src/config-loader";
+import { classifierConfigSchema } from "#src/config-schema";
 import {
   type ClassifierDependencies,
   createClassifierExtension,
@@ -291,6 +292,49 @@ describe("createClassifierExtension", () => {
     pi.events.get(READY_CHANNEL)?.(READY_EVENT);
     expect(service.registerAuthorizer).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("never registers the classifier link when classifierEnabled is false", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pi = makeFakePi();
+    start(pi, {
+      loadConfig: () => ({
+        ...CONFIG_RESULT,
+        config: { ...CONFIG_RESULT.config!, classifierEnabled: false },
+      }),
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(service.registerAuthorizer).not.toHaveBeenCalledWith(
+      "classifier",
+      expect.anything(),
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("registers the classifier link for a config with only the pre-existing fields", async () => {
+    const pi = makeFakePi();
+    const complete = vi.fn<CompleteFn>(async () => assistantToolCall({ verdict: "defer" }));
+    start(pi, {
+      loadConfig: () => ({
+        config: classifierConfigSchema.parse({ instructions: "be strict", timeoutMs: 250 }),
+        issues: [],
+        projectSetsJudge: false,
+      }),
+      complete,
+    });
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctxWithModel());
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    expect(service.registerAuthorizer).toHaveBeenCalledTimes(1);
+    expect(service.registerAuthorizer.mock.calls[0]?.[0]).toBe("classifier");
+    // The defaults apply: a model defer stays defer under allow-deny-defer.
+    const log = { review: vi.fn(), debug: vi.fn() };
+    expect(await lastAuthorizer()(askDetails(), {}, log)).toEqual({
+      kind: "defer",
+    });
   });
 
   it("warns once about an ignored surfaces field and still registers", () => {

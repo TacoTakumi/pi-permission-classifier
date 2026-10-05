@@ -328,7 +328,8 @@ export function createClassifierExtension(
 
   pi.events.on(PERMISSIONS_READY_CHANNEL, (event) => {
     // Idempotent: ready fires at least once per session and may repeat.
-    if (dispose || !config) {
+    // classifierEnabled false keeps the classifier link off the chain.
+    if (dispose || !config || !config.classifierEnabled) {
       return;
     }
     const sessionId = (event as PermissionsReadyEvent | undefined)?.sessionId;
