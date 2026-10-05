@@ -32,7 +32,6 @@ const CONFIG_RESULT: LoadConfigResult = {
     timeoutMs: 5000,
     contextBudgetBytes: 8192,
     mode: "llm",
-    classifierEnabled: true,
     verdicts: "allow-deny-defer",
     onError: "defer",
   },
@@ -305,7 +304,7 @@ describe("createClassifierExtension", () => {
     start(pi, {
       loadConfig: () => ({
         ...CONFIG_RESULT,
-        config: { ...CONFIG_RESULT.config!, classifierEnabled: false },
+        config: classifierConfigSchema.parse({ classifierEnabled: false }),
       }),
     });
     publishForSession();

@@ -86,7 +86,7 @@ describe("classifierConfigSchema", () => {
 });
 
 describe("classifier link settings", () => {
-  it("defaults classifierEnabled, verdicts and onError for a pre-existing config", () => {
+  it("defaults verdicts and onError for a pre-existing config", () => {
     const parsed = classifierConfigSchema.parse({
       provider: "anthropic",
       model: "claude-haiku",
@@ -95,10 +95,8 @@ describe("classifier link settings", () => {
       timeoutMs: 250,
       contextBudgetBytes: 2048,
     });
-    expect(parsed.classifierEnabled).toBe(true);
     expect(parsed.verdicts).toBe("allow-deny-defer");
     expect(parsed.onError).toBe("defer");
-    expect(parsed.systemOne).toBeUndefined();
     expect(parsed.timeoutMs).toBe(250);
     expect(parsed.contextBudgetBytes).toBe(2048);
   });
@@ -125,110 +123,18 @@ describe("classifier link settings", () => {
     expect(classifierConfigSchema.safeParse({ onError }).success).toBe(false);
   });
 
-  it("accepts classifierEnabled false", () => {
-    expect(
-      classifierConfigSchema.parse({ classifierEnabled: false }).classifierEnabled,
-    ).toBe(false);
-  });
-
-  it("rejects a non-boolean classifierEnabled", () => {
-    expect(
-      classifierConfigSchema.safeParse({ classifierEnabled: "false" }).success,
-    ).toBe(false);
-  });
 });
 
-describe("systemOne settings", () => {
-  it("fills every default on an empty systemOne object", () => {
-    const parsed = classifierConfigSchema.parse({ systemOne: {} });
-    expect(parsed.systemOne).toEqual({
-      verdicts: "allow-defer",
-      onError: "defer",
-      allowThreshold: 0.9,
-      denyThreshold: 0.9,
-      guidance: true,
-      timeoutMs: 5000,
-    });
-    expect(DEFAULT_SYSTEM_ONE_THRESHOLD).toBe(0.9);
-  });
-
-  it("keeps explicit systemOne values", () => {
+describe("removed fields", () => {
+  it("drops systemOne and classifierEnabled, whatever their values", () => {
     const parsed = classifierConfigSchema.parse({
-      systemOne: {
-        provider: "typesafe",
-        model: "jev",
-        verdicts: "allow-deny",
-        onError: "deny",
-        allowThreshold: 0.75,
-        denyThreshold: 1,
-        guidance: false,
-        timeoutMs: 1500,
-      },
+      classifierEnabled: "false",
+      systemOne: { provider: "typesafe", allowThreshold: 1.5 },
     });
-    expect(parsed.systemOne).toEqual({
-      provider: "typesafe",
-      model: "jev",
-      verdicts: "allow-deny",
-      onError: "deny",
-      allowThreshold: 0.75,
-      denyThreshold: 1,
-      guidance: false,
-      timeoutMs: 1500,
-    });
-  });
-
-  it("accepts thresholds at the 0 and 1 bounds", () => {
-    const parsed = classifierConfigSchema.parse({
-      systemOne: { allowThreshold: 0, denyThreshold: 1 },
-    });
-    expect(parsed.systemOne?.allowThreshold).toBe(0);
-    expect(parsed.systemOne?.denyThreshold).toBe(1);
-  });
-
-  it.each([-0.01, 1.01, 2, "0.9"])("rejects allowThreshold %p", (allowThreshold) => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { allowThreshold } }).success,
-    ).toBe(false);
-  });
-
-  it.each([-0.01, 1.01, 2, "0.9"])("rejects denyThreshold %p", (denyThreshold) => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { denyThreshold } }).success,
-    ).toBe(false);
-  });
-
-  it.each(["allow", "allow-only"])("rejects systemOne verdicts %p", (verdicts) => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { verdicts } }).success,
-    ).toBe(false);
-  });
-
-  it.each(["allow", "ignore"])("rejects systemOne onError %p", (onError) => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { onError } }).success,
-    ).toBe(false);
-  });
-
-  it.each([0, -1, 1.5])("rejects systemOne timeoutMs %p", (timeoutMs) => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { timeoutMs } }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a systemOne provider without a model, and the reverse", () => {
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { provider: "typesafe" } })
-        .success,
-    ).toBe(false);
-    expect(
-      classifierConfigSchema.safeParse({ systemOne: { model: "jev" } }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a systemOne value that is not an object", () => {
-    expect(classifierConfigSchema.safeParse({ systemOne: true }).success).toBe(
-      false,
-    );
+    expect(parsed).not.toHaveProperty("classifierEnabled");
+    expect(parsed).not.toHaveProperty("systemOne");
+    expect(parsed.mode).toBe("llm");
+    expect(parsed.quickJudge).toBeUndefined();
   });
 });
 
@@ -248,6 +154,7 @@ describe("mode", () => {
 
 describe("quickJudge settings", () => {
   it("fills every default on an empty quickJudge object", () => {
+    expect(DEFAULT_SYSTEM_ONE_THRESHOLD).toBe(0.9);
     const parsed = classifierConfigSchema.parse({ quickJudge: {} });
     expect(parsed.quickJudge).toEqual({
       verdicts: "allow-defer",

@@ -22,7 +22,7 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  */
 export const DEFAULT_CONTEXT_BUDGET_BYTES = 8192;
 
-/** Default systemOne allow and deny probability threshold. */
+/** Default quick judge allow and deny probability threshold. */
 export const DEFAULT_SYSTEM_ONE_THRESHOLD = 0.9;
 
 /**
@@ -74,11 +74,6 @@ export const quickJudgeConfigSchema = z
 
 export type QuickJudgeConfig = z.infer<typeof quickJudgeConfigSchema>;
 
-/** The unreleased name of the quick judge settings, still accepted. */
-export const systemOneConfigSchema = quickJudgeConfigSchema;
-
-export type SystemOneConfig = QuickJudgeConfig;
-
 /**
  * Operator-owned config for the auto-classifier reviewer. An absent config
  * file means no registration (fail-safe); an empty object means the defaults
@@ -102,13 +97,12 @@ export const classifierConfigSchema = z
       .positive()
       .default(DEFAULT_CONTEXT_BUDGET_BYTES),
     // The top-level fields above and below are the LLM judge's settings.
+    // Unknown keys, such as the renamed systemOne and classifierEnabled, are
+    // dropped; the loader reports those two.
     mode: modeSchema.default("llm"),
     quickJudge: quickJudgeConfigSchema.optional(),
-    // classifierEnabled false stops the classifier link registering.
-    classifierEnabled: z.boolean().default(true),
     verdicts: verdictsSchema.default("allow-deny-defer"),
     onError: onErrorSchema.default("defer"),
-    systemOne: systemOneConfigSchema.optional(),
   })
   .refine((config) => (config.provider === undefined) === (config.model === undefined), {
     message: "provider and model must be set together or not at all",

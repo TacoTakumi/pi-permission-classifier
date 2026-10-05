@@ -103,13 +103,17 @@ function setsJudge(layer: Record<string, unknown> | undefined): boolean {
 }
 
 /**
- * Fields the schema still accepts but nothing reads. A layer that sets one
- * gets an issue naming the file, so the operator learns the field does
- * nothing; the config itself still loads.
+ * Fields nothing reads: `surfaces`, which the schema still accepts, and the
+ * renamed `systemOne` and `classifierEnabled`, which it drops. A layer that
+ * sets one gets an issue naming the file, so the operator learns the field
+ * does nothing; the config itself still loads.
  */
 const IGNORED_FIELDS: Record<string, string> = {
   surfaces:
     "This field is ignored: every surface outside the path and external_directory families is judged.",
+  systemOne: "This field is ignored: it was renamed to quickJudge.",
+  classifierEnabled:
+    "This field is ignored: set mode (llm, quick or quick-then-llm) to choose who judges.",
 };
 
 function reportIgnoredFields(

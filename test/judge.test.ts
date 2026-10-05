@@ -22,7 +22,6 @@ const EMPTY_CONFIG: ClassifierConfig = {
   timeoutMs: 5000,
   contextBudgetBytes: 8192,
   mode: "llm",
-  classifierEnabled: true,
   verdicts: "allow-deny-defer",
   onError: "defer",
 };
@@ -209,7 +208,7 @@ describe("system-one judge status", () => {
     expect(formatQuickStatus(judge)).toBe("quick:typesafe/jev-latest (unresolved)");
   });
 
-  it("renders quick:unset (unresolved) for a systemOne object with no pair", () => {
+  it("renders quick:unset (unresolved) for a quickJudge object with no pair", () => {
     const judge = resolveQuickJudge({}, registry);
     expect(judge.pair).toBeUndefined();
     expect(formatQuickStatus(judge)).toBe("quick:unset (unresolved)");

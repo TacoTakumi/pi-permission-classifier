@@ -141,7 +141,7 @@ describe("loadClassifierConfig", () => {
     expect(result.config?.timeoutMs).toBe(5000);
   });
 
-  it("loads a pre-existing config file with the new link defaults", () => {
+  it("loads a pre-existing config file with the link defaults", () => {
     writeConfig(
       getGlobalConfigPath(agentDir),
       JSON.stringify({
@@ -153,44 +153,50 @@ describe("loadClassifierConfig", () => {
     );
     const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
     expect(result.issues).toEqual([]);
-    expect(result.config?.classifierEnabled).toBe(true);
     expect(result.config?.verdicts).toBe("allow-deny-defer");
     expect(result.config?.onError).toBe("defer");
-    expect(result.config?.systemOne).toBeUndefined();
   });
 
-  it("loads a systemOne object with its defaults filled", () => {
-    writeConfig(
-      getGlobalConfigPath(agentDir),
-      JSON.stringify({
-        classifierEnabled: false,
-        systemOne: { provider: "typesafe", model: "jev" },
-      }),
-    );
-    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-    expect(result.issues).toEqual([]);
-    expect(result.config?.classifierEnabled).toBe(false);
-    expect(result.config?.systemOne).toEqual({
-      provider: "typesafe",
-      model: "jev",
-      verdicts: "allow-defer",
-      onError: "defer",
-      allowThreshold: 0.9,
-      denyThreshold: 0.9,
-      guidance: true,
-      timeoutMs: 5000,
+  describe("renamed fields", () => {
+    it.each([
+      ["systemOne", { provider: "typesafe", model: "jev" }, "quickJudge"],
+      ["classifierEnabled", false, "mode"],
+    ])("reports %s once, naming its replacement, and still loads", (field, value, replacement) => {
+      const path = getGlobalConfigPath(agentDir);
+      writeConfig(path, JSON.stringify({ [field]: value }));
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+      expect(result.config).toBeDefined();
+      expect(result.config).not.toHaveProperty(field);
+      expect(result.config?.mode).toBe("llm");
+      expect(result.config?.quickJudge).toBeUndefined();
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0]).toMatchObject({ path: field, sourcePath: path });
+      expect(result.issues[0]!.message).toContain(replacement);
     });
-  });
 
-  it("yields no config plus a sourced issue for an out-of-range systemOne threshold", () => {
-    const path = getGlobalConfigPath(agentDir);
-    writeConfig(path, JSON.stringify({ systemOne: { allowThreshold: 1.5 } }));
-    const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
-    expect(result.config).toBeUndefined();
-    expect(result.issues.length).toBeGreaterThan(0);
-    expect(result.issues.some((issue) => issue.path.includes("allowThreshold"))).toBe(
-      true,
-    );
+    it("reports both fields, one issue each, and loads a config with an invalid systemOne", () => {
+      const path = getGlobalConfigPath(agentDir);
+      writeConfig(
+        path,
+        JSON.stringify({ classifierEnabled: false, systemOne: { allowThreshold: 1.5 } }),
+      );
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+      expect(result.config).toBeDefined();
+      expect(result.issues.map((issue) => issue.path).sort()).toEqual([
+        "classifierEnabled",
+        "systemOne",
+      ]);
+    });
+
+    it("names the project file when only it sets the field", () => {
+      writeConfig(getGlobalConfigPath(agentDir), "{}");
+      const projectPath = getProjectConfigPath(cwd);
+      writeConfig(projectPath, JSON.stringify({ systemOne: {} }));
+      const result = loadClassifierConfig({ cwd, agentDir, projectTrusted: true });
+      expect(result.issues).toEqual([
+        expect.objectContaining({ path: "systemOne", sourcePath: projectPath }),
+      ]);
+    });
   });
 
   it("loads mode and a quickJudge object with its defaults filled", () => {
