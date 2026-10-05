@@ -57,23 +57,23 @@ import {
 const EXCLUDED_SURFACE_FAMILIES = ["path", "external_directory"] as const;
 
 /** Whether `surface` is the bare name or a directional member of an excluded family. */
-function isExcludedSurface(surface: string): boolean {
+export function isExcludedSurface(surface: string): boolean {
   return EXCLUDED_SURFACE_FAMILIES.some(
     (family) => surface === family || surface.startsWith(`${family}_`),
   );
 }
 
 /** Review-log event: one positive decision record per reviewed ask. */
-const DECISION_EVENT = "classifier.decision";
+export const DECISION_EVENT = "classifier.decision";
 /** The link name every decision entry of this reviewer carries. */
 const LINK_NAME = "classifier";
 /**
  * The recorded reason when `allow-defer` turns a model deny into defer: the
  * judge worked, the setting withheld the deny.
  */
-const DENY_CAPPED_REASON = "deny-capped";
+export const DENY_CAPPED_REASON = "deny-capped";
 /** Debug-log event: a cheap short-circuit before the model stage. */
-const SHORT_CIRCUIT_EVENT = "classifier.short_circuit";
+export const SHORT_CIRCUIT_EVENT = "classifier.short_circuit";
 /** Debug-log event: the raw model reply, gated behind `debugLog`. */
 const MODEL_REPLY_EVENT = "classifier.model_reply";
 
@@ -475,7 +475,7 @@ function preModelOutcome(
  * measurements are logged — bytes and a hash prefix — never the text, so the
  * review log stays free of command content beyond the gated value itself.
  */
-function contextFields(
+export function contextFields(
   included: boolean,
   context: FullCommandContext | null,
 ): {
@@ -491,14 +491,14 @@ function contextFields(
 }
 
 /** No guidance: the render before the seam runs, and after it fails. */
-const EMPTY_GUIDANCE: GuidanceSelection = { included: [], dropped: [] };
+export const EMPTY_GUIDANCE: GuidanceSelection = { included: [], dropped: [] };
 
 /**
  * The two guidance lists every decision entry carries. Included files are
  * logged by path, bytes, and hash prefix — never their content — and dropped
  * files by path, bytes, and the rule that excluded them.
  */
-function guidanceFields(guidance: GuidanceSelection): {
+export function guidanceFields(guidance: GuidanceSelection): {
   guidanceIncluded: { path: string; bytes: number; hash12: string }[];
   guidanceDropped: { path: string; bytes: number; reason: string }[];
 } {
@@ -521,6 +521,6 @@ function guidanceFields(guidance: GuidanceSelection): {
  * when present, else the display surface; `undefined` when neither is set
  * (undeterminable — defer without a model call).
  */
-function gateSurfaceOf(details: PromptPermissionDetails): string | undefined {
+export function gateSurfaceOf(details: PromptPermissionDetails): string | undefined {
   return details.accessIntent?.surface ?? details.surface ?? undefined;
 }
