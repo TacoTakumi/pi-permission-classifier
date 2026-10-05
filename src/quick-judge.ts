@@ -1,8 +1,8 @@
 /**
- * The system-one link: the `Authorizer` chain link this package registers as
- * `"system-one"` when the config has a `systemOne` object. A System One
- * decision model answers a fixed question set about each ask through the
- * registry's `classify`, and the answers map to a verdict.
+ * The quick judge: a System One decision model answers a fixed question set
+ * about each ask through the registry's `classify`, and the answers map to a
+ * verdict. It runs inside the permission-judge link when the mode includes
+ * it.
  *
  * The decision runs top to bottom, so the cheap gates short-circuit before
  * any model call:
@@ -10,18 +10,17 @@
  *   2. the gate-authoritative surface is determinable and outside the `path`
  *      and `external_directory` families (else defer, not recorded),
  *   3. the full command fits `contextBudgetBytes` (else over-budget),
- *   4. the link's own circuit breaker is closed (else breaker-open),
+ *   4. the judge's own circuit breaker is closed (else breaker-open),
  *   5. the classifier model resolves through `findOfType("classifier", ...)`
  *      (else model-unresolved; there is no session-model fallback),
- *   6. with `systemOne.guidance` on, the guidance seam selects this ask's
+ *   6. with `quickJudge.guidance` on, the guidance seam selects this ask's
  *      files, read per ask (a throw is guidance-load-failed),
- *   7. `classify` runs under an abort signal bounded by `systemOne.timeoutMs`.
+ *   7. `classify` runs under an abort signal bounded by `quickJudge.timeoutMs`.
  *
  * From step 3 on every outcome goes through the verdict policy with the
- * link's `verdicts` and `onError`. A failure never allows. Each recorded
- * decision writes one `classifier.decision` entry tagged
- * `link: "system-one"`, with the per-question answers when the model
- * answered.
+ * judge's `verdicts` and `onError`. A failure never allows. Each recorded
+ * decision writes one `classifier.decision` entry tagged `judge: "quick"`,
+ * with the per-question answers when the model answered.
  */
 
 import type {
@@ -40,7 +39,7 @@ import type {
 } from "@gotgenes/pi-permission-system";
 
 import { CircuitBreaker } from "./breaker";
-import type { SystemOneConfig } from "./config-schema";
+import type { QuickJudgeConfig } from "./config-schema";
 import { extractFullCommandContext, type FullCommandContext } from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
@@ -61,21 +60,21 @@ import {
   type VerdictPolicy,
 } from "./verdict-policy";
 
-/** The link name every decision entry of this link carries. */
-const LINK_NAME = "system-one";
+/** The judge tag every decision entry of this judge carries. */
+const JUDGE_TAG = "quick";
 
 /**
  * The recorded reason for an answer below the thresholds: the model judged
- * and did not clear the bar, the same reason the classifier link records
- * for its judge's own defer, so health treats both as a verdict.
+ * and did not clear the bar, the same reason the LLM judge records for its
+ * model's own defer, so health treats both as a verdict.
  */
 const UNCERTAIN_REASON = "model-verdict";
 
 /** The policy when no settings can be read: never deny, never allow. */
 const DEFAULT_POLICY: VerdictPolicy = { verdicts: "allow-defer", onError: "defer" };
 
-/** The narrow model-registry projection the link needs. */
-export interface SystemOneRegistryLike {
+/** The narrow model-registry projection the quick judge needs. */
+export interface QuickJudgeRegistryLike {
   findOfType(
     type: "classifier",
     provider: string,
@@ -88,28 +87,28 @@ export interface SystemOneRegistryLike {
   ): Promise<ClassifierResult>;
 }
 
-/** What the link reads per ask: its own settings and the shared budget. */
-export interface SystemOneLinkSettings {
-  systemOne: SystemOneConfig;
+/** What the quick judge reads per ask: its own settings and the shared budget. */
+export interface QuickJudgeSettings {
+  quickJudge: QuickJudgeConfig;
   contextBudgetBytes: number;
 }
 
-/** Collaborators for the link, injected so the extension and tests wire them. */
-export interface SystemOneLinkDeps {
+/** Collaborators for the quick judge, injected so the extension and tests wire them. */
+export interface QuickJudgeDeps {
   /** The settings in effect, read live (absent until session config loads). */
-  getSettings: () => SystemOneLinkSettings | undefined;
+  getSettings: () => QuickJudgeSettings | undefined;
   /** The session model registry, read live. */
-  getRegistry: () => SystemOneRegistryLike | undefined;
+  getRegistry: () => QuickJudgeRegistryLike | undefined;
   /** The session cwd, sent to the model as part of the state. */
   getCwd: () => string;
   /**
-   * Guidance seam: called once per judged ask when `systemOne.guidance` is
+   * Guidance seam: called once per judged ask when `quickJudge.guidance` is
    * on, right before the model call (production: the same loader, trust
-   * check and selection as the classifier link). Absent means no guidance.
+   * check and selection as the LLM judge). Absent means no guidance.
    * A throw is a guidance-load-failed failure.
    */
   getGuidance?: () => GuidanceSelection;
-  /** This link's own circuit breaker; the link makes one when absent. */
+  /** This judge's own circuit breaker; the judge makes one when absent. */
   breaker?: CircuitBreaker;
   /**
    * Outcome seam: called once per decision entry with what the judge did,
@@ -119,7 +118,7 @@ export interface SystemOneLinkDeps {
 }
 
 /** Report through the health seam; a throwing listener never changes a verdict. */
-function report(deps: SystemOneLinkDeps, outcome: HealthOutcome): void {
+function report(deps: QuickJudgeDeps, outcome: HealthOutcome): void {
   try {
     deps.onOutcome?.(outcome);
   } catch {
@@ -135,8 +134,8 @@ function healthOf(outcome: LinkOutcome, reason: string | null): HealthOutcome {
   return { verdict: "defer", deferReason: reason ?? UNCERTAIN_REASON };
 }
 
-/** Build the `authorize` callback registered as `"system-one"`. */
-export function createSystemOneLink(deps: SystemOneLinkDeps): Authorizer["authorize"] {
+/** Build the quick judge's `authorize` callback. */
+export function createQuickJudge(deps: QuickJudgeDeps): Authorizer["authorize"] {
   const breaker = deps.breaker ?? new CircuitBreaker();
 
   return async (details, _query, log) => {
@@ -147,7 +146,7 @@ export function createSystemOneLink(deps: SystemOneLinkDeps): Authorizer["author
       return await decide(deps, breaker, details, log, trail);
     } catch {
       // The backstop: whatever threw is an internal-error failure under the
-      // link's onError, and never an allow.
+      // judge's onError, and never an allow.
       const verdict = applyVerdictPolicy(
         { kind: "failure", failure: "internal-error" },
         backstopPolicy(deps),
@@ -171,7 +170,7 @@ export function createSystemOneLink(deps: SystemOneLinkDeps): Authorizer["author
   };
 }
 
-function backstopPolicy(deps: SystemOneLinkDeps): VerdictPolicy {
+function backstopPolicy(deps: QuickJudgeDeps): VerdictPolicy {
   try {
     const settings = deps.getSettings();
     return settings ? policyOf(settings) : DEFAULT_POLICY;
@@ -180,12 +179,12 @@ function backstopPolicy(deps: SystemOneLinkDeps): VerdictPolicy {
   }
 }
 
-function policyOf(settings: SystemOneLinkSettings): VerdictPolicy {
-  return { verdicts: settings.systemOne.verdicts, onError: settings.systemOne.onError };
+function policyOf(settings: QuickJudgeSettings): VerdictPolicy {
+  return { verdicts: settings.quickJudge.verdicts, onError: settings.quickJudge.onError };
 }
 
 async function decide(
-  deps: SystemOneLinkDeps,
+  deps: QuickJudgeDeps,
   breaker: CircuitBreaker,
   details: PromptPermissionDetails,
   log: AuthorizerLog,
@@ -211,7 +210,7 @@ async function decide(
 
   if (surface === undefined || isExcludedSurface(surface)) {
     log.debug(SHORT_CIRCUIT_EVENT, {
-      link: LINK_NAME,
+      judge: JUDGE_TAG,
       requestId: details.requestId,
       surface: surface ?? null,
       reason: surface === undefined ? "undeterminable-surface" : "excluded-surface",
@@ -220,10 +219,10 @@ async function decide(
   }
 
   const policy = policyOf(settings);
-  const { systemOne } = settings;
+  const { quickJudge } = settings;
   const pairId =
-    systemOne.provider !== undefined && systemOne.model !== undefined
-      ? `${systemOne.provider}/${systemOne.model}`
+    quickJudge.provider !== undefined && quickJudge.model !== undefined
+      ? `${quickJudge.provider}/${quickJudge.model}`
       : null;
   const preModel = (outcome: LinkOutcome, deferReason: string): AuthorizerVerdict =>
     record(deps, log, details, surface, policy, outcome, {
@@ -246,8 +245,8 @@ async function decide(
 
   const registry = deps.getRegistry();
   const model =
-    systemOne.provider !== undefined && systemOne.model !== undefined
-      ? registry?.findOfType("classifier", systemOne.provider, systemOne.model)
+    quickJudge.provider !== undefined && quickJudge.model !== undefined
+      ? registry?.findOfType("classifier", quickJudge.provider, quickJudge.model)
       : undefined;
   if (!registry || !model) {
     return preModel({ kind: "failure", failure: "model-unresolved" }, "model-unresolved");
@@ -256,7 +255,7 @@ async function decide(
   // Read from disk for every judged ask so an edit takes effect on the next
   // one, and only now so the short-circuits above never touch the disk.
   let guidance: GuidanceSelection | undefined;
-  if (systemOne.guidance) {
+  if (quickJudge.guidance) {
     try {
       guidance = deps.getGuidance?.() ?? EMPTY_GUIDANCE;
       trail.guidance = guidance;
@@ -277,7 +276,7 @@ async function decide(
     ...(guidance === undefined ? {} : { guidance: guidance.included }),
   });
   const startedAt = Date.now();
-  const result = await classifyWithin(registry, model, context, systemOne.timeoutMs);
+  const result = await classifyWithin(registry, model, context, quickJudge.timeoutMs);
   const latencyMs = Date.now() - startedAt;
   if (result === "timeout" || result === "threw" || result.stopReason !== "stop") {
     breaker.recordFailure(log, details.requestId);
@@ -290,7 +289,7 @@ async function decide(
       ? { kind: "failure", failure: "timeout" }
       : result === "threw"
         ? { kind: "failure", failure: "call-failed" }
-        : mapSystemOneResult(result, systemOne);
+        : mapSystemOneResult(result, quickJudge);
   const answers =
     typeof result === "object" && result.stopReason === "stop"
       ? summarizeAnswers(result.answers)
@@ -313,7 +312,7 @@ async function decide(
  * `"threw"` when the call rejects.
  */
 async function classifyWithin(
-  registry: SystemOneRegistryLike,
+  registry: QuickJudgeRegistryLike,
   model: ClassifierModel<ClassifierApi>,
   context: ClassifierContext,
   timeoutMs: number,
@@ -367,7 +366,7 @@ function summarizeAnswers(
  * reason the outcome implies.
  */
 function record(
-  deps: SystemOneLinkDeps,
+  deps: QuickJudgeDeps,
   log: AuthorizerLog,
   details: PromptPermissionDetails,
   surface: string,
@@ -421,7 +420,7 @@ function baseEntry(
   modelId: string | null,
 ) {
   return {
-    link: LINK_NAME,
+    judge: JUDGE_TAG,
     requestId: details.requestId,
     surface,
     value: details.payload?.request?.value ?? null,

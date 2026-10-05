@@ -68,7 +68,7 @@ describe("no path-based allow capping in link code", () => {
     "model-review.ts",
     "breaker.ts",
     "prompt.ts",
-    "system-one-link.ts",
+    "quick-judge.ts",
     "system-one-review.ts",
     "verdict-policy.ts",
   ])(
@@ -332,10 +332,10 @@ describe("fail-safe: verdicts come only from the model or the policy", () => {
   });
 });
 
-describe("system-one module guards", () => {
-  const SYSTEM_ONE_FILES = ["system-one-link.ts", "system-one-review.ts", "verdict-policy.ts"];
+describe("quick judge module guards", () => {
+  const SYSTEM_ONE_FILES = ["quick-judge.ts", "system-one-review.ts", "verdict-policy.ts"];
 
-  it("the link-file set includes the system-one modules", () => {
+  it("the link-file set includes the quick judge modules", () => {
     for (const name of SYSTEM_ONE_FILES) {
       expect(LINK_FILES).toContain(name);
     }
@@ -357,14 +357,14 @@ describe("system-one module guards", () => {
   });
 
   it("classify is reached only through the injected registry seam", () => {
-    const link = src("system-one-link.ts");
+    const link = src("quick-judge.ts");
     // One member call, on the injected registry.
     expect(link.match(/\.classify\s*\(/g)).toHaveLength(1);
     expect(link).toMatch(/\bregistry\s*\.classify\s*\(/);
     // The only bare form is the method signature in the seam interface.
     const seam = link.slice(
-      link.indexOf("export interface SystemOneRegistryLike"),
-      link.indexOf("export interface SystemOneLinkSettings"),
+      link.indexOf("export interface QuickJudgeRegistryLike"),
+      link.indexOf("export interface QuickJudgeSettings"),
     );
     expect(link.match(/(?<![.\w$])classify\s*\(/g)).toHaveLength(1);
     expect(seam).toMatch(/(?<![.\w$])classify\s*\(/);
@@ -372,13 +372,13 @@ describe("system-one module guards", () => {
     expect(src("verdict-policy.ts")).not.toMatch(/\bclassify\s*\(/);
   });
 
-  it("the system-one link never reads the session model", () => {
-    const link = src("system-one-link.ts");
+  it("the quick judge never reads the session model", () => {
+    const link = src("quick-judge.ts");
     expect(link).not.toMatch(/sessionModel|getSessionModel|ctx\.model\b/);
   });
 
-  it("the system-one link imports nothing from the extension and calls no setStatus", () => {
-    const link = src("system-one-link.ts");
+  it("the quick judge imports nothing from the extension and calls no setStatus", () => {
+    const link = src("quick-judge.ts");
     expect(importsOf(link)).not.toContain("./extension");
     expect(link).not.toContain("setStatus");
   });
@@ -596,9 +596,9 @@ describe("guidance discipline", () => {
       expect(flat).toContain("/permission-model system-one");
     });
 
-    it("CLAUDE.md lists the system-one modules and the revised failure rule", () => {
+    it("CLAUDE.md lists the quick judge modules and the revised failure rule", () => {
       for (const module of [
-        "src/system-one-link.ts",
+        "src/quick-judge.ts",
         "src/system-one-review.ts",
         "src/verdict-policy.ts",
       ]) {

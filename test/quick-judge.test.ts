@@ -17,11 +17,11 @@ import type { HealthOutcome } from "#src/health";
 import type { CompleteFn } from "#src/model-review";
 import { createClassifierReviewer } from "#src/reviewer";
 import {
-  createSystemOneLink,
-  type SystemOneLinkDeps,
-  type SystemOneLinkSettings,
-  type SystemOneRegistryLike,
-} from "#src/system-one-link";
+  createQuickJudge,
+  type QuickJudgeDeps,
+  type QuickJudgeRegistryLike,
+  type QuickJudgeSettings,
+} from "#src/quick-judge";
 import { HAZARD_OPTIONS } from "#src/system-one-review";
 import { COULD_NOT_CONFIRM_REASON, failureDenyReason } from "#src/verdict-policy";
 import { assistantToolCall } from "#test/fixtures/assistant-message";
@@ -39,12 +39,12 @@ function fakeLog(): AuthorizerLog & {
   return { review: vi.fn<LogFn>(), debug: vi.fn<LogFn>() };
 }
 
-function settings(systemOne: Record<string, unknown> = {}, top: Record<string, unknown> = {}) {
+function settings(quickJudge: Record<string, unknown> = {}, top: Record<string, unknown> = {}) {
   const config = classifierConfigSchema.parse({
     ...top,
-    systemOne: { provider: "typesafe", model: "jev", ...systemOne },
+    quickJudge: { provider: "typesafe", model: "jev", ...quickJudge },
   });
-  return { systemOne: config.systemOne!, contextBudgetBytes: config.contextBudgetBytes };
+  return { quickJudge: config.quickJudge!, contextBudgetBytes: config.contextBudgetBytes };
 }
 
 function hazardAnswer(probabilities: Record<string, number>): ClassifierAnswer {
@@ -79,7 +79,7 @@ const ALLOW_RESULT = answered(0.97, 0.96, { none: 0.98 });
 const DENY_RESULT = answered(0.1, 0.9, { force_push: 0.95, none: 0.05 });
 const UNCERTAIN_RESULT = answered(0.95, 0.6, { none: 0.9 });
 
-type ClassifyFn = SystemOneRegistryLike["classify"];
+type ClassifyFn = QuickJudgeRegistryLike["classify"];
 
 function fakeRegistry(classify: ClassifyFn = vi.fn(async () => ALLOW_RESULT)) {
   return {
@@ -91,8 +91,8 @@ function fakeRegistry(classify: ClassifyFn = vi.fn(async () => ALLOW_RESULT)) {
 }
 
 function makeDeps(
-  overrides: Partial<SystemOneLinkDeps> & { settings?: SystemOneLinkSettings } = {},
-): SystemOneLinkDeps {
+  overrides: Partial<QuickJudgeDeps> & { settings?: QuickJudgeSettings } = {},
+): QuickJudgeDeps {
   const registry = fakeRegistry();
   const { settings: given, ...rest } = overrides;
   return {
@@ -131,7 +131,7 @@ function askWithFullCommand(text: string): PromptPermissionDetails {
 describe("model resolution", () => {
   it("classifies with the registry's classifier model and the built context", async () => {
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(makeDeps({ getRegistry: () => registry }));
+    const authorize = createQuickJudge(makeDeps({ getRegistry: () => registry }));
     const verdict = await authorize(askDetails(), QUERY, fakeLog());
     expect(verdict).toEqual({ kind: "allow" });
     expect(registry.findOfType).toHaveBeenCalledWith("classifier", "typesafe", "jev");
@@ -156,16 +156,16 @@ describe("model resolution", () => {
     [
       "a missing pair",
       (() => {
-        const config = classifierConfigSchema.parse({ systemOne: {} });
-        return { systemOne: config.systemOne!, contextBudgetBytes: config.contextBudgetBytes };
+        const config = classifierConfigSchema.parse({ quickJudge: {} });
+        return { quickJudge: config.quickJudge!, contextBudgetBytes: config.contextBudgetBytes };
       })(),
     ],
   ])("takes onError with model-unresolved and no classify call for %s", async (_label, given) => {
     for (const onError of ["defer", "deny"] as const) {
       const registry = fakeRegistry();
-      const authorize = createSystemOneLink(
+      const authorize = createQuickJudge(
         makeDeps({
-          settings: { ...given, systemOne: { ...given.systemOne, onError } },
+          settings: { ...given, quickJudge: { ...given.quickJudge, onError } },
           getRegistry: () => registry,
         }),
       );
@@ -178,7 +178,7 @@ describe("model resolution", () => {
       );
       expect(registry.classify).not.toHaveBeenCalled();
       expect(decisionEntry(log)).toMatchObject({
-        link: "system-one",
+        judge: "quick",
         modelCalled: false,
         deferReason: "model-unresolved",
       });
@@ -186,7 +186,7 @@ describe("model resolution", () => {
   });
 
   it("takes model-unresolved when no registry is captured", async () => {
-    const authorize = createSystemOneLink(makeDeps({ getRegistry: () => undefined }));
+    const authorize = createQuickJudge(makeDeps({ getRegistry: () => undefined }));
     const log = fakeLog();
     expect(await authorize(askDetails(), QUERY, log)).toEqual({ kind: "defer" });
     expect(decisionEntry(log)?.deferReason).toBe("model-unresolved");
@@ -203,7 +203,7 @@ describe("surface short-circuits", () => {
     "defers %s with no classify call under allow-deny and onError deny",
     async (surface) => {
       const registry = fakeRegistry();
-      const authorize = createSystemOneLink(
+      const authorize = createQuickJudge(
         makeDeps({
           settings: settings({ verdicts: "allow-deny", onError: "deny" }),
           getRegistry: () => registry,
@@ -223,7 +223,7 @@ describe("surface short-circuits", () => {
 
   it("defers an undeterminable surface with no classify call", async () => {
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts: "allow-deny", onError: "deny" }),
         getRegistry: () => registry,
@@ -240,13 +240,13 @@ describe("surface short-circuits", () => {
 
   it("defers with no-config and no call when settings are absent", async () => {
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ getSettings: () => undefined, getRegistry: () => registry }),
     );
     const log = fakeLog();
     expect(await authorize(askDetails(), QUERY, log)).toEqual({ kind: "defer" });
     expect(registry.classify).not.toHaveBeenCalled();
-    expect(decisionEntry(log)).toMatchObject({ link: "system-one", deferReason: "no-config" });
+    expect(decisionEntry(log)).toMatchObject({ judge: "quick", deferReason: "no-config" });
   });
 });
 
@@ -257,7 +257,7 @@ describe("timeout", () => {
       seenSignal = options?.signal;
       return new Promise<ClassifierResult>(() => {});
     });
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ settings: settings({ timeoutMs: 40 }), getRegistry: () => registry }),
     );
     const log = fakeLog();
@@ -271,7 +271,7 @@ describe("timeout", () => {
 
   it("denies a timeout with its reason under onError deny", async () => {
     const registry = fakeRegistry(() => new Promise<ClassifierResult>(() => {}));
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ timeoutMs: 20, onError: "deny" }),
         getRegistry: () => registry,
@@ -291,7 +291,7 @@ describe("over-budget asks", () => {
     ["allow-deny", { kind: "deny", reason: COULD_NOT_CONFIRM_REASON }],
   ] as const)("under %s yield %j with no classify call", async (verdicts, expected) => {
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts, onError: "deny" }, { contextBudgetBytes: 8 }),
         getRegistry: () => registry,
@@ -301,7 +301,7 @@ describe("over-budget asks", () => {
     expect(await authorize(askWithFullCommand(FULL_COMMAND), QUERY, log)).toEqual(expected);
     expect(registry.classify).not.toHaveBeenCalled();
     expect(decisionEntry(log)).toMatchObject({
-      link: "system-one",
+      judge: "quick",
       verdict: expected.kind,
       deferReason: "context-over-budget",
     });
@@ -316,7 +316,7 @@ describe("verdicts and failures", () => {
     ["allow-deny-defer", UNCERTAIN_RESULT, "defer"],
     ["allow-defer", ALLOW_RESULT, "allow"],
   ] as const)("under %s maps the answer to %s", async (verdicts, result, kind) => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts }),
         getRegistry: () => fakeRegistry(vi.fn(async () => result)),
@@ -327,7 +327,7 @@ describe("verdicts and failures", () => {
   });
 
   it("names the hazard category in the deny reason", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts: "allow-deny-defer" }),
         getRegistry: () => fakeRegistry(vi.fn(async () => DENY_RESULT)),
@@ -344,7 +344,7 @@ describe("verdicts and failures", () => {
       stopReason: "error",
       errorMessage: "503",
     };
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ onError: "deny" }),
         getRegistry: () => fakeRegistry(vi.fn(async () => error)),
@@ -360,7 +360,7 @@ describe("verdicts and failures", () => {
   });
 
   it("maps a thrown classify to call-failed", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         getRegistry: () =>
           fakeRegistry(
@@ -376,7 +376,7 @@ describe("verdicts and failures", () => {
   });
 
   it("takes internal-error under onError when a seam throws", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ onError: "deny" }),
         getCwd: () => {
@@ -390,13 +390,13 @@ describe("verdicts and failures", () => {
       reason: failureDenyReason("internal-error"),
     });
     expect(decisionEntry(log)).toMatchObject({
-      link: "system-one",
+      judge: "quick",
       deferReason: "internal-error",
     });
   });
 
   it("still never allows when even the log throws", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         getCwd: () => {
           throw new Error("no session");
@@ -421,7 +421,7 @@ describe("decision entry", () => {
     ["deny", DENY_RESULT, null],
     ["defer", UNCERTAIN_RESULT, "model-verdict"],
   ] as const)("writes one full entry on a %s answer, with answers", async (kind, result, reason) => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts: "allow-deny-defer" }),
         getRegistry: () => fakeRegistry(vi.fn(async () => result)),
@@ -431,7 +431,7 @@ describe("decision entry", () => {
     await authorize(askDetails(), QUERY, log);
     const entry = decisionEntry(log);
     expect(entry).toMatchObject({
-      link: "system-one",
+      judge: "quick",
       requestId: "req-1",
       surface: "bash",
       value: "git status --porcelain",
@@ -454,7 +454,7 @@ describe("decision entry", () => {
   });
 
   it("records deny-capped when allow-defer withholds a deny", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts: "allow-defer" }),
         getRegistry: () => fakeRegistry(vi.fn(async () => DENY_RESULT)),
@@ -466,7 +466,7 @@ describe("decision entry", () => {
   });
 
   it("logs measurements, never the full command text", async () => {
-    const authorize = createSystemOneLink(makeDeps());
+    const authorize = createQuickJudge(makeDeps());
     const log = fakeLog();
     await authorize(askWithFullCommand(FULL_COMMAND), QUERY, log);
     const entry = decisionEntry(log);
@@ -496,7 +496,7 @@ describe("guidance", () => {
       { path: GLOBAL, content: "global rules" },
       { path: PROJECT, content: "project rules" },
     ];
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ getRegistry: () => registry, getGuidance: guidanceSeam(files, () => false) }),
     );
     const log = fakeLog();
@@ -511,7 +511,7 @@ describe("guidance", () => {
   it("reads guidance per ask: an edit between asks changes the second state", async () => {
     const registry = fakeRegistry();
     const files = [{ path: GLOBAL, content: "first rules" }];
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ getRegistry: () => registry, getGuidance: guidanceSeam(files, () => true) }),
     );
     await authorize(askDetails(), QUERY, fakeLog());
@@ -523,10 +523,10 @@ describe("guidance", () => {
     ]);
   });
 
-  it("omits guidance and never calls the seam when systemOne.guidance is false", async () => {
+  it("omits guidance and never calls the seam when quickJudge.guidance is false", async () => {
     const registry = fakeRegistry();
     const getGuidance = vi.fn(guidanceSeam([{ path: GLOBAL, content: "rules" }], () => true));
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ guidance: false }),
         getRegistry: () => registry,
@@ -540,7 +540,7 @@ describe("guidance", () => {
 
   it("takes guidance-load-failed under onError with no classify call when the seam throws", async () => {
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ onError: "deny" }),
         getRegistry: () => registry,
@@ -559,7 +559,7 @@ describe("guidance", () => {
   });
 
   it("never logs guidance content", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         getGuidance: guidanceSeam([{ path: GLOBAL, content: "SECRET-GUIDANCE-TEXT" }], () => true),
       }),
@@ -573,9 +573,9 @@ describe("guidance", () => {
 describe("breaker and health", () => {
   const never = () => new Promise<ClassifierResult>(() => {});
 
-  it("three system-one timeouts open its breaker; a classifier ask still calls complete", async () => {
+  it("three quick timeouts open its breaker; an LLM judge ask still calls complete", async () => {
     const registry = fakeRegistry(never);
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ settings: settings({ timeoutMs: 5 }), getRegistry: () => registry }),
     );
     for (let i = 0; i < 3; i += 1) {
@@ -604,7 +604,7 @@ describe("breaker and health", () => {
     const breaker = new CircuitBreaker();
     const failures = vi.spyOn(breaker, "recordFailure");
     const successes = vi.spyOn(breaker, "recordSuccess");
-    const authorize = createSystemOneLink(makeDeps({ breaker }));
+    const authorize = createQuickJudge(makeDeps({ breaker }));
     await authorize(askDetails(), QUERY, fakeLog());
     expect(successes).toHaveBeenCalledTimes(1);
     expect(failures).not.toHaveBeenCalled();
@@ -616,7 +616,7 @@ describe("breaker and health", () => {
       breaker.recordFailure(fakeLog(), "warm-up");
     }
     const registry = fakeRegistry();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({ settings: settings({ onError: "deny" }), getRegistry: () => registry, breaker }),
     );
     expect(await authorize(askDetails(), QUERY, fakeLog())).toEqual({
@@ -632,7 +632,7 @@ describe("breaker and health", () => {
     ["an uncertain answer", UNCERTAIN_RESULT, { verdict: "defer", deferReason: "model-verdict" }],
   ] as const)("reports %s to the health seam once", async (_label, result, expected) => {
     const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ verdicts: "allow-deny-defer" }),
         getRegistry: () => fakeRegistry(vi.fn(async () => result)),
@@ -646,7 +646,7 @@ describe("breaker and health", () => {
 
   it("reports a failure as a failure defer even under onError deny", async () => {
     const onOutcome = vi.fn<(outcome: HealthOutcome) => void>();
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         settings: settings({ onError: "deny" }),
         getRegistry: () => undefined,
@@ -658,7 +658,7 @@ describe("breaker and health", () => {
   });
 
   it("keeps the verdict when the health seam throws", async () => {
-    const authorize = createSystemOneLink(
+    const authorize = createQuickJudge(
       makeDeps({
         onOutcome: () => {
           throw new Error("footer down");
@@ -672,12 +672,64 @@ describe("breaker and health", () => {
 
   it("reports nothing for a surface short-circuit", async () => {
     const onOutcome = vi.fn();
-    const authorize = createSystemOneLink(makeDeps({ onOutcome }));
+    const authorize = createQuickJudge(makeDeps({ onOutcome }));
     await authorize(
       askDetails({ surface: "path_read" }, { surface: "path_read" }),
       QUERY,
       fakeLog(),
     );
     expect(onOutcome).not.toHaveBeenCalled();
+  });
+});
+
+describe("decision entry tag", () => {
+  const never = () => new Promise<ClassifierResult>(() => {});
+
+  it("tags every entry judge quick and never writes a link field", async () => {
+    const cases: Partial<QuickJudgeDeps>[] = [
+      {},
+      { getSettings: () => undefined },
+      { getRegistry: () => undefined },
+      { getRegistry: () => fakeRegistry(never), getSettings: () => settings({ timeoutMs: 5 }) },
+      {
+        getRegistry: () => {
+          throw new Error("registry down");
+        },
+      },
+    ];
+    for (const overrides of cases) {
+      const authorize = createQuickJudge(makeDeps(overrides));
+      const log = fakeLog();
+      await authorize(askDetails(), QUERY, log);
+      const entry = decisionEntry(log);
+      expect(entry?.judge).toBe("quick");
+      expect(entry).not.toHaveProperty("link");
+    }
+  });
+
+  it("carries answers only when classify answered", async () => {
+    const answeredLog = fakeLog();
+    await createQuickJudge(makeDeps())(askDetails(), QUERY, answeredLog);
+    expect(decisionEntry(answeredLog)).toHaveProperty("answers");
+
+    const timedOutLog = fakeLog();
+    await createQuickJudge(
+      makeDeps({
+        getRegistry: () => fakeRegistry(never),
+        getSettings: () => settings({ timeoutMs: 5 }),
+      }),
+    )(askDetails(), QUERY, timedOutLog);
+    expect(decisionEntry(timedOutLog)).not.toHaveProperty("answers");
+  });
+
+  it("tags the surface short-circuit debug entry judge quick", async () => {
+    const log = fakeLog();
+    await createQuickJudge(makeDeps())(
+      askDetails({ surface: "path_read" }, { surface: "path_read" }),
+      QUERY,
+      log,
+    );
+    expect(log.debug.mock.calls[0]?.[1]).toMatchObject({ judge: "quick" });
+    expect(log.debug.mock.calls[0]?.[1]).not.toHaveProperty("link");
   });
 });

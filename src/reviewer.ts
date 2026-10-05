@@ -1,6 +1,6 @@
 /**
- * The auto-classifier reviewer: the `Authorizer` chain link this package
- * registers as `"classifier"`.
+ * The LLM judge: a chat model reads each ask and reports allow, deny, or
+ * defer. It runs inside the permission-judge link when the mode includes it.
  *
  * The decision runs top to bottom, deferring at the first miss so the cheap
  * gates short-circuit before any model call:
@@ -22,7 +22,7 @@
  * verdict policy, which applies the link's `verdicts` and `onError`
  * settings. A failure never allows: it defers, or denies with a fixed reason
  * under `onError` deny. Each reviewed ask writes exactly one
- * `classifier.decision` review entry tagged `link: "classifier"`; raw model
+ * `classifier.decision` review entry tagged `judge: "llm"`; raw model
  * replies and the cheap short-circuits go to the debug log.
  */
 
@@ -65,8 +65,8 @@ export function isExcludedSurface(surface: string): boolean {
 
 /** Review-log event: one positive decision record per reviewed ask. */
 export const DECISION_EVENT = "classifier.decision";
-/** The link name every decision entry of this reviewer carries. */
-const LINK_NAME = "classifier";
+/** The judge tag every decision entry of this reviewer carries. */
+const JUDGE_TAG = "llm";
 /**
  * The recorded reason when `allow-defer` turns a model deny into defer: the
  * judge worked, the setting withheld the deny.
@@ -180,7 +180,7 @@ export function createClassifierReviewer(
       try {
         const context = extractFullCommandContext(details.payload);
         log.review(DECISION_EVENT, {
-          link: LINK_NAME,
+          judge: JUDGE_TAG,
           requestId: details.requestId,
           surface: gateSurfaceOf(details) ?? null,
           value: details.payload?.request?.value ?? null,
@@ -380,7 +380,7 @@ async function decide(
       ? DENY_CAPPED_REASON
       : null);
   log.review(DECISION_EVENT, {
-    link: LINK_NAME,
+    judge: JUDGE_TAG,
     requestId,
     surface,
     value,
@@ -445,7 +445,7 @@ function recordPreModel(
       ? { kind: "defer" }
       : applyVerdictPolicy(preModelOutcome(entry.deferReason), policy);
   log.review(DECISION_EVENT, {
-    link: LINK_NAME,
+    judge: JUDGE_TAG,
     requestId: entry.requestId,
     surface: entry.surface,
     value: entry.value,

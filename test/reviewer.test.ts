@@ -953,7 +953,7 @@ describe("verdicts and onError settings", () => {
       const verdict = await authorize(askDetails(), QUERY, log);
       expect(verdict).toEqual({ kind: "deny", reason: failureDenyReason(failure) });
       expect(decisionEntry(log)).toMatchObject({
-        link: "classifier",
+        judge: "llm",
         verdict: "deny",
         deferReason: failure,
       });
@@ -1010,7 +1010,7 @@ describe("verdicts and onError settings", () => {
     });
   });
 
-  it("tags every decision entry with link classifier", async () => {
+  it("tags every decision entry judge llm and never writes a link field", async () => {
     const cases: Partial<ClassifierReviewerDeps>[] = [
       { complete: completeReporting({ verdict: "allow" }) },
       { getConfig: () => undefined },
@@ -1021,7 +1021,8 @@ describe("verdicts and onError settings", () => {
       const authorize = createClassifierReviewer(makeDeps(overrides));
       const log = fakeLog();
       await authorize(askDetails(), QUERY, log);
-      expect(decisionEntry(log)?.link).toBe("classifier");
+      expect(decisionEntry(log)?.judge).toBe("llm");
+      expect(decisionEntry(log)).not.toHaveProperty("link");
     }
   });
 });

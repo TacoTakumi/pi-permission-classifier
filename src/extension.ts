@@ -96,10 +96,10 @@ import {
   type ModelRegistryLike,
 } from "./reviewer";
 import {
-  createSystemOneLink,
-  type SystemOneLinkSettings,
-  type SystemOneRegistryLike,
-} from "./system-one-link";
+  createQuickJudge,
+  type QuickJudgeRegistryLike,
+  type QuickJudgeSettings,
+} from "./quick-judge";
 
 /** The operator-facing chain-link name referenced from `authorizerChain`. */
 const LINK_NAME = "classifier";
@@ -181,7 +181,7 @@ export function createClassifierExtension(
   let config: ClassifierConfig | undefined;
   let sessionModel: Model<any> | undefined;
   let registry:
-    | (ModelRegistryLike & CommandRegistryLike & SystemOneRegistryLike)
+    | (ModelRegistryLike & CommandRegistryLike & QuickJudgeRegistryLike)
     | undefined;
   let ui: ExtensionContext["ui"] | undefined;
   /** The session context, for the per-ask cwd and trust reads. */
@@ -248,13 +248,13 @@ export function createClassifierExtension(
    * configured verdicts and onError, and the first time that drops a
    * stricter setting this session, the operator is warned.
    */
-  function systemOneSettings(): SystemOneLinkSettings | undefined {
+  function systemOneSettings(): QuickJudgeSettings | undefined {
     const systemOne = config?.systemOne;
     if (!config || !systemOne) {
       return undefined;
     }
     if (!config.classifierEnabled) {
-      return { systemOne, contextBudgetBytes: config.contextBudgetBytes };
+      return { quickJudge: systemOne, contextBudgetBytes: config.contextBudgetBytes };
     }
     if (
       !warnedFrontLink &&
@@ -270,7 +270,7 @@ export function createClassifierExtension(
       );
     }
     return {
-      systemOne: { ...systemOne, ...FRONT_LINK_POLICY },
+      quickJudge: { ...systemOne, ...FRONT_LINK_POLICY },
       contextBudgetBytes: config.contextBudgetBytes,
     };
   }
@@ -448,7 +448,7 @@ export function createClassifierExtension(
     if (wantSystemOne) {
       // Warn about a front-link override at startup, not first ask.
       systemOneSettings();
-      const authorizeSystemOne = createSystemOneLink({
+      const authorizeSystemOne = createQuickJudge({
         getSettings: systemOneSettings,
         getRegistry: () => registry,
         getCwd: sessionCwd,
