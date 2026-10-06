@@ -82,4 +82,8 @@ export const CANDIDATES: Record<string, Record<string, ClassifierQuestion>> = {
   shipped: SYSTEM_ONE_QUESTIONS,
   previous: PREVIOUS,
   examples: EXAMPLES,
+  // The examples wording let a build tool that greps for tokens through, by
+  // naming make as routine in the contained question; this keeps the shipped
+  // contained question.
+  "examples-narrow": { ...EXAMPLES, contained: SYSTEM_ONE_QUESTIONS.contained! },
 };

@@ -242,3 +242,12 @@ describe("eval candidates", () => {
     }
   });
 });
+
+describe("eval narrow candidate", () => {
+  it("keeps the shipped contained question and the examples wording for the others", () => {
+    const narrow = CANDIDATES["examples-narrow"];
+    expect(narrow?.contained).toBe(CANDIDATES.shipped!.contained);
+    expect(narrow?.reversible).toBe(CANDIDATES.examples!.reversible);
+    expect(narrow?.hazard).toBe(CANDIDATES.examples!.hazard);
+  });
+});
