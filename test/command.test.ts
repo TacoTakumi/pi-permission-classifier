@@ -876,6 +876,33 @@ describe("menu picker in the TUI", () => {
     expect(notifyOf(ctx, "error")).toContain("EACCES");
   });
 
+  it.each([
+    ["mode", ["quick-then-llm"]],
+    ["mode", ["quick", "typesafe/jev-latest"]],
+    ["quick", ["local/kev-4b-q8"]],
+    ["llm", ["anthropic/b"]],
+    ["llm", ["chat-model"]],
+    ["verdicts", ["allow-deny"]],
+    ["on-error", ["deny"]],
+  ] as const)(
+    "a %s pick %j whose reload is invalid closes the menu after the error",
+    async (entry, picks) => {
+      const config = entry === "mode" && picks.length === 1 ? WITH_QUICK : CONFIG_QN;
+      const { deps, ctx, pending } = openMenu(config);
+      deps.reload.mockReturnValue({ config: undefined, issues: [] });
+      (await stepRequest(deps, 0)).onSelect(entry);
+      for (const [index, value] of picks.entries()) {
+        (await stepRequest(deps, index + 1)).onSelect(value);
+      }
+      await pending;
+      expect(deps.write).toHaveBeenCalledTimes(1);
+      expect(deps.apply).not.toHaveBeenCalled();
+      expect(deps.buildPicker).toHaveBeenCalledTimes(picks.length + 1);
+      expect(notifyTypes(ctx)).toEqual(["error"]);
+      expect(notifyOf(ctx, "error")).toContain("merged config is now invalid");
+    },
+  );
+
   it("warns, writes nothing and returns to the menu when no classifier model is available", async () => {
     const { deps, ctx, pending } = openMenu(CONFIG_QN);
     ctx.modelRegistry.getAvailableOfType.mockResolvedValue([]);

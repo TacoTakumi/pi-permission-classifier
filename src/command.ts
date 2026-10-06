@@ -115,6 +115,9 @@ const USAGE =
   `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id> | ` +
   `${VERDICTS_FORM} <${VERDICTS.join("|")}> | ${ON_ERROR_FORM} <${ON_ERRORS.join("|")}>`;
 
+/** What a write did: see `persist`. */
+type PersistOutcome = "applied" | "not-written" | "reload-invalid";
+
 /** The menu's title. */
 const MENU_TITLE = "Permission judge";
 
@@ -342,10 +345,12 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * Write the selection, reload, apply, and report. Returns whether the new
-   * config went live; every failure leaves the live config as it was.
+   * Write the selection, reload, apply, and report. Returns `applied` when
+   * the new config went live, `not-written` when nothing was written, and
+   * `reload-invalid` when the write landed but the merged config no longer
+   * validates. Every failure leaves the live config as it was.
    */
-  function persist(selection: JudgeSelection, ctx: CommandContextLike): boolean {
+  function persist(selection: JudgeSelection, ctx: CommandContextLike): PersistOutcome {
     try {
       deps.write(selection);
     } catch (error) {
@@ -354,7 +359,7 @@ export function createPermissionModelCommand(
         `Could not write ${deps.globalConfigPath()}: ${message}. Nothing changed.`,
         "error",
       );
-      return false;
+      return "not-written";
     }
     const result = deps.reload(ctx.cwd);
     if (result.config === undefined) {
@@ -366,7 +371,7 @@ export function createPermissionModelCommand(
         `Saved to ${deps.globalConfigPath()}, but the merged config is now invalid (${describeIssues(result.issues)}). The previous judge stays active for this session; fix the config and restart.`,
         "error",
       );
-      return false;
+      return "reload-invalid";
     }
     deps.apply(result.config, selection);
     ctx.ui.notify(`${describeSelection(selection)} (saved to the global config).`, "info");
@@ -383,7 +388,7 @@ export function createPermissionModelCommand(
         "warning",
       );
     }
-    return true;
+    return "applied";
   }
 
   const buildPicker = deps.buildPicker ?? buildSelectList;
@@ -432,10 +437,12 @@ export function createPermissionModelCommand(
   }
 
   /** Persist a chat model as the LLM judge; warn when it has no auth. */
-  function applyModel(model: Model<any>, ctx: CommandContextLike): void {
-    if (persist({ llm: { provider: model.provider, model: model.id } }, ctx)) {
+  function applyModel(model: Model<any>, ctx: CommandContextLike): PersistOutcome {
+    const outcome = persist({ llm: { provider: model.provider, model: model.id } }, ctx);
+    if (outcome === "applied") {
       warnWithoutAuth(model, ctx);
     }
+    return outcome;
   }
 
   /** Resolve a pair through the chat model registry and set it as the LLM judge. */
@@ -479,23 +486,26 @@ export function createPermissionModelCommand(
    * config does not count: the mode is saved globally and would outlive the
    * flag or apply in other projects.
    */
-  function applyMode(mode: Mode, ctx: CommandContextLike): void {
+  function applyMode(mode: Mode, ctx: CommandContextLike): PersistOutcome {
     if (mode !== "llm" && !deps.globalQuickJudgeSet()) {
       ctx.ui.notify(
         `Mode ${mode} needs a quick judge model in the global config: set one first with /${COMMAND_NAME} ${QUICK_FORM} <provider>/<id>. A quick model from the launch flag or a project config does not count. Nothing changed.`,
         "warning",
       );
-      return;
+      return "not-written";
     }
-    persist({ mode }, ctx);
+    return persist({ mode }, ctx);
   }
 
   /**
    * Persist verdicts or onError for the last judge of the live mode. Called
    * only after `canWrite`, so the config is there.
    */
-  function applyPolicy(fields: Omit<JudgePolicy, "judge">, ctx: CommandContextLike): void {
-    persist({ policy: { judge: lastJudge(deps.getConfig()!.mode), ...fields } }, ctx);
+  function applyPolicy(
+    fields: Omit<JudgePolicy, "judge">,
+    ctx: CommandContextLike,
+  ): PersistOutcome {
+    return persist({ policy: { judge: lastJudge(deps.getConfig()!.mode), ...fields } }, ctx);
   }
 
   /** Mount one picker step; resolves the chosen value, or `undefined` on cancel. */
@@ -536,7 +546,11 @@ export function createPermissionModelCommand(
         return;
       }
       selected = entry;
-      await pickEntry(entry, config, ctx);
+      if ((await pickEntry(entry, config, ctx)) === "reload-invalid") {
+        // The file now holds a config that does not validate; more picks
+        // would only write to it. The error already says what to fix.
+        return;
+      }
     }
   }
 
@@ -584,36 +598,28 @@ export function createPermissionModelCommand(
     entry: string,
     config: ClassifierConfig,
     ctx: CommandContextLike,
-  ): Promise<void> {
+  ): Promise<PersistOutcome> {
     if (entry === MODE_FORM) {
       const mode = modeSchema.safeParse(
         await step(ctx, "Who judges", markCurrent(MODE_ITEMS, config.mode), config.mode),
       );
       if (!mode.success) {
-        return;
+        return "not-written";
       }
       if (mode.data !== "llm" && !deps.globalQuickJudgeSet()) {
         // The mode is saved globally, so it needs a quick model beside it:
         // ask for one now and write both together.
         const pair = await pickQuickModel(config, ctx);
-        if (pair) {
-          persist({ mode: mode.data, quick: pair }, ctx);
-        }
-        return;
+        return pair ? persist({ mode: mode.data, quick: pair }, ctx) : "not-written";
       }
-      applyMode(mode.data, ctx);
-      return;
+      return applyMode(mode.data, ctx);
     }
     if (entry === QUICK_FORM) {
       const pair = await pickQuickModel(config, ctx);
-      if (pair) {
-        persist({ quick: pair }, ctx);
-      }
-      return;
+      return pair ? persist({ quick: pair }, ctx) : "not-written";
     }
     if (entry === LLM_FORM) {
-      await pickLlmModel(config, ctx);
-      return;
+      return pickLlmModel(config, ctx);
     }
     const judge = lastJudge(config.mode);
     const policy = policyOf(config, judge);
@@ -626,10 +632,7 @@ export function createPermissionModelCommand(
           policy.verdicts,
         ),
       );
-      if (verdicts.success) {
-        applyPolicy({ verdicts: verdicts.data }, ctx);
-      }
-      return;
+      return verdicts.success ? applyPolicy({ verdicts: verdicts.data }, ctx) : "not-written";
     }
     if (entry === ON_ERROR_FORM) {
       const onError = onErrorSchema.safeParse(
@@ -640,11 +643,11 @@ export function createPermissionModelCommand(
           policy.onError,
         ),
       );
-      if (onError.success) {
-        applyPolicy({ onError: onError.data }, ctx);
-      }
+      return onError.success ? applyPolicy({ onError: onError.data }, ctx) : "not-written";
     }
+    return "not-written";
   }
+
 
   /**
    * The quick model list: the available classifier models, the current one
@@ -688,7 +691,10 @@ export function createPermissionModelCommand(
    * models, the current one marked and preselected. A pick is written at
    * once, with the auth warning for a model that has none.
    */
-  async function pickLlmModel(config: ClassifierConfig, ctx: CommandContextLike): Promise<void> {
+  async function pickLlmModel(
+    config: ClassifierConfig,
+    ctx: CommandContextLike,
+  ): Promise<PersistOutcome> {
     const models = ctx.modelRegistry.getAvailable();
     const current =
       config.provider !== undefined && config.model !== undefined
@@ -705,16 +711,13 @@ export function createPermissionModelCommand(
     );
     const chosen = await step(ctx, "LLM judge model", items, current);
     if (chosen === undefined) {
-      return;
+      return "not-written";
     }
     if (chosen === CHAT_MODEL) {
-      persist({ llm: null }, ctx);
-      return;
+      return persist({ llm: null }, ctx);
     }
     const model = models.find((candidate) => `${candidate.provider}/${candidate.id}` === chosen);
-    if (model) {
-      applyModel(model, ctx);
-    }
+    return model ? applyModel(model, ctx) : "not-written";
   }
 
   /**
