@@ -538,7 +538,9 @@ choosing a judge never changes pi's session model or your default model:
 
   A model entry whose judge the mode does not run is marked, for example
   `(not used in llm)`, and can still be set. Each list marks the current
-  value `(current)` and preselects it. A pick is saved at once, exactly as
+  value `(current)` and preselects it. A configured model that is not
+  available shows first as `(current, not available)`; picking it changes
+  nothing. A pick is saved at once, exactly as
   the matching typed form saves it, and the menu opens again with the new
   value. Picking `quick` or `quick-then-llm` while the global config file
   has no quick model opens the quick model list next and saves the mode
