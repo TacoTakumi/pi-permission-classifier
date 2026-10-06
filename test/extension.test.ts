@@ -1236,8 +1236,9 @@ describe("picker selection through the extension", () => {
       .fn<() => LoadConfigResult>()
       .mockReturnValueOnce(CONFIG_RESULT)
       .mockReturnValue(CONFIG_QN_RESULT);
-    const steps: { onSelect: (value: string) => void }[] = [];
-    const buildPicker = vi.fn((request: { onSelect: (value: string) => void }) => {
+    type Step = { onSelect: (value: string) => void; onCancel: () => void };
+    const steps: Step[] = [];
+    const buildPicker = vi.fn((request: Step) => {
       steps.push(request);
       return { render: () => [], handleInput: () => {} };
     });
@@ -1256,17 +1257,11 @@ describe("picker selection through the extension", () => {
     await vi.waitFor(() => expect(steps).toHaveLength(2));
     steps[1]!.onSelect("q/n");
     await vi.waitFor(() => expect(steps).toHaveLength(3));
-    steps[2]!.onSelect("allow-deny-defer");
-    await vi.waitFor(() => expect(steps).toHaveLength(4));
-    steps[3]!.onSelect("defer");
+    steps[2]!.onCancel();
     await pending;
 
     expect(writeSelection).toHaveBeenCalledTimes(1);
-    expect(writeSelection).toHaveBeenCalledWith({
-      mode: "llm",
-      llm: { provider: "q", model: "n" },
-      policy: { judge: "llm", verdicts: "allow-deny-defer", onError: "defer" },
-    });
+    expect(writeSelection).toHaveBeenCalledWith({ llm: { provider: "q", model: "n" } });
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "perm-judge: llm:q/n");
     expect(pi.api.setModel).not.toHaveBeenCalled();
     await lastAuthorizer()(askDetails(), {}, { review: vi.fn(), debug: vi.fn() });

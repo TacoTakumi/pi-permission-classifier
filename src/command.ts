@@ -21,20 +21,19 @@
  *     fields in mode quick. The quick judge in quick-then-llm stays forced,
  *     so its policy is never offered.
  *   - Setting a model never changes the mode.
- *   - no argument in the TUI: a two-step picker, each step a list mounted
- *     through `ctx.ui.custom`. Step 1 picks the mode (quick-then-llm, llm,
- *     quick, each with a one-line description, the current one marked).
- *     Step 2 shows only the lists that mode needs, the current model
- *     preselected: the available classifier models for the quick judge, then
- *     "Same as the chat model (follows /model)" and the available chat
- *     models for the LLM judge. Then a verdicts list and an onError list
- *     for the last judge of the chosen mode, each with a one-line
- *     description per value, the current value marked and preselected.
- *     Nothing is written until the last step; then the mode, the models and
- *     the policy go out in one write. A cancel at any step writes nothing.
+ *   - no argument in the TUI: a menu, each list mounted through
+ *     `ctx.ui.custom`, with five entries showing their current values: Who
+ *     judges (the modes, each with a one-line description), Quick judge
+ *     model (the available classifier models), LLM judge model ("Same as the
+ *     chat model (follows /model)" and the available chat models), and the
+ *     last judge's verdicts and on error. A model entry whose judge the mode
+ *     does not run is marked unused. Each entry opens one list with the
+ *     current value marked and preselected; a pick writes only that entry's
+ *     fields, the same as the typed form, and the menu opens again. Esc in a
+ *     list returns to the menu without a write; Esc on the menu closes it.
  *   - no argument outside the TUI: print the mode, the model of each judge
- *     the mode runs, the last judge's policy, and the usage line (pi's `ctx.ui.custom` returns
- *     nothing in rpc/json/print modes).
+ *     the mode runs, the last judge's policy, and the usage line (pi's
+ *     `ctx.ui.custom` returns nothing in rpc/json/print modes).
  *   - anything else, including the removed forms `<provider>/<id>`,
  *     `session` and `system-one`, gets the usage line and writes nothing.
  *
@@ -113,6 +112,15 @@ const USAGE =
   `/${COMMAND_NAME} ${MODE_FORM} <${MODES.join("|")}> | ${LLM_FORM} <provider>/<id> | ` +
   `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id> | ` +
   `${VERDICTS_FORM} <${VERDICTS.join("|")}> | ${ON_ERROR_FORM} <${ON_ERRORS.join("|")}>`;
+
+/** The menu's title. */
+const MENU_TITLE = "Permission judge";
+
+/** How the menu and its lists name each judge at the start of a label. */
+const JUDGE_TITLES: Record<JudgePolicy["judge"], string> = {
+  llm: "LLM judge",
+  quick: "Quick judge",
+};
 
 /** How a confirmation or the print form names each judge. */
 const JUDGE_NAMES: Record<JudgePolicy["judge"], string> = {
@@ -234,27 +242,27 @@ export const buildSelectList: PickerSeam = (request) => {
   };
 };
 
-/** Step 1 of the picker, in its fixed order. */
-const MODE_ITEMS: readonly { mode: Mode; description: string }[] = [
+/** The Who judges list, in its fixed order. */
+const MODE_ITEMS: readonly { value: Mode; description: string }[] = [
   {
-    mode: "quick-then-llm",
+    value: "quick-then-llm",
     description: "The quick judge settles clear cases; the LLM judge reviews the rest.",
   },
-  { mode: "llm", description: "A chat model reads each ask and reasons about it." },
+  { value: "llm", description: "A chat model reads each ask and reasons about it." },
   {
-    mode: "quick",
+    value: "quick",
     description: "A System One decision model answers three fixed questions, fast.",
   },
 ];
 
-/** The picker's verdicts step, in schema order. */
+/** The verdicts list, in schema order. */
 const VERDICTS_ITEMS: readonly { value: Verdicts; description: string }[] = [
   { value: "allow-deny-defer", description: "Allow, deny, or send the ask to you when unsure." },
   { value: "allow-defer", description: "A model deny or an unsure answer goes to you." },
   { value: "allow-deny", description: "An unsure answer denies instead of asking you." },
 ];
 
-/** The picker's onError step, in schema order. */
+/** The on error list, in schema order. */
 const ON_ERROR_ITEMS: readonly { value: OnError; description: string }[] = [
   { value: "defer", description: "A failure (timeout, no reply) sends the ask to you." },
   { value: "deny", description: "A failure denies with a retry hint. It never allows." },
@@ -509,117 +517,191 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * The no-argument TUI form: pick the mode, then the models it needs, then
-   * the last judge's verdicts and onError, then write them all at once. Any
-   * cancel returns before the write.
+   * The no-argument TUI form: a menu of five entries, each showing its
+   * current value. An entry opens one list; a pick there writes only that
+   * entry's fields and the menu opens again with the new values. Esc in a
+   * list returns to the menu without a write; Esc on the menu closes it.
    */
   async function pick(ctx: CommandContextLike): Promise<void> {
-    const config = deps.getConfig();
-    const currentMode = config?.mode ?? "llm";
-    const chosenMode = await step(
+    let selected: string = MODE_FORM;
+    for (;;) {
+      const config = deps.getConfig();
+      if (config === undefined) {
+        return;
+      }
+      const entry = await step(ctx, MENU_TITLE, menuItems(config), selected);
+      if (entry === undefined) {
+        return;
+      }
+      selected = entry;
+      await pickEntry(entry, config, ctx);
+    }
+  }
+
+  /** The menu entries, each with the live config's current value. */
+  function menuItems(config: ClassifierConfig): SelectItem[] {
+    const judge = lastJudge(config.mode);
+    const policy = policyOf(config, judge);
+    const unused = ` (not used in ${config.mode})`;
+    const quick = config.quickJudge;
+    const quickValue =
+      quick?.provider !== undefined && quick.model !== undefined
+        ? `${quick.provider}/${quick.model}`
+        : "not set";
+    const llmValue =
+      config.provider !== undefined && config.model !== undefined
+        ? `${config.provider}/${config.model}`
+        : CHAT_MODEL_LABEL;
+    return [
+      { value: MODE_FORM, label: "Who judges", description: config.mode },
+      {
+        value: QUICK_FORM,
+        label: "Quick judge model",
+        description: config.mode === "llm" ? quickValue + unused : quickValue,
+      },
+      {
+        value: LLM_FORM,
+        label: "LLM judge model",
+        description: config.mode === "quick" ? llmValue + unused : llmValue,
+      },
+      {
+        value: VERDICTS_FORM,
+        label: `${JUDGE_TITLES[judge]} verdicts`,
+        description: policy.verdicts,
+      },
+      {
+        value: ON_ERROR_FORM,
+        label: `${JUDGE_TITLES[judge]} on error`,
+        description: policy.onError,
+      },
+    ];
+  }
+
+  /** Open the list for one menu entry and write the pick, if any. */
+  async function pickEntry(
+    entry: string,
+    config: ClassifierConfig,
+    ctx: CommandContextLike,
+  ): Promise<void> {
+    if (entry === MODE_FORM) {
+      const mode = modeSchema.safeParse(
+        await step(ctx, "Who judges", markCurrent(MODE_ITEMS, config.mode), config.mode),
+      );
+      if (mode.success) {
+        applyMode(mode.data, ctx);
+      }
+      return;
+    }
+    if (entry === QUICK_FORM) {
+      const pair = await pickQuickModel(config, ctx);
+      if (pair) {
+        persist({ quick: pair }, ctx);
+      }
+      return;
+    }
+    if (entry === LLM_FORM) {
+      await pickLlmModel(config, ctx);
+      return;
+    }
+    const judge = lastJudge(config.mode);
+    const policy = policyOf(config, judge);
+    if (entry === VERDICTS_FORM) {
+      const verdicts = verdictsSchema.safeParse(
+        await step(
+          ctx,
+          `${JUDGE_TITLES[judge]} verdicts`,
+          markCurrent(VERDICTS_ITEMS, policy.verdicts),
+          policy.verdicts,
+        ),
+      );
+      if (verdicts.success) {
+        applyPolicy({ verdicts: verdicts.data }, ctx);
+      }
+      return;
+    }
+    if (entry === ON_ERROR_FORM) {
+      const onError = onErrorSchema.safeParse(
+        await step(
+          ctx,
+          `${JUDGE_TITLES[judge]} on error`,
+          markCurrent(ON_ERROR_ITEMS, policy.onError),
+          policy.onError,
+        ),
+      );
+      if (onError.success) {
+        applyPolicy({ onError: onError.data }, ctx);
+      }
+    }
+  }
+
+  /**
+   * The quick model list: the available classifier models, the current one
+   * marked and preselected. Resolves the pick, or `undefined` on a cancel or
+   * when none is available (with a warning).
+   */
+  async function pickQuickModel(
+    config: ClassifierConfig,
+    ctx: CommandContextLike,
+  ): Promise<JudgePair | undefined> {
+    const labels = (await ctx.modelRegistry.getAvailableOfType("classifier")).map(
+      (model) => `${model.provider}/${model.id}`,
+    );
+    if (labels.length === 0) {
+      ctx.ui.notify(
+        "No classifier models are available for the quick judge. Nothing changed.",
+        "warning",
+      );
+      return undefined;
+    }
+    const current = config.quickJudge;
+    const currentLabel =
+      current?.provider !== undefined && current.model !== undefined
+        ? `${current.provider}/${current.model}`
+        : undefined;
+    const chosen = await step(
       ctx,
-      "Permission judge: who judges each ask",
-      MODE_ITEMS.map(({ mode, description }) => ({
-        value: mode,
-        label: mode === currentMode ? `${mode} (current)` : mode,
-        description,
+      "Quick judge model",
+      labels.map((label) => ({
+        value: label,
+        label: label === currentLabel ? `${label} (current)` : label,
       })),
-      currentMode,
+      currentLabel,
     );
-    const mode = modeSchema.safeParse(chosenMode);
-    if (!mode.success) {
+    // Labels are built as provider/id above, so the parse cannot fail.
+    return chosen === undefined ? undefined : parseJudgePair(chosen);
+  }
+
+  /**
+   * The LLM model list: the chat model option, then the available chat
+   * models, the current one marked and preselected. A pick is written at
+   * once, with the auth warning for a model that has none.
+   */
+  async function pickLlmModel(config: ClassifierConfig, ctx: CommandContextLike): Promise<void> {
+    const models = ctx.modelRegistry.getAvailable();
+    const current =
+      config.provider !== undefined && config.model !== undefined
+        ? `${config.provider}/${config.model}`
+        : CHAT_MODEL;
+    const items: SelectItem[] = [
+      { value: CHAT_MODEL, label: CHAT_MODEL_LABEL },
+      ...models.map((model) => {
+        const label = `${model.provider}/${model.id}`;
+        return { value: label, label };
+      }),
+    ].map((item) =>
+      item.value === current ? { ...item, label: `${item.label} (current)` } : item,
+    );
+    const chosen = await step(ctx, "LLM judge model", items, current);
+    if (chosen === undefined) {
       return;
     }
-    const selection: JudgeSelection = { mode: mode.data };
-
-    if (mode.data !== "llm") {
-      const labels = (await ctx.modelRegistry.getAvailableOfType("classifier")).map(
-        (model) => `${model.provider}/${model.id}`,
-      );
-      if (labels.length === 0) {
-        ctx.ui.notify(
-          "No classifier models are available for the quick judge. Nothing changed.",
-          "warning",
-        );
-        return;
-      }
-      const current = config?.quickJudge;
-      const chosen = await step(
-        ctx,
-        "Quick judge model",
-        labels.map((label) => ({ value: label, label })),
-        current?.provider !== undefined && current.model !== undefined
-          ? `${current.provider}/${current.model}`
-          : undefined,
-      );
-      // Labels are built as provider/id above, so the parse cannot fail.
-      const pair = chosen === undefined ? undefined : parseJudgePair(chosen);
-      if (!pair) {
-        return;
-      }
-      selection.quick = pair;
-    }
-
-    let llmModel: Model<any> | undefined;
-    if (mode.data !== "quick") {
-      const models = ctx.modelRegistry.getAvailable();
-      const chosen = await step(
-        ctx,
-        "LLM judge model",
-        [
-          { value: CHAT_MODEL, label: CHAT_MODEL_LABEL },
-          ...models.map((model) => {
-            const label = `${model.provider}/${model.id}`;
-            return { value: label, label };
-          }),
-        ],
-        config?.provider !== undefined && config.model !== undefined
-          ? `${config.provider}/${config.model}`
-          : CHAT_MODEL,
-      );
-      if (chosen === undefined) {
-        return;
-      }
-      if (chosen === CHAT_MODEL) {
-        selection.llm = null;
-      } else {
-        llmModel = models.find((model) => `${model.provider}/${model.id}` === chosen);
-        if (!llmModel) {
-          return;
-        }
-        selection.llm = { provider: llmModel.provider, model: llmModel.id };
-      }
-    }
-
-    const judge = lastJudge(mode.data);
-    const current = config === undefined ? undefined : policyOf(config, judge);
-    const title = judge === "llm" ? "LLM judge" : "Quick judge";
-    const verdicts = verdictsSchema.safeParse(
-      await step(
-        ctx,
-        `${title} verdicts`,
-        markCurrent(VERDICTS_ITEMS, current?.verdicts),
-        current?.verdicts,
-      ),
-    );
-    if (!verdicts.success) {
+    if (chosen === CHAT_MODEL) {
+      persist({ llm: null }, ctx);
       return;
     }
-    const onError = onErrorSchema.safeParse(
-      await step(
-        ctx,
-        `${title} onError`,
-        markCurrent(ON_ERROR_ITEMS, current?.onError),
-        current?.onError,
-      ),
-    );
-    if (!onError.success) {
-      return;
-    }
-    selection.policy = { judge, verdicts: verdicts.data, onError: onError.data };
-
-    if (persist(selection, ctx) && llmModel) {
-      warnWithoutAuth(llmModel, ctx);
+    const model = models.find((candidate) => `${candidate.provider}/${candidate.id}` === chosen);
+    if (model) {
+      applyModel(model, ctx);
     }
   }
 
