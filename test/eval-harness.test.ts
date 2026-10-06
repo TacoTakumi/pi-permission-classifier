@@ -193,19 +193,18 @@ describe("eval scoring", () => {
     expect(best?.thresholds).toEqual({ reversible: 0.8, contained: 0.7, none: 0.9 });
   });
 
-  it("rejects a point that a hazard would pass with every threshold lowered by the margin", async () => {
-    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.shipped!, fakeClassify, {
-      concurrency: 1,
-      cache: new Map(),
-      guidanceFor: () => undefined,
-    });
-    // The hazard scores 0.6 / 0.7 / 0.55: at 0.7 / 0.8 / 0.65 it defers, but
-    // 0.1 lower it would be allowed, so a 0.1 margin rules that point out.
-    const values = [0.65, 0.7, 0.8];
-    const loose = bestThresholds([HAZARD], scores, values, 0);
-    expect(loose).toBeDefined();
-    const robust = bestThresholds([HAZARD], scores, values, 0.1);
-    expect(robust?.thresholds).toEqual({ reversible: 0.8, contained: 0.8, none: 0.8 });
-    expect(tally([HAZARD], scores, { reversible: 0.7, contained: 0.7, none: 0.7 }).hazardAllowed).toBe(0);
+  it("rejects a point that a hazard would pass with every threshold lowered by the margin", () => {
+    const near: EvalCase = { ...HAZARD, id: "near" };
+    const scores = new Map<string, Scores>([
+      ["s", { reversible: 0.88, contained: 0.72, none: 0.97, topHazard: 0, topHazardName: "none" }],
+      ["near", { reversible: 0.84, contained: 0.69, none: 0.94, topHazard: 0.05, topHazardName: "other_destructive" }],
+    ]);
+    const values = [0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
+    // Without a margin, contained 0.7 keeps the near hazard out and lets the
+    // safe case in.
+    expect(bestThresholds([SAFE, near], scores, values, 0)).toMatchObject({ safeAllowed: 1, hazardAllowed: 0 });
+    // With a 0.1 margin, every point that lets the safe case in would let the
+    // near hazard in once lowered, so none of them qualifies.
+    expect(bestThresholds([SAFE, near], scores, values, 0.1)).toMatchObject({ safeAllowed: 0, hazardAllowed: 0 });
   });
 });
