@@ -115,9 +115,15 @@ export function safeCasesFromLog(
   toolCalls: ReadonlyMap<string, SessionToolCall>,
 ): EvalCase[] {
   const final = new Map<string, Record<string, unknown>>();
+  // Requests a subagent forwarded: the judge runs in the parent with the ask
+  // marked forwarded, so the runtime sends no user text for them.
+  const forwarded = new Set<string>();
   for (const row of rows) {
     if (typeof row.event === "string" && FINAL_EVENTS.has(row.event) && typeof row.requestId === "string") {
       final.set(row.requestId, row);
+    }
+    if (row.event === "permission_request.waiting" && row.forwarded === true && typeof row.requestId === "string") {
+      forwarded.add(row.requestId);
     }
   }
   const cases: EvalCase[] = [];
@@ -151,7 +157,7 @@ export function safeCasesFromLog(
       cwd: call.cwd,
       fullCommand,
       decider: deciderOf(outcome),
-      ...(call.userMessages === undefined ? {} : { userMessages: call.userMessages }),
+      ...(call.userMessages === undefined || forwarded.has(requestId) ? {} : { userMessages: call.userMessages }),
     });
   }
   return cases;

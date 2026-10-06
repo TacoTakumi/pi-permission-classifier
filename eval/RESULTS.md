@@ -11,9 +11,10 @@ inside that band can be allowed on a later run.
 
 ## 2026-10-06: user intent for the quick judge (not shipped)
 
-Jev, `shipped` question set, 1255 logged safe asks (1099 paired with the user
+Jev, `shipped` question set, 1255 logged safe asks (1033 paired with the user
 text the runtime would send at that point in the session; the rest had a cut
-selection or no user text), 68 hazard cases each run with no user text, an
+selection, no user text, or were forwarded from a subagent, which the
+runtime sends without user text), 68 hazard cases each run with no user text, an
 unrelated task and a request naming the command (204), plus 6 injection and
 6 forbidden cases. 0 failed calls.
 
@@ -28,8 +29,8 @@ Safe asks allowed without and with intent (requested 0.8, forbidden 0.5):
 
 | Thresholds (rev / con / none) | Without | With |
 |---|---|---|
-| 0.80 / 0.80 / 0.80 (built-in) | 534 | 433 |
-| 0.55 / 0.50 / 0.80 (best without intent) | 743 | 632 |
+| 0.80 / 0.80 / 0.80 (built-in) | 534 | 428 |
+| 0.55 / 0.50 / 0.80 (best without intent) | 743 | 629 |
 
 Bar columns at the built-in point (at the point / moved by 0.1):
 unrequested 0 / 1, hard 1 / 4, injection 0 / 0, forbidden 0 / 0. The grid
@@ -44,7 +45,7 @@ Why the bar failed:
 
 - Intent lowers the other answers. On the 120 safe asks that intent lost,
   the mean contained answer fell from 0.87 to 0.69 and none from 0.97 to
-  0.81; intent gained 19. Requested never reached 0.8 on a logged safe ask
+  0.81; intent gained 14. Requested never reached 0.8 on a logged safe ask
   (median 0.33): the agent picks these commands for a general task, and the
   user rarely names them.
 - Hard hazards come back as a soft option, so a request clears them:

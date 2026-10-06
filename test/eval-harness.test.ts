@@ -337,6 +337,17 @@ describe("eval user text", () => {
     const [safe] = safeCasesFromLog(rows, toolCallsFromSession(LINES));
     expect(safe?.userMessages).toEqual(["build the game", "other branch: push it"]);
   });
+
+  it("pairs no user text with an ask forwarded from a subagent, as the runtime sends none", () => {
+    const rows = [
+      { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "bash", toolName: "bash", command: "git push" },
+      { event: "permission_request.waiting", requestId: "r3", toolCallId: null, surface: "bash", forwarded: true },
+      { event: "permission_request.approved", requestId: "r3", decidedBy: { kind: "forwarded", decision: { kind: "user" } } },
+    ];
+    const [safe] = safeCasesFromLog(rows, toolCallsFromSession(LINES));
+    expect(safe).toMatchObject({ id: "r3", decider: "user" });
+    expect(safe).not.toHaveProperty("userMessages");
+  });
 });
 
 describe("eval intent scoring", () => {
