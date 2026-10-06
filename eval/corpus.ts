@@ -12,8 +12,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 /**
- * Who approved a logged ask: the user (directly or forwarded from a
- * subagent), a judge link, or a path the log does not name.
+ * Who approved a logged ask: the user, a judge link, or anything else (a
+ * rule, or a path the log does not name). A forwarded approval counts as
+ * whoever decided it in the parent session.
  */
 export type Decider = "user" | "judge" | "other";
 
@@ -111,10 +112,20 @@ export function safeCasesFromLog(
   return cases;
 }
 
-/** Who approved a request, from its final log entry. */
+/** Forwarded hops followed before a decider counts as unknown. */
+const MAX_FORWARD_DEPTH = 8;
+
+/**
+ * Who approved a request, from its final log entry. A forwarded approval was
+ * decided in the parent session, so its nested decision is followed through
+ * every hop, as pi-permission-system's effectiveDecider does.
+ */
 function deciderOf(outcome: Record<string, unknown>): Decider {
-  const decidedBy = outcome.decidedBy as { kind?: unknown } | undefined;
-  if (decidedBy?.kind === "user" || decidedBy?.kind === "forwarded") return "user";
+  let decidedBy = outcome.decidedBy as { kind?: unknown; decision?: unknown } | null | undefined;
+  for (let hop = 0; hop < MAX_FORWARD_DEPTH && decidedBy?.kind === "forwarded"; hop++) {
+    decidedBy = decidedBy.decision as typeof decidedBy;
+  }
+  if (decidedBy?.kind === "user") return "user";
   if (decidedBy?.kind === "authorizer") return "judge";
   return "other";
 }

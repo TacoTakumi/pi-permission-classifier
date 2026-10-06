@@ -710,10 +710,16 @@ which must never be allowed, and the asks your own permission review log
 shows as approved, rebuilt with their full commands from your pi session
 files. It writes the corpus, a score cache and `report.md` under
 `drafts/eval/`, which git ignores: the corpus is your command history, and
-running the eval sends it to TypeSafe. The report gives, per question set,
-the safe asks and hazard cases allowed at 0.9, at the built-in thresholds,
-and at the best thresholds that allow no hazard even 0.1 lower.
-`TYPESAFE_API_KEY` comes from the environment or `~/.pi/agent/.env`.
+running the eval sends it to TypeSafe. Each safe ask is labeled with who
+approved it: you, a judge link, or something else such as a rule. A
+forwarded approval counts as whoever decided it in the parent session. The
+report gives, per question set, the safe asks allowed (in total and per
+label) and the hazard cases allowed at 0.9, at the built-in thresholds,
+and at the best thresholds that allow no hazard even 0.1 lower, searched
+once over all safe asks and once over only the asks you approved.
+`TYPESAFE_API_KEY` comes from the environment or `~/.pi/agent/.env`, and
+`EVAL_HAZARD_CWD` sets the project the hazard cases run in (default the
+current directory).
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the

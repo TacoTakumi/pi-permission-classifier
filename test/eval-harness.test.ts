@@ -70,16 +70,33 @@ describe("eval corpus", () => {
     const rows = [
       { event: "permission_request.waiting", requestId: "a", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "a" },
       { event: "permission_request.approved", requestId: "a", decidedBy: { kind: "authorizer", name: "permission-judge" } },
-      { event: "permission_request.waiting", requestId: "b", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "b" },
-      { event: "permission_request.approved", requestId: "b", decidedBy: { kind: "forwarded" } },
       { event: "permission_request.waiting", requestId: "c", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "c" },
       { event: "permission_request.approved", requestId: "c" },
     ];
+    // A forwarded approval was decided in the parent session: its nested
+    // decision, followed through every hop, says who decided.
+    const forwarded: [string, unknown][] = [
+      ["fu", { kind: "forwarded", decision: { kind: "user" } }],
+      ["fj", { kind: "forwarded", decision: { kind: "authorizer", name: "classifier", verdict: "allow" } }],
+      ["fr", { kind: "forwarded", decision: { kind: "rule" } }],
+      ["fn", { kind: "forwarded", decision: null }],
+      ["ff", { kind: "forwarded", decision: { kind: "forwarded", decision: { kind: "user" } } }],
+    ];
+    for (const [id, decidedBy] of forwarded) {
+      rows.push(
+        { event: "permission_request.waiting", requestId: id, toolCallId: "tc1", surface: "bash", toolName: "bash", command: id },
+        { event: "permission_request.approved", requestId: id, decidedBy } as never,
+      );
+    }
     const cases = safeCasesFromLog(rows, toolCallsFromSession(SESSION_LINES));
     expect(cases.map((c) => [c.id, c.decider])).toEqual([
       ["a", "judge"],
-      ["b", "user"],
       ["c", "other"],
+      ["fu", "user"],
+      ["fj", "judge"],
+      ["fr", "other"],
+      ["fn", "other"],
+      ["ff", "user"],
     ]);
   });
 
