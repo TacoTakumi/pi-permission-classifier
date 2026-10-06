@@ -389,3 +389,20 @@ describe("failures never allow", () => {
     },
   );
 });
+
+describe("user intent", () => {
+  it("hands the link's intent reader to the quick judge", async () => {
+    const h = harness(config({ mode: "quick", quickJudge: QUICK_PAIR }));
+    const getUserIntent = vi.fn(() => ({ messages: ["push it"] }));
+    const authorize = createJudgeLink({ ...h.deps, getUserIntent });
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getUserIntent).toHaveBeenCalledWith(false);
+    expect(h.classify.mock.calls[0]![1].state.user_messages).toEqual(["push it"]);
+  });
+
+  it("sends today's quick request with no intent reader", async () => {
+    const h = harness(config({ mode: "quick", quickJudge: QUICK_PAIR }));
+    await createJudgeLink(h.deps)(askDetails(), QUERY, fakeLog());
+    expect(h.classify.mock.calls[0]![1].state).not.toHaveProperty("user_messages");
+  });
+});

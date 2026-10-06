@@ -37,8 +37,11 @@ export interface JudgeLinkDeps {
   getConfig: () => ClassifierConfig | undefined;
   /** The LLM judge's collaborators; its config comes from `getConfig`. */
   llm: Omit<ClassifierReviewerDeps, "getConfig">;
-  /** The quick judge's collaborators; its settings come from `getConfig`. */
-  quick: Omit<QuickJudgeDeps, "getSettings">;
+  /**
+   * The quick judge's collaborators; its settings come from `getConfig` and
+   * its intent from `getUserIntent`.
+   */
+  quick: Omit<QuickJudgeDeps, "getSettings" | "getUserIntent">;
   /**
    * The user intent for an ask, read live from the session; undefined when
    * intent is not available. `forwarded` is true for an ask a subagent
@@ -91,11 +94,13 @@ export function createJudgeLink(deps: JudgeLinkDeps): Authorizer["authorize"] {
   // state is the same whichever mode runs it.
   const quickAlone = createQuickJudge({
     ...deps.quick,
+    ...(deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {}),
     breaker: quickBreaker,
     getSettings: () => quickSettings(false),
   });
   const quickInFront = createQuickJudge({
     ...deps.quick,
+    ...(deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {}),
     breaker: quickBreaker,
     getSettings: () => quickSettings(true),
   });

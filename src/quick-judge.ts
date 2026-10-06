@@ -15,7 +15,12 @@
  *      (else model-unresolved; there is no session-model fallback),
  *   6. with `quickJudge.guidance` on, the guidance seam selects this ask's
  *      files, read per ask (a throw is guidance-load-failed),
- *   7. `classify` runs under an abort signal bounded by `quickJudge.timeoutMs`.
+ *   7. the user intent seam gives the user's own messages, or none,
+ *   8. `classify` runs under an abort signal bounded by `quickJudge.timeoutMs`.
+ *
+ * With intent the request adds the user messages and the requested and
+ * forbidden questions, and the mapping counts their answers; without it the
+ * request and the mapping are the ones without intent.
  *
  * From step 3 on every outcome goes through the verdict policy with the
  * judge's `verdicts` and `onError`. A failure never allows. Each recorded
@@ -54,6 +59,7 @@ import {
   SHORT_CIRCUIT_EVENT,
 } from "./reviewer";
 import { buildSystemOneContext, mapSystemOneResult } from "./system-one-review";
+import type { UserIntent } from "./user-intent";
 import {
   applyVerdictPolicy,
   type LinkOutcome,
@@ -108,6 +114,12 @@ export interface QuickJudgeDeps {
    * A throw is a guidance-load-failed failure.
    */
   getGuidance?: () => GuidanceSelection;
+  /**
+   * User intent seam: called once per judged ask right before the model
+   * call, with whether the ask was forwarded. Absent, undefined or a throw
+   * means no intent.
+   */
+  getUserIntent?: (forwarded: boolean) => UserIntent | undefined;
   /** This judge's own circuit breaker; the judge makes one when absent. */
   breaker?: CircuitBreaker;
   /**
@@ -267,6 +279,7 @@ async function decide(
     }
   }
 
+  const userIntent = readIntent(deps, details);
   const context = buildSystemOneContext({
     details,
     surface,
@@ -274,6 +287,7 @@ async function decide(
     fullCommand,
     contextBudgetBytes: settings.contextBudgetBytes,
     ...(guidance === undefined ? {} : { guidance: guidance.included }),
+    ...(userIntent === undefined ? {} : { userIntent }),
   });
   const startedAt = Date.now();
   const result = await classifyWithin(registry, model, context, quickJudge.timeoutMs);
@@ -289,7 +303,7 @@ async function decide(
       ? { kind: "failure", failure: "timeout" }
       : result === "threw"
         ? { kind: "failure", failure: "call-failed" }
-        : mapSystemOneResult(result, quickJudge);
+        : mapSystemOneResult(result, quickJudge, userIntent !== undefined);
   const answers =
     typeof result === "object" && result.stopReason === "stop"
       ? summarizeAnswers(result.answers)
@@ -304,6 +318,21 @@ async function decide(
     guidance: guidance ?? EMPTY_GUIDANCE,
     answers,
   });
+}
+
+/**
+ * The user intent for this ask, or undefined. An ask whose requester facts
+ * are missing counts as forwarded, and a throwing seam gives no intent.
+ */
+function readIntent(
+  deps: QuickJudgeDeps,
+  details: PromptPermissionDetails,
+): UserIntent | undefined {
+  try {
+    return deps.getUserIntent?.(details.payload?.request?.requester?.forwarded !== false);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

@@ -766,3 +766,123 @@ describe("quick judge breaker", () => {
     expect(open?.[1]).toMatchObject({ judge: "quick" });
   });
 });
+
+describe("user intent", () => {
+  const INTENT = { messages: ["fix the test, then push to main"] };
+
+  function withIntentAnswers(
+    reversible: number,
+    contained: number,
+    hazards: Record<string, number>,
+    requested: number,
+    forbidden: number,
+  ): ClassifierResult {
+    const base = answered(reversible, contained, hazards);
+    return {
+      ...base,
+      answers: {
+        ...base.answers,
+        requested: { type: "bool", probability: requested },
+        forbidden: { type: "bool", probability: forbidden },
+      },
+    };
+  }
+
+  function sentContext(registry: ReturnType<typeof fakeRegistry>): ClassifierContext {
+    return registry.classify.mock.calls[0]![1] as ClassifierContext;
+  }
+
+  it("asks with the user messages and the intent questions when the dep returns intent", async () => {
+    const registry = fakeRegistry();
+    const getUserIntent = vi.fn(() => INTENT);
+    const authorize = createQuickJudge(makeDeps({ getRegistry: () => registry, getUserIntent }));
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getUserIntent).toHaveBeenCalledWith(false);
+    const context = sentContext(registry);
+    expect(context.state.user_messages).toEqual(INTENT.messages);
+    expect(Object.keys(context.questions)).toContain("requested");
+    expect(Object.keys(context.questions)).toContain("forbidden");
+  });
+
+  it("tells the dep a forwarded ask is forwarded", async () => {
+    const getUserIntent = vi.fn(() => undefined);
+    const authorize = createQuickJudge(makeDeps({ getUserIntent }));
+    await authorize(
+      askDetails({ requester: { agentName: "child", forwarded: true, sessionId: "s2" } }),
+      QUERY,
+      fakeLog(),
+    );
+    expect(getUserIntent).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ["the dep returns none", { getUserIntent: () => undefined }],
+    ["there is no dep", {}],
+    [
+      "the dep throws",
+      {
+        getUserIntent: () => {
+          throw new Error("session gone");
+        },
+      },
+    ],
+  ])("sends today's request when %s", async (_name, intentDeps) => {
+    const registry = fakeRegistry();
+    const authorize = createQuickJudge(
+      makeDeps({ getRegistry: () => registry, ...(intentDeps as Partial<QuickJudgeDeps>) }),
+    );
+    const verdict = await authorize(askDetails(), QUERY, fakeLog());
+    expect(verdict).toEqual({ kind: "allow" });
+    const context = sentContext(registry);
+    expect(context.state).not.toHaveProperty("user_messages");
+    expect(Object.keys(context.questions).sort()).toEqual(["contained", "hazard", "reversible"]);
+  });
+
+  it("maps the answers with intent: a requested push allows", async () => {
+    const push = withIntentAnswers(0.2, 0.3, { push_or_publish: 0.95, none: 0.05 }, 0.95, 0.02);
+    const registry = fakeRegistry(async () => push);
+    const authorize = createQuickJudge(
+      makeDeps({
+        getRegistry: () => registry,
+        getUserIntent: () => INTENT,
+        settings: settings({ verdicts: "allow-deny-defer" }),
+      }),
+    );
+    expect(await authorize(askDetails({ value: "git push" }), QUERY, fakeLog())).toEqual({
+      kind: "allow",
+    });
+  });
+
+  it("maps the same answers without intent as before", async () => {
+    const push = withIntentAnswers(0.2, 0.3, { push_or_publish: 0.95, none: 0.05 }, 0.95, 0.02);
+    const registry = fakeRegistry(async () => push);
+    const authorize = createQuickJudge(
+      makeDeps({ getRegistry: () => registry, settings: settings({ verdicts: "allow-deny-defer" }) }),
+    );
+    const verdict = await authorize(askDetails({ value: "git push" }), QUERY, fakeLog());
+    expect(verdict.kind).toBe("deny");
+  });
+
+  it("records the requested and forbidden answers, never the user text", async () => {
+    const registry = fakeRegistry(async () =>
+      withIntentAnswers(0.97, 0.96, { none: 0.98 }, 0.4, 0.7),
+    );
+    const log = fakeLog();
+    const authorize = createQuickJudge(
+      makeDeps({ getRegistry: () => registry, getUserIntent: () => INTENT }),
+    );
+    expect(await authorize(askDetails(), QUERY, log)).toEqual({ kind: "defer" });
+    const entry = decisionEntry(log)!;
+    expect(entry.answers).toMatchObject({ requested: 0.4, forbidden: 0.7 });
+    expect(JSON.stringify(log.review.mock.calls)).not.toContain(INTENT.messages[0]);
+  });
+
+  it("never reads intent on a short circuit", async () => {
+    const getUserIntent = vi.fn(() => INTENT);
+    const authorize = createQuickJudge(
+      makeDeps({ getUserIntent, getRegistry: () => undefined }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getUserIntent).not.toHaveBeenCalled();
+  });
+});
