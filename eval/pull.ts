@@ -13,7 +13,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 import { readUserIntent } from "../src/user-intent";
-import { scrubDeep } from "./scrub";
+import { type Machine, scrubDeep } from "./scrub";
 
 /** One judge's decision on an ask, as the log's classifier.decision row has it. */
 export interface StoredDecision {
@@ -220,13 +220,13 @@ function decisionOf(row: Record<string, unknown>): StoredDecision {
  * Pure: the stored asks from parsed review log rows and a tool call index,
  * in log order. A waiting row becomes a stored ask once its request has a
  * final event and its tool call is in the index; a request still waiting
- * is left for a later pull. Every string is scrubbed with `homeDir` as the
- * machine's home directory.
+ * is left for a later pull. Every string is scrubbed of the `machine`
+ * details and the fixed rules.
  */
 export function storedAsksFromLog(
   rows: readonly Record<string, unknown>[],
   toolCalls: ReadonlyMap<string, SessionToolCall>,
-  homeDir: string,
+  machine: Machine,
 ): StoredAsk[] {
   const final = new Map<string, Record<string, unknown>>();
   const decisions = new Map<string, StoredDecision[]>();
@@ -281,7 +281,7 @@ export function storedAsksFromLog(
       deciderName: decider.name,
       ...(call.userMessages === undefined || isForwarded ? {} : { userMessages: call.userMessages }),
     };
-    asks.push(scrubDeep(ask, homeDir));
+    asks.push(scrubDeep(ask, machine));
   }
   return asks;
 }

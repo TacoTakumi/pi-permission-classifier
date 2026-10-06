@@ -9,7 +9,7 @@
  */
 
 import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -55,7 +55,7 @@ it("pulls the judged asks into the store", { timeout: 0 }, async () => {
       toolCalls.set(id, call);
     }
   }
-  const asks = storedAsksFromLog(rows, toolCalls, homedir());
+  const asks = storedAsksFromLog(rows, toolCalls, { homeDir: homedir(), userName: userInfo().username });
   const existing = existsSync(STORE_PATH) ? readFileSync(STORE_PATH, "utf-8").split("\n") : [];
   const lines = mergeStore(existing, asks);
   mkdirSync(dirname(STORE_PATH), { recursive: true });

@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { findUnscrubbed, scrubDeep, scrubString } from "../eval/scrub";
 
-const HOME = "/home/you";
+const MACHINE = { homeDir: "/home/you", userName: "you" };
 
 describe("scrubString: each rule", () => {
   it.each([
     ["the machine home dir", "cd /home/you/AI/Projects/game && ls", "cd ~/AI/Projects/game && ls"],
     ["another home dir", "cat /home/user/notes.txt", "cat ~/notes.txt"],
+    ["the login name as a word", "chown you:you /srv/x; ls --home-you-AI--", "chown <user>:<user> /srv/x; ls --home-<user>-AI--"],
     ["a macOS home dir", "ls /Users/you/src", "ls ~/src"],
     ["an email address", "echo mail to you@example.com now", "echo mail to <email> now"],
     [
@@ -28,7 +29,7 @@ describe("scrubString: each rule", () => {
     ["a password value", "mysql --password=hunter2 db", "mysql --password=<redacted> db"],
     ["a bearer token", 'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc" u', 'curl -H "Authorization: Bearer <redacted>" u'],
   ])("scrubs %s", (_name, input, expected) => {
-    expect(scrubString(input, HOME)).toBe(expected);
+    expect(scrubString(input, MACHINE)).toBe(expected);
   });
 });
 
@@ -44,8 +45,9 @@ describe("scrubString: kept forms", () => {
     ["a scoped package with an at sign", "@earendil-works+pi-ai@0.79.1_ws"],
     ["a tilde path", "ls ~/AI/Projects"],
     ["a git sha", "git checkout 9ccd445 -- game/scripts/audio/music.gd"],
+    ["the login name inside a longer word", "yount myou you_x"],
   ])("keeps %s", (_name, input) => {
-    expect(scrubString(input, HOME)).toBe(input);
+    expect(scrubString(input, MACHINE)).toBe(input);
   });
 });
 
@@ -59,7 +61,7 @@ describe("scrubDeep", () => {
       forwarded: false,
       modelId: null,
     };
-    expect(scrubDeep(record, HOME)).toEqual({
+    expect(scrubDeep(record, MACHINE)).toEqual({
       cwd: "~/AI/Projects/game",
       value: 'git -c user.email=<email> commit -m "x"',
       answers: { reversible: 0.9, hazard: [["none", 0.97]] },
@@ -75,6 +77,6 @@ describe("findUnscrubbed", () => {
     const raw = 'cd /home/you && git -c user.name="you" push; ssh 10.0.0.5; KEY=abcdefgh; mail bob@example.org';
     const rules = findUnscrubbed(raw).map((hit) => hit.rule);
     expect(rules).toEqual(["git-user-name", "home-dir", "secret-value", "email", "ipv4"]);
-    expect(findUnscrubbed(scrubString(raw, HOME))).toEqual([]);
+    expect(findUnscrubbed(scrubString(raw, MACHINE))).toEqual([]);
   });
 });

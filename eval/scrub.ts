@@ -4,10 +4,11 @@
  * and the same rules scan the committed file so nothing raw lands in git.
  * Pure: strings in, strings out.
  *
- * Rules, in order: git identity flags, home directories, secret values,
- * email addresses, IPv4 addresses other than loopback and unspecified,
- * and the machine's mount prefixes. Shell variable references ($VAR, "$VAR")
- * and values already redacted are left as they are.
+ * Rules, in order: the machine's home directory, git identity flags, other
+ * home directories, secret values, email addresses, IPv4 addresses other
+ * than loopback and unspecified, the machine's mount prefixes, and last
+ * the login name as a whole word. Shell variable references ($VAR, "$VAR") and values
+ * already redacted are left as they are.
  */
 
 /** One scrub rule: what it finds and what it writes instead. */
@@ -58,17 +59,30 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** The machine details a scrub replaces beyond the fixed rules. */
+export interface Machine {
+  /** The home directory, replaced by `~`. */
+  homeDir?: string;
+  /** The login name, replaced by `<user>` wherever it stands as a whole word. */
+  userName?: string;
+}
+
 /**
- * Pure: `text` with the machine's home directory (`homeDir`, when given)
- * and every rule's matches replaced by their placeholders.
+ * Pure: `text` with the machine's home directory and login name (when
+ * given) and every rule's matches replaced by their placeholders.
  */
-export function scrubString(text: string, homeDir?: string): string {
+export function scrubString(text: string, machine: Machine = {}): string {
   let out = text;
+  const { homeDir, userName } = machine;
   if (homeDir !== undefined && homeDir !== "" && homeDir !== "/") {
     out = out.replace(new RegExp(escapeRegExp(homeDir.replace(/\/+$/, "")) + "(?![A-Za-z0-9._-])", "g"), "~");
   }
   for (const rule of SCRUB_RULES) {
     out = out.replace(rule.pattern, rule.replacement);
+  }
+  // Last, so an email or a git flag holding the name is already a placeholder.
+  if (userName !== undefined && userName !== "") {
+    out = out.replace(new RegExp(String.raw`(?<![A-Za-z0-9_])${escapeRegExp(userName)}(?![A-Za-z0-9_])`, "g"), "<user>");
   }
   return out;
 }
@@ -77,13 +91,13 @@ export function scrubString(text: string, homeDir?: string): string {
  * Pure: `value` with every string inside it scrubbed, through arrays and
  * plain objects; other values pass through unchanged.
  */
-export function scrubDeep<T>(value: T, homeDir?: string): T {
-  if (typeof value === "string") return scrubString(value, homeDir) as T;
-  if (Array.isArray(value)) return value.map((item) => scrubDeep(item, homeDir)) as T;
+export function scrubDeep<T>(value: T, machine: Machine = {}): T {
+  if (typeof value === "string") return scrubString(value, machine) as T;
+  if (Array.isArray(value)) return value.map((item) => scrubDeep(item, machine)) as T;
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = scrubDeep(item, homeDir);
+      out[key] = scrubDeep(item, machine);
     }
     return out as T;
   }

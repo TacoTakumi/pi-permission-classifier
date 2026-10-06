@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { mergeStore, type StoredAsk, storedAsksFromLog, storedIds, toolCallsFromSession } from "../eval/pull";
 
-const HOME = "/home/you";
+const HOME = { homeDir: "/home/you", userName: "you" };
 
 const SESSION_LINES = [
   JSON.stringify({ type: "session", id: "sess-1", cwd: "/home/you/AI/Projects/game" }),
