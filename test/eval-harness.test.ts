@@ -83,6 +83,7 @@ describe("eval corpus", () => {
       stored("r1"),
       stored("r2", { surface: "external_directory", tool: "read", value: "/etc/hosts", fullCommand: undefined }),
       stored("r3", { resolution: "denied", decider: "other", deciderName: null }),
+      stored("r3b", { surface: "", value: "find ~ -name x" }),
       stored("r4"),
       stored("r5", { value: "ls", fullCommand: "ls" }),
     ];

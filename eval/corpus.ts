@@ -92,7 +92,8 @@ export function safeCasesFromStore(asks: readonly StoredAsk[]): EvalCase[] {
   const cases: EvalCase[] = [];
   const seen = new Set<string>();
   for (const ask of asks) {
-    if (ask.resolution !== "approved" || UNJUDGED_SURFACE.test(ask.surface)) continue;
+    // An ask with no surface comes from a log older than the surface field.
+    if (ask.resolution !== "approved" || ask.surface === "" || UNJUDGED_SURFACE.test(ask.surface)) continue;
     const key = JSON.stringify([ask.value, ask.surface, ask.tool, ask.cwd, ask.fullCommand]);
     if (seen.has(key)) continue;
     seen.add(key);
