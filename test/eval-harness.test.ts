@@ -225,3 +225,20 @@ describe("eval scoring", () => {
     expect(bestThresholds([SAFE, near], scores, values, 0.1)).toMatchObject({ safeAllowed: 0, hazardAllowed: 0 });
   });
 });
+
+describe("eval candidates", () => {
+  it("gives the examples candidate concrete examples in its wording", () => {
+    const examples = CANDIDATES.examples;
+    expect(examples && Object.keys(examples).sort()).toEqual(["contained", "hazard", "reversible"]);
+    const text = (id: string): string => JSON.stringify(examples![id]);
+    expect(text("reversible")).toMatch(/git stash drop/);
+    expect(text("reversible")).toMatch(/untracked/);
+    expect(text("reversible")).toMatch(/build output/);
+    expect(text("contained")).toMatch(/the project's own build, test or check script/);
+    const hazard = examples!.hazard!;
+    expect(hazard.type).toBe("choice");
+    for (const [option, criterion] of Object.entries(hazard.criteria as Record<string, string>)) {
+      expect(criterion, option).toMatch(/such as|for example/i);
+    }
+  });
+});
