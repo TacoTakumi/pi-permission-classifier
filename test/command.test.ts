@@ -734,7 +734,7 @@ describe("menu picker in the TUI", () => {
   });
 
   it("LLM judge model lists the chat model option first, current preselected, and writes the pair", async () => {
-    const { deps, pending } = openMenu(CONFIG_QN);
+    const { deps, pending } = openMenu({ ...EMPTY_CONFIG, provider: "anthropic", model: "a" });
     (await stepRequest(deps, 0)).onSelect("llm");
     const llm = await stepRequest(deps, 1);
     expect(llm.title).toBe("LLM judge model");
@@ -747,7 +747,8 @@ describe("menu picker in the TUI", () => {
       "anthropic/b",
       "openai/c",
     ]);
-    expect(llm.selectedValue).toBe("q/n");
+    expect(llm.selectedValue).toBe("anthropic/a");
+    expect(llm.items[1]!.label).toBe("anthropic/a (current)");
     llm.onSelect("anthropic/b");
     await stepRequest(deps, 2);
     expect(deps.write).toHaveBeenCalledWith({ llm: { provider: "anthropic", model: "b" } });
@@ -902,6 +903,50 @@ describe("menu picker in the TUI", () => {
       expect(notifyOf(ctx, "error")).toContain("merged config is now invalid");
     },
   );
+
+  it("the LLM list keeps an unavailable current model first and preselected (not available)", async () => {
+    const { deps, pending } = openMenu({ ...EMPTY_CONFIG, provider: "nope", model: "x" });
+    (await stepRequest(deps, 0)).onSelect("llm");
+    const llm = await stepRequest(deps, 1);
+    expect(llm.items[0]).toEqual({ value: "nope/x", label: "nope/x (current, not available)" });
+    expect(llm.items[1]!.value).toBe("chat-model");
+    expect(llm.selectedValue).toBe("nope/x");
+    llm.onSelect("nope/x");
+    expect((await stepRequest(deps, 2)).selectedValue).toBe("llm");
+    await closeMenu(deps, 2, pending);
+    expect(deps.write).not.toHaveBeenCalled();
+  });
+
+  it("the quick list keeps an unavailable current model first and preselected (not available)", async () => {
+    const { deps, pending } = openMenu(WITH_QUICK);
+    (await stepRequest(deps, 0)).onSelect("quick");
+    const quick = await stepRequest(deps, 1);
+    expect(quick.items[0]).toEqual({
+      value: "typesafe/jev",
+      label: "typesafe/jev (current, not available)",
+    });
+    expect(quick.items.slice(1).map((item) => item.value)).toEqual([
+      "typesafe/jev-latest",
+      "local/kev-4b-q8",
+    ]);
+    expect(quick.selectedValue).toBe("typesafe/jev");
+    quick.onSelect("typesafe/jev");
+    await closeMenu(deps, 2, pending);
+    expect(deps.write).not.toHaveBeenCalled();
+  });
+
+  it("the chained quick list keeps an unavailable current model too (not available)", async () => {
+    const { deps, pending } = openMenu(WITH_QUICK);
+    deps.globalQuickJudgeSet.mockReturnValue(false);
+    (await stepRequest(deps, 0)).onSelect("mode");
+    (await stepRequest(deps, 1)).onSelect("quick");
+    const quick = await stepRequest(deps, 2);
+    expect(quick.selectedValue).toBe("typesafe/jev");
+    expect(quick.items[0]!.label).toBe("typesafe/jev (current, not available)");
+    quick.onSelect("typesafe/jev");
+    await closeMenu(deps, 3, pending);
+    expect(deps.write).not.toHaveBeenCalled();
+  });
 
   it("warns, writes nothing and returns to the menu when no classifier model is available", async () => {
     const { deps, ctx, pending } = openMenu(CONFIG_QN);

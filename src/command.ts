@@ -676,14 +676,18 @@ export function createPermissionModelCommand(
     const chosen = await step(
       ctx,
       "Quick judge model",
-      labels.map((label) => ({
-        value: label,
-        label: label === currentLabel ? `${label} (current)` : label,
-      })),
+      withCurrent(
+        labels.map((label) => ({ value: label, label })),
+        currentLabel,
+      ),
       currentLabel,
     );
+    if (chosen === undefined || !labels.includes(chosen)) {
+      // A cancel, or the unavailable current row: nothing to change.
+      return undefined;
+    }
     // Labels are built as provider/id above, so the parse cannot fail.
-    return chosen === undefined ? undefined : parseJudgePair(chosen);
+    return parseJudgePair(chosen);
   }
 
   /**
@@ -700,14 +704,15 @@ export function createPermissionModelCommand(
       config.provider !== undefined && config.model !== undefined
         ? `${config.provider}/${config.model}`
         : CHAT_MODEL;
-    const items: SelectItem[] = [
-      { value: CHAT_MODEL, label: CHAT_MODEL_LABEL },
-      ...models.map((model) => {
-        const label = `${model.provider}/${model.id}`;
-        return { value: label, label };
-      }),
-    ].map((item) =>
-      item.value === current ? { ...item, label: `${item.label} (current)` } : item,
+    const items = withCurrent(
+      [
+        { value: CHAT_MODEL, label: CHAT_MODEL_LABEL },
+        ...models.map((model) => {
+          const label = `${model.provider}/${model.id}`;
+          return { value: label, label };
+        }),
+      ],
+      current,
     );
     const chosen = await step(ctx, "LLM judge model", items, current);
     if (chosen === undefined) {
@@ -716,6 +721,7 @@ export function createPermissionModelCommand(
     if (chosen === CHAT_MODEL) {
       return persist({ llm: null }, ctx);
     }
+    // The unavailable current row matches no model and changes nothing.
     const model = models.find((candidate) => `${candidate.provider}/${candidate.id}` === chosen);
     return model ? applyModel(model, ctx) : "not-written";
   }
@@ -845,6 +851,24 @@ function markCurrent(
     label: value === current ? `${value} (current)` : value,
     description,
   }));
+}
+
+/**
+ * Model list items with the current value labelled `(current)`. A current
+ * value the list does not hold (the configured model is not available) goes
+ * first as `(current, not available)`, so the preselected row is never one
+ * that changes the judge.
+ */
+function withCurrent(items: SelectItem[], current: string | undefined): SelectItem[] {
+  if (current === undefined) {
+    return items;
+  }
+  if (!items.some((item) => item.value === current)) {
+    return [{ value: current, label: `${current} (current, not available)` }, ...items];
+  }
+  return items.map((item) =>
+    item.value === current ? { ...item, label: `${item.label} (current)` } : item,
+  );
 }
 
 /** `text` ending in exactly one period, whether or not it had one. */
