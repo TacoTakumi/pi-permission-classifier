@@ -27,6 +27,7 @@ describe("scrubString: each rule", () => {
     ["a key value", "export TAVILY_API_KEY=abc123def456 && run", "export TAVILY_API_KEY=<redacted> && run"],
     ["a quoted token value", 'TOKEN="sk-live-0123456789" node x.js', "TOKEN=<redacted> node x.js"],
     ["a password value", "mysql --password=hunter2 db", "mysql --password=<redacted> db"],
+    ["a query parameter token", "curl 'https://x.io/s?q=1&security_token=abcd1234' -o y", "curl 'https://x.io/s?q=1&security_token=<redacted>' -o y"],
     ["a bearer token", 'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc" u', 'curl -H "Authorization: Bearer <redacted>" u'],
   ])("scrubs %s", (_name, input, expected) => {
     expect(scrubString(input, MACHINE)).toBe(expected);
@@ -46,6 +47,7 @@ describe("scrubString: kept forms", () => {
     ["a tilde path", "ls ~/AI/Projects"],
     ["a git sha", "git checkout 9ccd445 -- game/scripts/audio/music.gd"],
     ["the login name inside a longer word", "yount myou you_x"],
+    ["a lowercase sort key", "sorted(xs, key=lambda d: d['num'])"],
   ])("keeps %s", (_name, input) => {
     expect(scrubString(input, MACHINE)).toBe(input);
   });

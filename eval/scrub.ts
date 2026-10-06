@@ -40,8 +40,14 @@ export const SCRUB_RULES: readonly ScrubRule[] = [
   },
   { name: "home-dir", pattern: /\/(?:home|Users)\/[A-Za-z0-9._-]+/g, replacement: "~" },
   {
+    // An environment-style name (TAVILY_API_KEY=), a long flag (--password=)
+    // or a query parameter (&security_token=); a bare lowercase key=, as in
+    // a Python sort, is left alone.
     name: "secret-value",
-    pattern: new RegExp(String.raw`\b([A-Za-z0-9_]*(?:key|token|secret|password|passwd))=${KEPT_VALUE}(?:${WORD})`, "gi"),
+    pattern: new RegExp(
+      String.raw`(\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)|--[A-Za-z0-9-]*(?:key|token|secret|password|passwd)|[?&][A-Za-z0-9_]*(?:key|token|secret|password|passwd))=${KEPT_VALUE}(?:${WORD})`,
+      "g",
+    ),
     replacement: "$1=<redacted>",
   },
   { name: "bearer-token", pattern: /\b(Bearer)\s+(?!\$|<redacted>)[A-Za-z0-9._~+/=-]{8,}/g, replacement: "$1 <redacted>" },
