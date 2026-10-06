@@ -12,8 +12,13 @@ this project adheres to
 - A quick judge beside the LLM judge. The quick judge asks a System One
   classifier model (for example `typesafe/jev-latest`) through pi's
   `findOfType("classifier", ...)` and `classify` three fixed questions:
-  reversible, contained, and one of eight hazards. It allows when all three
-  clear `allowThreshold` (default 0.9), denies with the hazard named when
+  reversible, contained, and one of eight hazards. Contained counts the
+  project's own build, run and test tools with their usual caches, and
+  reversible counts output that can be made again; secrets, data sent out,
+  git history and uncommitted work stay failures. It allows when each of
+  the three clears its built-in threshold (0.8, chosen by an eval against
+  logged asks; `allowThreshold`, when set, applies one value to all
+  three), denies with the hazard named when
   one hazard reaches `denyThreshold` (default 0.9), and otherwise treats the
   answer as uncertain. The model sees the gated value, surface, tool, cwd,
   the full command within `contextBudgetBytes`, and the selected guidance
@@ -27,8 +32,12 @@ this project adheres to
   per session when `quickJudge` asks for more. The mode is read on every
   ask.
 - The `quickJudge` config object: `provider`, `model`, `verdicts` (default
-  `allow-defer`), `onError` (default `defer`), `allowThreshold`,
+  `allow-defer`), `onError` (default `defer`), `allowThreshold` (optional),
   `denyThreshold`, `guidance` and `timeoutMs`.
+- `npm run eval:quick`, a development eval that scores the quick judge's
+  question sets against Jev on a hazard set and on the asks your review log
+  shows as approved, and reports the allow rates per threshold set. Its
+  corpus and report stay under the gitignored `drafts/eval/`.
 - `verdicts` (`allow-deny-defer`, `allow-defer`, `allow-deny`) and
   `onError` (`defer`, `deny`) for each judge, enforced in code. `onError`
   deny turns a failure into a deny with a fixed reason that names the
