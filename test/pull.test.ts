@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type StoredAsk, storedAsksFromLog, toolCallsFromSession } from "../eval/pull";
+import { mergeStore, type StoredAsk, storedAsksFromLog, storedIds, toolCallsFromSession } from "../eval/pull";
 
 const HOME = "/home/you";
 
@@ -214,5 +214,29 @@ describe("storedAsksFromLog", () => {
       { event: "permission_request.approved", requestId: "r7" },
     ];
     expect(storedAsksFromLog(rows, calls, HOME)).toEqual([]);
+  });
+});
+
+describe("mergeStore", () => {
+  const calls = toolCallsFromSession(SESSION_LINES);
+  const asks = storedAsksFromLog(LOG_ROWS, calls, HOME);
+
+  it("appends every ask to an empty store and nothing on a second merge", () => {
+    const first = mergeStore([], asks);
+    expect(first.map((line) => (JSON.parse(line) as StoredAsk).id)).toEqual(["r1"]);
+    expect(mergeStore(first, asks)).toEqual([]);
+  });
+
+  it("leaves existing lines as they are and adds a new ask as the last line", () => {
+    const existing = [JSON.stringify({ id: "r0", value: "old" }), ""];
+    const added = mergeStore(existing, asks);
+    const store = [...existing.filter((line) => line !== ""), ...added];
+    expect(store[0]).toBe(existing[0]);
+    expect(store.length).toBe(2);
+    expect((JSON.parse(store[1]!) as StoredAsk).id).toBe("r1");
+  });
+
+  it("reads ids from the store lines and skips a line that is not JSON", () => {
+    expect(storedIds(['{"id":"a"}', "not json", "", '{"id":"b"}'])).toEqual(new Set(["a", "b"]));
   });
 });

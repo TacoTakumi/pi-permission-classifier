@@ -280,3 +280,34 @@ export function storedAsksFromLog(
   }
   return asks;
 }
+
+/** The ids already in the store, from its lines; a line that is not JSON is skipped. */
+export function storedIds(lines: Iterable<string>): Set<string> {
+  const ids = new Set<string>();
+  for (const line of lines) {
+    if (line.trim() === "") continue;
+    try {
+      const id = (JSON.parse(line) as { id?: unknown }).id;
+      if (typeof id === "string") ids.add(id);
+    } catch {
+      continue;
+    }
+  }
+  return ids;
+}
+
+/**
+ * Pure: the lines to append to the store, one JSON line per ask whose id
+ * is not yet in `existingLines`, in the asks' order. Existing lines are
+ * never rewritten: the caller appends what this returns.
+ */
+export function mergeStore(existingLines: readonly string[], asks: readonly StoredAsk[]): string[] {
+  const ids = storedIds(existingLines);
+  const lines: string[] = [];
+  for (const ask of asks) {
+    if (ids.has(ask.id)) continue;
+    ids.add(ask.id);
+    lines.push(JSON.stringify(ask));
+  }
+  return lines;
+}
