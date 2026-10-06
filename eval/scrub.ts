@@ -76,18 +76,21 @@ export interface Machine {
    * Project directory names and their stable aliases (p1, p2, ...). A name
    * is replaced wherever it stands as a whole word: in a path, in a session
    * directory name, in prose. The match ignores case when the name has
-   * mixed case, a digit, a dot or a hyphen (OpenHeart, U4R, pi-env), and is
-   * exact for a plain word (Fun), so prose keeps its common words.
+   * mixed case, a digit, a dot or a hyphen (OpenHeart, U4R, pi-env) or is
+   * five characters or more (Wholphin), and is exact for a short plain
+   * word (Fun), so prose keeps its common words.
    */
   projects?: Readonly<Record<string, string>>;
 }
 
 /**
  * Whether a project name is matched without regard to case: it has a digit,
- * a dot or a hyphen, or a capital after its first letter (OpenHeart, not Fun).
+ * a dot or a hyphen, a capital after its first letter (OpenHeart), or five
+ * characters or more (Wholphin, wholphin). A short plain word (Fun) is
+ * matched in its exact case only, so prose keeps its common words.
  */
 function looseCase(name: string): boolean {
-  return /[0-9.-]/.test(name) || (/[a-z]/.test(name) && /[A-Z]/.test(name.slice(1)));
+  return /[0-9.-]/.test(name) || (/[a-z]/.test(name) && /[A-Z]/.test(name.slice(1))) || name.length >= 5;
 }
 
 /** The whole-word pattern of a name; longer names are applied first by the caller. */

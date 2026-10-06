@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { findUnscrubbed, scrubDeep, scrubString } from "../eval/scrub";
 
-const MACHINE = { homeDir: "/home/you", userName: "you", projects: { OpenHeart: "p1", U4R: "p2", Fun: "p3", "pi-env": "p4" } };
+const MACHINE = { homeDir: "/home/you", userName: "you", projects: { OpenHeart: "p1", U4R: "p2", Fun: "p3", "pi-env": "p4", Wholphin: "p5" } };
 
 describe("scrubString: each rule", () => {
   it.each([
@@ -32,7 +32,8 @@ describe("scrubString: each rule", () => {
     ["a project name in a path, its lowercase form too", "cd /home/you/AI/Projects/OpenHeart/openheart && ls", "cd ~/AI/Projects/p1/p1 && ls"],
     ["a project name in a session dir name", "D=~/.pi/agent/sessions/--home-you-AI-Projects-U4R--/x", "D=~/.pi/agent/sessions/--home-<user>-AI-Projects-p2--/x"],
     ["a project name in prose", "the u4r build and the pi-env checkout", "the p2 build and the p4 checkout"],
-    ["a plain-word project name only in its exact form", "cd ~/AI/Projects/Fun; that was fun", "cd ~/AI/Projects/p3; that was fun"],
+    ["a short plain-word project name only in its exact form", "cd ~/AI/Projects/Fun; that was fun", "cd ~/AI/Projects/p3; that was fun"],
+    ["a longer plain-word project name in any case", "ls docs/wholphin-migration.md; WHOLPHIN and Wholphin", "ls docs/p5-migration.md; p5 and p5"],
     ["a bearer token", 'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc" u', 'curl -H "Authorization: Bearer <redacted>" u'],
   ])("scrubs %s", (_name, input, expected) => {
     expect(scrubString(input, MACHINE)).toBe(expected);
