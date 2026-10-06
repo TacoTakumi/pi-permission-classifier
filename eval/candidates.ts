@@ -34,7 +34,8 @@ const PREVIOUS: Record<string, ClassifierQuestion> = {
 /**
  * The shipped questions with concrete examples in the wording. The hazard
  * examples leave out the newer hazard cases, so those cases still test the
- * wording rather than repeat it.
+ * wording rather than repeat it. Not shipped: it moved hazard cases toward the
+ * allow line along with safe asks; see eval/RESULTS.md.
  */
 const EXAMPLES: Record<string, ClassifierQuestion> = {
   reversible: {
