@@ -56,6 +56,7 @@ describe("scrubString: kept forms", () => {
     ["a lowercase sort key", "sorted(xs, key=lambda d: d['num'])"],
     ["a project name inside a longer word", "OpenHearted funny pi-envelope"],
     ["a path segment named home inside a project", "ls test/features/home/project com/app/ui/home/ ./home/user"],
+    ["a home segment after an expansion, a glob or a bracket", "cp ${VAR}/home/project $(pwd)/home/user src/*/home/project {a,b}/home/project arr[0]/home/user"],
   ])("keeps %s", (_name, input) => {
     expect(scrubString(input, MACHINE)).toBe(input);
   });

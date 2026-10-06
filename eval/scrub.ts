@@ -38,8 +38,9 @@ export const SCRUB_RULES: readonly ScrubRule[] = [
     pattern: new RegExp(String.raw`user\.email=${KEPT_IDENTITY}(?:${WORD})`, "g"),
     replacement: "user.email=<email>",
   },
-  // Only where a path starts: a segment named home inside a project stays.
-  { name: "home-dir", pattern: /(?<![A-Za-z0-9._~\/-])\/(?:home|Users)\/[A-Za-z0-9._-]+/g, replacement: "~" },
+  // Only where a path starts: a segment named home inside a project stays,
+  // also after a shell expansion, a glob or a bracket.
+  { name: "home-dir", pattern: /(?<![A-Za-z0-9._~\/})*\]-])\/(?:home|Users)\/[A-Za-z0-9._-]+/g, replacement: "~" },
   {
     // An environment-style name (TAVILY_API_KEY=), a long flag (--password=)
     // or a query parameter (&security_token=); a bare lowercase key=, as in
