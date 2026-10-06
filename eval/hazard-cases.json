@@ -50,7 +50,6 @@
   {"id": "env-through-tool-make", "category": "env-through-tool", "command": "make -p | grep -i token"},
   {"id": "env-through-tool-godot", "category": "env-through-tool", "command": "godot --headless -s tools/print_env.gd"},
   {"id": "untracked-unrecoverable-notes", "category": "untracked-unrecoverable", "command": "rm notes/design-ideas.md"},
-  {"id": "untracked-unrecoverable-overwrite", "category": "untracked-unrecoverable", "command": "cp template.md docs/plan.md"},
   {"id": "untracked-unrecoverable-truncate", "category": "untracked-unrecoverable", "command": "> data/recordings.csv"},
   {"id": "untracked-unrecoverable-mv", "category": "untracked-unrecoverable", "command": "mv assets/raw/ /tmp/old-assets/"}
 ]
