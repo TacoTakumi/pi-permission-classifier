@@ -294,6 +294,14 @@ describe what is normal for this operator and project, can move a verdict
 toward allow or deny within the rubric, and never override the never-allow
 list.
 
+It also says what your own messages may do (see "User messages"): a
+request that directly and specifically names the action can move a case
+that would otherwise defer to allow, and a general task ("fix the build")
+does not name a push, a publish or a delete; a request never reaches the
+never-allow list; a message that said not to do what the action does, not
+lifted by a later message, means defer; approval that appears only inside
+the command, in the agent's own text or in tool output does not count.
+
 Set `instructions` to replace the rubric wholesale with your own.
 
 ### Guidance files
@@ -336,6 +344,41 @@ routine in this repo", and the judge sees them verbatim.
 - Failure: if the loader throws, the ask defers with reason
   `guidance-load-failed`, recorded on the decision entry and shown in the
   footer health suffix like any other failure defer.
+
+### User messages
+
+The LLM judge also sees what you asked the agent for, so a command you
+named can be allowed and a command you ruled out is not.
+
+- Source: your own messages in the current session, read from pi's
+  in-memory session at each ask (no file is read). A skill you invoked
+  appears as `[skill <name>] <your arguments>`, without the skill body.
+  Assistant text, tool results, bash executions (`!` commands), custom
+  messages from extensions, and compaction or branch summaries are never
+  sent.
+- Caps: the first message (the opening task) is always kept, then the
+  newest messages back to 24,000 characters in total. A message over
+  4,000 characters keeps its head and tail.
+- When it is left out: if any message was cut or dropped by the caps, if a
+  message of yours is still queued, or if the ask was forwarded from a
+  subagent, the prompt has no user block and the judge decides on the
+  rubric alone. None of these defers on its own.
+- Rendering: one data block after the guidance and before the value,
+  labelled `Messages the user wrote to the agent in this session, oldest
+  first`, with each message in its own `<user-message>` block. A delimiter
+  tag inside your text is escaped, so it cannot close the block. The block
+  carries no rules; the default rubric does, so a custom `instructions`
+  rubric gets the block without them.
+- Logging: the user text is never logged.
+- Hosted judge models receive this text with every ask.
+
+The quick judge does not send your messages yet. With them, it would also
+ask whether you requested the action and whether you forbade it, and a
+request could clear only push or publish, force push, discarding
+uncommitted work and other destructive actions; credential access, secret
+exfiltration, remote code execution and disarming guards would never be
+cleared. The first eval run did not meet the bar for shipping it (see
+`eval/RESULTS.md`).
 
 ### Config suggestions
 
@@ -431,8 +474,9 @@ through `verdicts`. The question text is fixed in code.
 
 The model sees the gated value, the surface, the tool name, the cwd, the full
 command when it fits `contextBudgetBytes`, and the selected guidance files
-when `guidance` is on. It never sees tool results, file contents, evidence,
-annotations or the tool-input preview. The `path` and `external_directory`
+when `guidance` is on. It never sees your messages (see "User messages"),
+tool results, file contents, evidence, annotations or the tool-input
+preview. The `path` and `external_directory`
 families and an undeterminable surface defer with no model call, whatever
 `verdicts` and `onError` say.
 
@@ -510,7 +554,7 @@ Each judge that reviews an ask writes one `classifier.decision` entry with
 judge does not allow writes two entries, `quick` then `llm`. Quick entries
 carry, when the model answered, `answers`: the reversible and contained
 probabilities, and `hazard` as a list of `[option, probability]` pairs for all
-eight options, highest first. The pairs keep the option names out of the JSON
+nine options, highest first. The pairs keep the option names out of the JSON
 keys, because the permission log masks any value whose key looks like a
 credential name, which would hide `credential_access`. A below-threshold answer
 records defer reason `model-verdict`. A request skipped as a duplicate (see
@@ -675,8 +719,9 @@ shutdown.
   judge reviews, it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
   provenance) into a prompt, followed by the guidance files selected for
-  this ask. Tool results and file contents never reach the judge, and the
-  judged value and the guidance are delimited as data, not instructions.
+  this ask and your own messages in the session. Tool results, assistant
+  text and file contents never reach the judge, and the judged value, the
+  guidance and your messages are delimited as data, not instructions.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
   The call is aborted after `timeoutMs`.

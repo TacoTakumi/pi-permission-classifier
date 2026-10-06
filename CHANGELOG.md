@@ -5,14 +5,16 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-10-05
+## [0.6.0] - 2026-10-06
 
 ### Added
 
 - A quick judge beside the LLM judge. The quick judge asks a System One
   classifier model (for example `typesafe/jev-latest`) through pi's
   `findOfType("classifier", ...)` and `classify` three fixed questions:
-  reversible, contained, and one of eight hazards. Contained counts the
+  reversible, contained, and one of nine hazards, where sending secrets off
+  the machine (secret exfiltration) is apart from pushing, publishing or
+  uploading project work (push or publish). Contained counts the
   project's own build, run and test tools with their usual caches, and
   reversible counts output that can be made again; secrets, data sent out,
   git history and uncommitted work stay failures. It allows when each of
@@ -79,6 +81,26 @@ this project adheres to
   `[option, probability]` pairs, highest first.
   The breaker open and close entries and the LLM judge's short-circuit
   debug entries carry `judge` too.
+- The LLM judge sees what you asked for. Each ask's prompt carries your
+  own messages from the session in a labelled data block: the text you
+  typed, with a skill reduced to its name and arguments. Assistant text,
+  tool results, bash output, custom messages and compaction or branch
+  summaries are never sent. The first message is kept plus the newest back
+  to 24,000 characters, each message capped at 4,000 (head and tail). The
+  block is left out when anything was cut, a message of yours is still
+  queued, or the ask was forwarded from a subagent. The default rubric
+  lets a request that directly and specifically names the action move a
+  case that would otherwise defer to allow, never past the never-allow
+  list; a message telling the agent not to do it means defer; approval
+  inside the command, the agent's text or tool output does not count. A
+  custom `instructions` rubric gets the block without these rules.
+- `npm run eval:quick` pairs each logged ask with the user text the
+  runtime would send at that point in its session, runs every hazard case
+  with no user text, an unrelated task and a request naming it, adds
+  injection and forbidden cases (`eval/intent-cases.json`), and searches
+  thresholds against an intent ship bar. The quick judge does not send
+  user text yet: in the first run no thresholds met the bar (see
+  `eval/RESULTS.md`).
 
 ### Changed
 
