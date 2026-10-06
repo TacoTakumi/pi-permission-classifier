@@ -7,7 +7,7 @@ import { type ClassifierConfig, classifierConfigSchema } from "#src/config-schem
 import { createJudgeLink, type JudgeLinkDeps } from "#src/judge-link";
 import type { CompleteFn } from "#src/model-review";
 import type { QuickJudgeRegistryLike } from "#src/quick-judge";
-import { HAZARD_OPTIONS } from "#src/system-one-review";
+import { HAZARD_OPTIONS, QUICK_JUDGE_INTENT } from "#src/system-one-review";
 import { failureDenyReason } from "#src/verdict-policy";
 import { assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
@@ -391,13 +391,19 @@ describe("failures never allow", () => {
 });
 
 describe("user intent", () => {
-  it("hands the link's intent reader to the quick judge", async () => {
+  it("keeps intent from the quick judge while the eval holds it", async () => {
+    expect(QUICK_JUDGE_INTENT).toBe(false);
     const h = harness(config({ mode: "quick", quickJudge: QUICK_PAIR }));
     const getUserIntent = vi.fn(() => ({ messages: ["push it"] }));
     const authorize = createJudgeLink({ ...h.deps, getUserIntent });
     await authorize(askDetails(), QUERY, fakeLog());
-    expect(getUserIntent).toHaveBeenCalledWith(false);
-    expect(h.classify.mock.calls[0]![1].state.user_messages).toEqual(["push it"]);
+    expect(getUserIntent).not.toHaveBeenCalled();
+    expect(h.classify.mock.calls[0]![1].state).not.toHaveProperty("user_messages");
+    expect(Object.keys(h.classify.mock.calls[0]![1].questions).sort()).toEqual([
+      "contained",
+      "hazard",
+      "reversible",
+    ]);
   });
 
   it("hands the link's intent reader to the LLM judge", async () => {
@@ -409,13 +415,13 @@ describe("user intent", () => {
     expect(prompt).toContain("<user-message>\npush it\n</user-message>");
   });
 
-  it("gives both judges the intent in mode quick-then-llm", async () => {
+  it("gives only the LLM judge the intent in mode quick-then-llm", async () => {
     const h = harness(config({ mode: "quick-then-llm", quickJudge: QUICK_PAIR }), {
       classify: async () => QUICK_UNCERTAIN,
     });
     const getUserIntent = vi.fn(() => ({ messages: ["push it"] }));
     await createJudgeLink({ ...h.deps, getUserIntent })(askDetails(), QUERY, fakeLog());
-    expect(h.classify.mock.calls[0]![1].state.user_messages).toEqual(["push it"]);
+    expect(h.classify.mock.calls[0]![1].state).not.toHaveProperty("user_messages");
     const prompt = (h.complete.mock.calls[0]![1] as { messages: { content: string }[] }).messages[0]!
       .content;
     expect(prompt).toContain("<user-messages>");

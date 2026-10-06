@@ -26,6 +26,7 @@ import {
 } from "./config-schema";
 import { createQuickJudge, type QuickJudgeDeps, type QuickJudgeSettings } from "./quick-judge";
 import { type ClassifierReviewerDeps, createClassifierReviewer } from "./reviewer";
+import { QUICK_JUDGE_INTENT } from "./system-one-review";
 import type { UserIntent } from "./user-intent";
 
 /** The quick judge policy in front of the LLM judge: never deny, never fail closed. */
@@ -97,17 +98,22 @@ export function createJudgeLink(deps: JudgeLinkDeps): Authorizer["authorize"] {
     };
   };
 
+  // The quick judge gets the intent reader only while the eval ships intent
+  // for it; otherwise it sends its request without intent.
+  const quickIntent =
+    QUICK_JUDGE_INTENT && deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {};
+
   // Two callbacks over one breaker and one health seam: the quick judge's
   // state is the same whichever mode runs it.
   const quickAlone = createQuickJudge({
     ...deps.quick,
-    ...(deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {}),
+    ...quickIntent,
     breaker: quickBreaker,
     getSettings: () => quickSettings(false),
   });
   const quickInFront = createQuickJudge({
     ...deps.quick,
-    ...(deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {}),
+    ...quickIntent,
     breaker: quickBreaker,
     getSettings: () => quickSettings(true),
   });

@@ -199,6 +199,14 @@ export const INTENT_THRESHOLDS = {
 } as const;
 
 /**
+ * Whether the quick judge sends user intent. Off: in the eval no thresholds
+ * met the intent ship bar (see eval/RESULTS.md), so the quick judge keeps
+ * its request and mapping without intent. The eval still scores intent with
+ * the request and mapping above; the LLM judge is not affected.
+ */
+export const QUICK_JUDGE_INTENT = false;
+
+/**
  * The probabilities the verdict mapping compares against. `allowThreshold`,
  * when set, replaces every per-question allow threshold.
  */
