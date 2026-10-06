@@ -33,10 +33,14 @@ this project adheres to
   `onError` (`defer`, `deny`) for each judge, enforced in code. `onError`
   deny turns a failure into a deny with a fixed reason that names the
   failure and says to retry later or take another route.
-- `/permission-model` with no argument opens a two-step picker: the mode,
-  then only the models that mode needs, with the current choices
-  preselected. The LLM list offers "Same as the chat model (follows
-  /model)". One write at the end; a cancel at any step writes nothing.
+- `/permission-model` with no argument opens a menu with five entries,
+  each showing its current value: who judges (the mode), the quick judge
+  model, the LLM judge model, and the last judge's verdicts and on error.
+  Each entry opens one list with the current value preselected; a pick is
+  saved at once and the menu opens again. The LLM list offers "Same as the
+  chat model (follows /model)". Picking a quick mode while the global
+  config has no quick model asks for one and saves both together. Escape
+  in a list goes back to the menu without a change.
 - Typed forms `/permission-model mode <llm|quick|quick-then-llm>`,
   `/permission-model llm <provider>/<id>`, `/permission-model llm
   chat-model` and `/permission-model quick <provider>/<id>`, with tab
@@ -54,8 +58,8 @@ this project adheres to
   `llm:chat-model`, each with its own health suffix.
 - `/permission-model` sets `verdicts` and `onError` for the last judge in
   line (the LLM judge in modes `llm` and `quick-then-llm`, the quick judge
-  in mode `quick`): the picker ends with a verdicts step and an onError
-  step, and the typed forms `verdicts <allow-deny-defer|allow-defer|allow-deny>`
+  in mode `quick`): the menu has a verdicts entry and an on error entry,
+  and the typed forms `verdicts <allow-deny-defer|allow-defer|allow-deny>`
   and `on-error <defer|deny>` set one field each. The print form outside
   the TUI shows the last judge's policy.
 - Decision entries carry `judge` (`quick` or `llm`); quick entries also

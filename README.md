@@ -98,9 +98,10 @@ and installing it grants it no authority until you name it in the chain.
    judge model.
 
 5. Choose the judges. Start a new pi session and run `/permission-model`:
-   pick a mode, then the model for each judge that mode runs, then the
-   last judge's verdicts and onError (see "Choosing the judges"). The choice is saved to the config file from
-   step 4 and applies to the next ask.
+   in the menu, set who judges, the model for each judge that mode runs,
+   and the last judge's verdicts and on error (see "Choosing the judges").
+   Each pick is saved to the config file from step 4 and applies to the
+   next ask.
 
 6. Try it. Trigger something your policy sends to `ask` (for example a bash
    command not on your allowlist). A benign command should now be approved
@@ -514,20 +515,35 @@ choosing a judge never changes pi's session model or your default model:
 
 ### The /permission-model command
 
-- `/permission-model` with no argument opens a two-step picker. Step 1
-  lists the modes in the order `quick-then-llm`, `llm`, `quick`, each with
-  a one-line description, the current mode marked `(current)`. Step 2 shows
-  only the model lists that mode needs, each with the current model
-  preselected: the quick list holds the available classifier models; the
-  LLM list holds `Same as the chat model (follows /model)` and the
-  available chat models. `quick-then-llm` shows the quick list, then the
-  LLM list. Then a verdicts list (`allow-deny-defer`, `allow-defer`,
-  `allow-deny`) and an onError list (`defer`, `deny`) follow for the last
-  judge in line: the LLM judge in `llm` and `quick-then-llm`, the quick
-  judge in `quick`. Each value has a one-line description, and the current
-  value is marked `(current)` and preselected. Nothing is written until the
-  last step; then the mode, the models and the policy are saved in one
-  write. Press escape at any step to change nothing.
+- `/permission-model` with no argument opens the "Permission judge" menu.
+  Each entry shows its current value:
+
+  ```
+  Who judges          quick-then-llm
+  Quick judge model   typesafe/jev-latest
+  LLM judge model     Same as the chat model (follows /model)
+  LLM judge verdicts  allow-deny-defer
+  LLM judge on error  defer
+  ```
+
+  - Who judges lists the modes `quick-then-llm`, `llm`, `quick`, each with
+    a one-line description.
+  - Quick judge model lists the available classifier models.
+  - LLM judge model lists `Same as the chat model (follows /model)` and the
+    available chat models.
+  - The verdicts entry lists `allow-deny-defer`, `allow-defer` and
+    `allow-deny`; the on error entry lists `defer` and `deny`. Both belong
+    to the last judge in line, so they read "LLM judge" in `llm` and
+    `quick-then-llm` and "Quick judge" in `quick`.
+
+  A model entry whose judge the mode does not run is marked, for example
+  `(not used in llm)`, and can still be set. Each list marks the current
+  value `(current)` and preselects it. A pick is saved at once, exactly as
+  the matching typed form saves it, and the menu opens again with the new
+  value. Picking `quick` or `quick-then-llm` while the global config file
+  has no quick model opens the quick model list next and saves the mode
+  and the model together. Press escape in a list to go back to the menu
+  without a change, and escape on the menu to close it.
 - Outside the TUI (rpc, json, print modes), `/permission-model` with no
   argument prints the mode, the model of each judge the mode runs, the last
   judge's verdicts and onError, and the usage line, and writes nothing.
@@ -536,7 +552,7 @@ choosing a judge never changes pi's session model or your default model:
   file, where the mode is saved: without one it writes nothing and says to
   set one first. A quick model that only the launch flag or a project config
   sets does not count, because the saved mode would outlive the flag or apply
-  in other projects. The picker always saves the quick model with the mode.
+  in other projects. The menu asks for the quick model in that case.
 - `/permission-model llm <provider>/<id>` sets the LLM judge. The pair must
   be a chat model in pi's model registry: an unknown pair or a classifier
   model is rejected and nothing changes. A known model without configured
