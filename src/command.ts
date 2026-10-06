@@ -532,7 +532,8 @@ export function createPermissionModelCommand(
    * The no-argument TUI form: a menu of five entries, each showing its
    * current value. An entry opens one list; a pick there writes only that
    * entry's fields and the menu opens again with the new values. Esc in a
-   * list returns to the menu without a write; Esc on the menu closes it.
+   * list returns to the menu without a write; Esc on the menu closes it. A
+   * write that lands but leaves the merged config invalid closes the menu.
    */
   async function pick(ctx: CommandContextLike): Promise<void> {
     let selected: string = MODE_FORM;
@@ -648,11 +649,12 @@ export function createPermissionModelCommand(
     return "not-written";
   }
 
-
   /**
    * The quick model list: the available classifier models, the current one
-   * marked and preselected. Resolves the pick, or `undefined` on a cancel or
-   * when none is available (with a warning).
+   * marked and preselected (first, as not available, when it is not in the
+   * list). Resolves the pick, or `undefined` on a cancel, on a pick of the
+   * unavailable current row (with a note), or when none is available (with
+   * a warning).
    */
   async function pickQuickModel(
     config: ClassifierConfig,
@@ -682,8 +684,11 @@ export function createPermissionModelCommand(
       ),
       currentLabel,
     );
-    if (chosen === undefined || !labels.includes(chosen)) {
-      // A cancel, or the unavailable current row: nothing to change.
+    if (chosen === undefined) {
+      return undefined;
+    }
+    if (!labels.includes(chosen)) {
+      notifyNotAvailable(chosen, ctx);
       return undefined;
     }
     // Labels are built as provider/id above, so the parse cannot fail.
@@ -721,9 +726,13 @@ export function createPermissionModelCommand(
     if (chosen === CHAT_MODEL) {
       return persist({ llm: null }, ctx);
     }
-    // The unavailable current row matches no model and changes nothing.
     const model = models.find((candidate) => `${candidate.provider}/${candidate.id}` === chosen);
-    return model ? applyModel(model, ctx) : "not-written";
+    if (!model) {
+      // The unavailable current row matches no model and changes nothing.
+      notifyNotAvailable(chosen, ctx);
+      return "not-written";
+    }
+    return applyModel(model, ctx);
   }
 
   /**
@@ -851,6 +860,11 @@ function markCurrent(
     label: value === current ? `${value} (current)` : value,
     description,
   }));
+}
+
+/** Say that a pick of the unavailable current row changed nothing. */
+function notifyNotAvailable(label: string, ctx: CommandContextLike): void {
+  ctx.ui.notify(`${label} is not available. Nothing changed.`, "info");
 }
 
 /**

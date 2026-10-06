@@ -540,12 +540,13 @@ choosing a judge never changes pi's session model or your default model:
   `(not used in llm)`, and can still be set. Each list marks the current
   value `(current)` and preselects it. A configured model that is not
   available shows first as `(current, not available)`; picking it changes
-  nothing. A pick is saved at once, exactly as
-  the matching typed form saves it, and the menu opens again with the new
-  value. Picking `quick` or `quick-then-llm` while the global config file
-  has no quick model opens the quick model list next and saves the mode
-  and the model together. Press escape in a list to go back to the menu
-  without a change, and escape on the menu to close it.
+  nothing and says so. A pick is saved at once, exactly as the matching
+  typed form saves it, and the menu opens again with the new value. If the
+  save lands but the merged config no longer validates, the menu closes
+  after the error instead. Picking `quick` or `quick-then-llm` while the
+  global config file has no quick model opens the quick model list next
+  and saves the mode and the model together. Press escape in a list to go
+  back to the menu without a change, and escape on the menu to close it.
 - Outside the TUI (rpc, json, print modes), `/permission-model` with no
   argument prints the mode, the model of each judge the mode runs, the last
   judge's verdicts and onError, and the usage line, and writes nothing.

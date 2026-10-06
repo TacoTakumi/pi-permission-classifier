@@ -39,8 +39,11 @@ this project adheres to
   Each entry opens one list with the current value preselected; a pick is
   saved at once and the menu opens again. The LLM list offers "Same as the
   chat model (follows /model)". Picking a quick mode while the global
-  config has no quick model asks for one and saves both together. Escape
-  in a list goes back to the menu without a change.
+  config has no quick model asks for one and saves both together. A
+  configured model that is not available is listed first as `(current,
+  not available)`, and picking it changes nothing. Escape in a list goes
+  back to the menu without a change; a save that leaves the merged config
+  invalid closes the menu after the error.
 - Typed forms `/permission-model mode <llm|quick|quick-then-llm>`,
   `/permission-model llm <provider>/<id>`, `/permission-model llm
   chat-model` and `/permission-model quick <provider>/<id>`, with tab

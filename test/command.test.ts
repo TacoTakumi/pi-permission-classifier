@@ -905,7 +905,7 @@ describe("menu picker in the TUI", () => {
   );
 
   it("the LLM list keeps an unavailable current model first and preselected (not available)", async () => {
-    const { deps, pending } = openMenu({ ...EMPTY_CONFIG, provider: "nope", model: "x" });
+    const { deps, ctx, pending } = openMenu({ ...EMPTY_CONFIG, provider: "nope", model: "x" });
     (await stepRequest(deps, 0)).onSelect("llm");
     const llm = await stepRequest(deps, 1);
     expect(llm.items[0]).toEqual({ value: "nope/x", label: "nope/x (current, not available)" });
@@ -915,10 +915,12 @@ describe("menu picker in the TUI", () => {
     expect((await stepRequest(deps, 2)).selectedValue).toBe("llm");
     await closeMenu(deps, 2, pending);
     expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toBe("nope/x is not available. Nothing changed.");
   });
 
   it("the quick list keeps an unavailable current model first and preselected (not available)", async () => {
-    const { deps, pending } = openMenu(WITH_QUICK);
+    const { deps, ctx, pending } = openMenu(WITH_QUICK);
     (await stepRequest(deps, 0)).onSelect("quick");
     const quick = await stepRequest(deps, 1);
     expect(quick.items[0]).toEqual({
@@ -933,10 +935,12 @@ describe("menu picker in the TUI", () => {
     quick.onSelect("typesafe/jev");
     await closeMenu(deps, 2, pending);
     expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toBe("typesafe/jev is not available. Nothing changed.");
   });
 
   it("the chained quick list keeps an unavailable current model too (not available)", async () => {
-    const { deps, pending } = openMenu(WITH_QUICK);
+    const { deps, ctx, pending } = openMenu(WITH_QUICK);
     deps.globalQuickJudgeSet.mockReturnValue(false);
     (await stepRequest(deps, 0)).onSelect("mode");
     (await stepRequest(deps, 1)).onSelect("quick");
@@ -946,6 +950,8 @@ describe("menu picker in the TUI", () => {
     quick.onSelect("typesafe/jev");
     await closeMenu(deps, 3, pending);
     expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toBe("typesafe/jev is not available. Nothing changed.");
   });
 
   it("warns, writes nothing and returns to the menu when no classifier model is available", async () => {
