@@ -29,8 +29,10 @@
  *     last judge's verdicts and on error. A model entry whose judge the mode
  *     does not run is marked unused. Each entry opens one list with the
  *     current value marked and preselected; a pick writes only that entry's
- *     fields, the same as the typed form, and the menu opens again. Esc in a
- *     list returns to the menu without a write; Esc on the menu closes it.
+ *     fields, the same as the typed form, and the menu opens again. A quick
+ *     mode picked while the global config has no quick model opens the
+ *     quick model list next and writes both together. Esc in a list
+ *     returns to the menu without a write; Esc on the menu closes it.
  *   - no argument outside the TUI: print the mode, the model of each judge
  *     the mode runs, the last judge's policy, and the usage line (pi's
  *     `ctx.ui.custom` returns nothing in rpc/json/print modes).
@@ -587,9 +589,19 @@ export function createPermissionModelCommand(
       const mode = modeSchema.safeParse(
         await step(ctx, "Who judges", markCurrent(MODE_ITEMS, config.mode), config.mode),
       );
-      if (mode.success) {
-        applyMode(mode.data, ctx);
+      if (!mode.success) {
+        return;
       }
+      if (mode.data !== "llm" && !deps.globalQuickJudgeSet()) {
+        // The mode is saved globally, so it needs a quick model beside it:
+        // ask for one now and write both together.
+        const pair = await pickQuickModel(config, ctx);
+        if (pair) {
+          persist({ mode: mode.data, quick: pair }, ctx);
+        }
+        return;
+      }
+      applyMode(mode.data, ctx);
       return;
     }
     if (entry === QUICK_FORM) {

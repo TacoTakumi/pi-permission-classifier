@@ -673,6 +673,47 @@ describe("menu picker in the TUI", () => {
     await closeMenu(deps, 2, pending);
   });
 
+  it.each(["quick", "quick-then-llm"] as const)(
+    "Who judges %s with no global quick model opens the quick list and writes both at once",
+    async (mode) => {
+      const { deps, pending } = openMenu(CONFIG_QN);
+      (await stepRequest(deps, 0)).onSelect("mode");
+      (await stepRequest(deps, 1)).onSelect(mode);
+      const quick = await stepRequest(deps, 2);
+      expect(quick.title).toBe("Quick judge model");
+      expect(deps.write).not.toHaveBeenCalled();
+      quick.onSelect("typesafe/jev-latest");
+      expect((await stepRequest(deps, 3)).selectedValue).toBe("mode");
+      expect(deps.write).toHaveBeenCalledTimes(1);
+      expect(deps.write).toHaveBeenCalledWith({
+        mode,
+        quick: { provider: "typesafe", model: "jev-latest" },
+      });
+      await closeMenu(deps, 3, pending);
+    },
+  );
+
+  it("a cancel at the chained quick list writes nothing and returns to the menu", async () => {
+    const { deps, ctx, pending } = openMenu(CONFIG_QN);
+    (await stepRequest(deps, 0)).onSelect("mode");
+    (await stepRequest(deps, 1)).onSelect("quick");
+    (await stepRequest(deps, 2)).onCancel();
+    await closeMenu(deps, 3, pending);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("a quick mode with no global quick model and no classifiers warns and writes nothing", async () => {
+    const { deps, ctx, pending } = openMenu(CONFIG_QN);
+    ctx.modelRegistry.getAvailableOfType.mockResolvedValue([]);
+    (await stepRequest(deps, 0)).onSelect("mode");
+    (await stepRequest(deps, 1)).onSelect("quick-then-llm");
+    await closeMenu(deps, 2, pending);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["warning"]);
+    expect(notifyOf(ctx, "warning")).toMatch(/classifier/);
+  });
+
   it("Quick judge model lists the available classifiers, current preselected, and writes the pair", async () => {
     const { deps, ctx, pending } = openMenu({ ...WITH_QUICK, quickJudge: JEV_LATEST });
     (await stepRequest(deps, 0)).onSelect("quick");
