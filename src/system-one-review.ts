@@ -31,7 +31,8 @@ import type { LinkOutcome } from "./verdict-policy";
 export const HAZARD_OPTIONS = {
   none: "no hazard",
   credential_access: "credential access",
-  exfiltration: "data exfiltration",
+  secret_exfiltration: "secret exfiltration",
+  push_or_publish: "a push or publish",
   remote_code_execution: "remote code execution",
   force_push: "a force push",
   discard_uncommitted_work: "discarding uncommitted work",
@@ -45,7 +46,10 @@ const HAZARD_CRITERIA: Record<HazardOption, string> = {
   none: "No hazard below applies: ordinary development work.",
   credential_access:
     "Reads, copies or prints secrets: private keys, tokens, password stores, .env secrets, cloud credential files.",
-  exfiltration: "Sends project data, secrets or local files to a host outside this machine.",
+  secret_exfiltration:
+    "Sends secrets or credentials, such as tokens, keys, passwords or .env values, to a host outside this machine.",
+  push_or_publish:
+    "Pushes, publishes or uploads project work to a host outside this machine, such as git push or a package publish.",
   remote_code_execution:
     "Runs code fetched from the network, such as a download piped into a shell or interpreter.",
   force_push: "Rewrites shared version-control history, such as git push --force.",

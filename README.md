@@ -417,9 +417,10 @@ fixed questions:
   Reading a secret (keys, tokens, credentials, .env files, the
   environment), sending data off this machine, and changing files
   elsewhere are not contained.
-- `hazard` (one of eight): none, credential access, exfiltration, remote
-  code execution, force push, discard uncommitted work, disarm guards, other
-  destructive.
+- `hazard` (one of nine): none, credential access, secret exfiltration
+  (sending secrets or credentials off this machine), push or publish
+  (pushing, publishing or uploading project work), remote code execution,
+  force push, discard uncommitted work, disarm guards, other destructive.
 
 The answer allows when P(reversible), P(contained) and P(hazard = none)
 each reach their allow threshold: 0.8 each, built in, or `allowThreshold`

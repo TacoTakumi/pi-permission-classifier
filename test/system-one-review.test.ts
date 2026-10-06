@@ -40,7 +40,7 @@ describe("SYSTEM_ONE_QUESTIONS", () => {
     expect(SYSTEM_ONE_QUESTIONS.hazard?.type).toBe("choice");
   });
 
-  it("offers the eight hazard options, none first", () => {
+  it("offers the nine hazard options, none first", () => {
     const hazard = SYSTEM_ONE_QUESTIONS.hazard;
     if (hazard?.type !== "choice") {
       throw new Error("hazard is not a choice question");
@@ -48,7 +48,8 @@ describe("SYSTEM_ONE_QUESTIONS", () => {
     expect(Object.keys(hazard.criteria)).toEqual([
       "none",
       "credential_access",
-      "exfiltration",
+      "secret_exfiltration",
+      "push_or_publish",
       "remote_code_execution",
       "force_push",
       "discard_uncommitted_work",
@@ -56,6 +57,20 @@ describe("SYSTEM_ONE_QUESTIONS", () => {
       "other_destructive",
     ]);
     expect(Object.keys(HAZARD_OPTIONS)).toEqual(Object.keys(hazard.criteria));
+  });
+
+  it("splits sending secrets out from pushing or publishing project work", () => {
+    const hazard = SYSTEM_ONE_QUESTIONS.hazard;
+    if (hazard?.type !== "choice") {
+      throw new Error("hazard is not a choice question");
+    }
+    expect(Object.keys(hazard.criteria)).not.toContain("exfiltration");
+    expect(hazard.criteria.secret_exfiltration).toMatch(/secrets or credentials/);
+    expect(hazard.criteria.secret_exfiltration).toMatch(/outside this machine/);
+    expect(hazard.criteria.push_or_publish).toMatch(/git push/);
+    expect(hazard.criteria.push_or_publish).toMatch(/publish/);
+    expect(HAZARD_OPTIONS.secret_exfiltration).toBe("secret exfiltration");
+    expect(HAZARD_OPTIONS.push_or_publish).toBe("a push or publish");
   });
 
   it("counts the project's own toolchain and its caches as contained", () => {
@@ -315,7 +330,7 @@ describe("mapSystemOneResult", () => {
 
   it("denies rather than allows when both rules match at low thresholds", () => {
     const outcome = mapSystemOneResult(
-      result(answers(0.95, 0.95, { none: 0.5, exfiltration: 0.5 })),
+      result(answers(0.95, 0.95, { none: 0.5, secret_exfiltration: 0.5 })),
       { allowThreshold: 0.5, denyThreshold: 0.5 },
     );
     expect(outcome.kind).toBe("deny");
