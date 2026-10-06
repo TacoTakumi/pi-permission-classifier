@@ -76,27 +76,39 @@ export interface Machine {
   /**
    * Project directory names and their stable aliases (p1, p2, ...). A name
    * is replaced wherever it stands as a whole word: in a path, in a session
-   * directory name, in prose. The match ignores case when the name has
-   * mixed case, a digit, a dot or a hyphen (OpenHeart, U4R, pi-env) or is
-   * five characters or more (Wholphin), and is exact for a short plain
-   * word (Fun), so prose keeps its common words.
+   * directory name, in prose. A name with a digit, a dot, a hyphen or an
+   * inner capital (OpenHeart, U4R, pi-env) matches in any case; a plain
+   * name (Wholphin, Fun) matches in its exact case, and in other cases only
+   * inside a path or identifier, so prose keeps its common words.
    */
   projects?: Readonly<Record<string, string>>;
 }
 
-/**
- * Whether a project name is matched without regard to case: it has a digit,
- * a dot or a hyphen, a capital after its first letter (OpenHeart), or five
- * characters or more (Wholphin, wholphin). A short plain word (Fun) is
- * matched in its exact case only, so prose keeps its common words.
- */
-function looseCase(name: string): boolean {
-  return /[0-9.-]/.test(name) || (/[a-z]/.test(name) && /[A-Z]/.test(name.slice(1))) || name.length >= 5;
+/** Whether a project name carries a mark: a digit, a dot, a hyphen or a capital after its first letter. */
+function hasMark(name: string): boolean {
+  return /[0-9.-]/.test(name) || (/[a-z]/.test(name) && /[A-Z]/.test(name.slice(1)));
 }
 
 /** The whole-word pattern of a name; longer names are applied first by the caller. */
 function wordPattern(name: string, ignoreCase: boolean): RegExp {
   return new RegExp(String.raw`(?<![A-Za-z0-9_])${escapeRegExp(name)}(?![A-Za-z0-9_])`, ignoreCase ? "gi" : "g");
+}
+
+/**
+ * The patterns that replace a project name. A name with a mark (OpenHeart,
+ * U4R, pi-env) matches as a whole word in any case. A plain name matches
+ * in its exact case as a whole word, and in other cases only where it is
+ * joined to a path or identifier (a /, -, _ or . directly before or after
+ * it), so a file docs/wholphin-migration.md aliases while the common word
+ * health in prose stays.
+ */
+function namePatterns(name: string): RegExp[] {
+  if (hasMark(name)) return [wordPattern(name, true)];
+  const escaped = escapeRegExp(name);
+  return [
+    wordPattern(name, false),
+    new RegExp(String.raw`(?<=[\/._-])${escaped}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])${escaped}(?=[\/._-])`, "gi"),
+  ];
 }
 
 /**
@@ -118,7 +130,9 @@ export function scrubString(text: string, machine: Machine = {}): string {
   }
   if (projects !== undefined) {
     for (const name of Object.keys(projects).sort((a, b) => b.length - a.length)) {
-      out = out.replace(wordPattern(name, looseCase(name)), projects[name]!);
+      for (const pattern of namePatterns(name)) {
+        out = out.replace(pattern, projects[name]!);
+      }
     }
   }
   return out;
