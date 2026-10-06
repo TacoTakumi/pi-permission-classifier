@@ -179,16 +179,9 @@ describe("storedAsksFromLog", () => {
 
   it("follows forwarded hops to the decider and drops user text on a forwarded ask", () => {
     const rows = [
-      {
-        timestamp: "t",
-        event: "permission_request.waiting",
-        requestId: "r4",
-        toolCallId: "tc4",
-        surface: "bash",
-        toolName: "bash",
-        command: "ls",
-        forwarded: true,
-      },
+      { timestamp: "t", event: "permission_request.waiting", requestId: "r4", toolCallId: "tc4", surface: "bash", toolName: "bash", command: "ls" },
+      // The parent's waiting row for the same request: no tool call id, the forwarded flag.
+      { timestamp: "t2", event: "permission_request.waiting", requestId: "r4", toolCallId: null, surface: "bash", forwarded: true },
       {
         event: "permission_request.approved",
         requestId: "r4",

@@ -230,6 +230,9 @@ export function storedAsksFromLog(
 ): StoredAsk[] {
   const final = new Map<string, Record<string, unknown>>();
   const decisions = new Map<string, StoredDecision[]>();
+  // A request a subagent forwarded waits twice: once in the subagent with
+  // its tool call id, once in the parent with the forwarded flag.
+  const forwarded = new Set<string>();
   for (const row of rows) {
     const requestId = row.requestId;
     if (typeof requestId !== "string" || typeof row.event !== "string") continue;
@@ -239,6 +242,8 @@ export function storedAsksFromLog(
       const list = decisions.get(requestId) ?? [];
       list.push(decisionOf(row));
       decisions.set(requestId, list);
+    } else if (row.event === "permission_request.waiting" && row.forwarded === true) {
+      forwarded.add(requestId);
     }
   }
   const asks: StoredAsk[] = [];
@@ -258,7 +263,7 @@ export function storedAsksFromLog(
     if (value === undefined) continue;
     seen.add(requestId);
     const tool = typeof row.toolName === "string" ? row.toolName : call.name;
-    const forwarded = row.forwarded === true;
+    const isForwarded = forwarded.has(requestId);
     const decider = deciderOf(outcome);
     const ask: StoredAsk = {
       id: requestId,
@@ -269,12 +274,12 @@ export function storedAsksFromLog(
       value,
       cwd: call.cwd,
       ...(tool === "bash" && call.command !== undefined ? { fullCommand: call.command } : {}),
-      forwarded,
+      forwarded: isForwarded,
       decisions: decisions.get(requestId) ?? [],
       resolution: FINAL_EVENTS[outcome.event as string]!,
       decider: decider.kind,
       deciderName: decider.name,
-      ...(call.userMessages === undefined || forwarded ? {} : { userMessages: call.userMessages }),
+      ...(call.userMessages === undefined || isForwarded ? {} : { userMessages: call.userMessages }),
     };
     asks.push(scrubDeep(ask, homeDir));
   }
