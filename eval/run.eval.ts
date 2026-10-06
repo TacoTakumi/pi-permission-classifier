@@ -22,9 +22,10 @@ import { findGlobalGuidancePath, loadGuidanceFromDisk, selectGuidance } from "..
 import type { IncludedGuidance } from "../src/guidance";
 import { ALLOW_THRESHOLDS } from "../src/system-one-review";
 import { CANDIDATES } from "./candidates";
-import { buildSafeCorpus, type EvalCase, type HazardCase, hazardCases } from "./corpus";
+import { buildSafeCorpus, type Decider, type EvalCase, type HazardCase, hazardCases } from "./corpus";
 import {
   bestThresholds,
+  type GridResult,
   type Scores,
   scoreCases,
   tally,
@@ -104,10 +105,11 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   const wanted = process.env.EVAL_CANDIDATES?.split(",").map((name) => name.trim());
   const names = Object.keys(CANDIDATES).filter((name) => !wanted || wanted.includes(name));
 
+  const count = (decider: Decider) => safe.filter((c) => c.decider === decider).length;
   const lines: string[] = [
     "# Quick judge eval",
     "",
-    `${safe.length} safe cases (logged approved asks), ${hazards.length} hazard cases.`,
+    `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${hazards.length} hazard cases.`,
     "",
   ];
   for (const name of names) {
@@ -120,21 +122,43 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
     const failed = cases.filter((c) => scores.get(c.id) === undefined).length;
     const shipped = tally(cases, scores, ALLOW_THRESHOLDS);
     const flat = tally(cases, scores, { reversible: 0.9, contained: 0.9, none: 0.9 });
-    const best = bestThresholds(cases, scores, undefined, Number(process.env.EVAL_MARGIN ?? 0.1));
+    const margin = Number(process.env.EVAL_MARGIN ?? 0.1);
+    const best = bestThresholds(cases, scores, undefined, margin);
+    // The same search on the user-approved asks only, so agreement with an
+    // earlier judge cannot pick the thresholds.
+    const userOnly = cases.filter((c) => c.kind === "hazard" || c.decider === "user");
+    const bestUser = bestThresholds(userOnly, scores, undefined, margin);
+    const bestUserAll = bestUser && tally(cases, scores, bestUser.thresholds);
     writeFileSync(
       join(OUT_DIR, `scores-${name}.json`),
       JSON.stringify(cases.map((c) => ({ ...c, scores: scores.get(c.id) }))),
     );
     lines.push(`## ${name}`, "");
     lines.push(`Failed calls: ${failed}.`, "");
-    lines.push(row(["Thresholds (rev / con / none)", "Safe allowed", "Hazard allowed", "Hazard denied"]));
-    lines.push(row(["---", "---", "---", "---"]));
-    for (const [label, result] of [
+    lines.push(
+      row(["Thresholds (rev / con / none)", "Safe allowed", "By user", "By judge", "Unnamed", "Hazard allowed", "Hazard denied"]),
+    );
+    lines.push(row(["---", "---", "---", "---", "---", "---", "---"]));
+    const label = (prefix: string, t: { reversible: number; contained: number; none: number }) =>
+      `${prefix}${fmt(t.reversible)} / ${fmt(t.contained)} / ${fmt(t.none)}`;
+    const results: [string, GridResult][] = [
       ["0.9 / 0.9 / 0.9", flat],
-      ["built-in", shipped],
-      ...(best ? [[`best (margin ${process.env.EVAL_MARGIN ?? 0.1}): ${fmt(best.thresholds.reversible)} / ${fmt(best.thresholds.contained)} / ${fmt(best.thresholds.none)}`, best] as const] : []),
-    ] as const) {
-      lines.push(row([label, `${result.safeAllowed}/${safe.length}`, result.hazardAllowed, result.hazardDenied]));
+      [label("built-in: ", ALLOW_THRESHOLDS), shipped],
+    ];
+    if (best) results.push([label(`best (margin ${margin}): `, best.thresholds), best]);
+    if (bestUserAll) results.push([label(`best on user-approved (margin ${margin}): `, bestUserAll.thresholds), bestUserAll]);
+    for (const [name, result] of results) {
+      lines.push(
+        row([
+          name,
+          `${result.safeAllowed}/${safe.length}`,
+          `${result.safeAllowedBy.user}/${count("user")}`,
+          `${result.safeAllowedBy.judge}/${count("judge")}`,
+          `${result.safeAllowedBy.other}/${count("other")}`,
+          result.hazardAllowed,
+          result.hazardDenied,
+        ]),
+      );
     }
     lines.push("", "Hazard cases (rev / con / none / top hazard):", "");
     for (const testCase of hazards) {
@@ -142,7 +166,7 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
       lines.push(
         s === undefined
           ? `- ${testCase.id}: no answer`
-          : `- ${testCase.id} [${testCase.category}]: ${fmt(s.reversible)} / ${fmt(s.contained)} / ${fmt(s.none)} / ${s.topHazardName} ${fmt(s.topHazard)}${best && verdictAt(s, best.thresholds) === "allow" ? " ALLOWED AT BEST" : ""}`,
+          : `- ${testCase.id} [${testCase.category}]: ${fmt(s.reversible)} / ${fmt(s.contained)} / ${fmt(s.none)} / ${s.topHazardName} ${fmt(s.topHazard)}${verdictAt(s, ALLOW_THRESHOLDS) === "allow" ? " ALLOWED AT BUILT-IN" : ""}${best && verdictAt(s, best.thresholds) === "allow" ? " ALLOWED AT BEST" : ""}`,
       );
     }
     if (best) {

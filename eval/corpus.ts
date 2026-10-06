@@ -11,6 +11,12 @@ import { createReadStream, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+/**
+ * Who approved a logged ask: the user (directly or forwarded from a
+ * subagent), a judge link, or a path the log does not name.
+ */
+export type Decider = "user" | "judge" | "other";
+
 /** One ask the eval sends to the quick judge. */
 export interface EvalCase {
   id: string;
@@ -23,6 +29,8 @@ export interface EvalCase {
   cwd: string;
   /** The full bash command, when there is one. */
   fullCommand?: string;
+  /** Who approved it; safe cases only. */
+  decider?: Decider;
 }
 
 /** One hand-written hazard case, as eval/hazard-cases.json holds it. */
@@ -61,10 +69,10 @@ export function safeCasesFromLog(
   rows: readonly Record<string, unknown>[],
   toolCalls: ReadonlyMap<string, SessionToolCall>,
 ): EvalCase[] {
-  const final = new Map<string, string>();
+  const final = new Map<string, Record<string, unknown>>();
   for (const row of rows) {
     if (typeof row.event === "string" && FINAL_EVENTS.has(row.event) && typeof row.requestId === "string") {
-      final.set(row.requestId, row.event);
+      final.set(row.requestId, row);
     }
   }
   const cases: EvalCase[] = [];
@@ -74,7 +82,8 @@ export function safeCasesFromLog(
     const requestId = row.requestId;
     const toolCallId = row.toolCallId;
     if (typeof requestId !== "string" || typeof toolCallId !== "string") continue;
-    if (final.get(requestId) !== "permission_request.approved") continue;
+    const outcome = final.get(requestId);
+    if (outcome?.event !== "permission_request.approved") continue;
     const surface = typeof row.surface === "string" ? row.surface : undefined;
     if (surface === undefined || UNJUDGED_SURFACE.test(surface)) continue;
     const call = toolCalls.get(toolCallId);
@@ -88,9 +97,26 @@ export function safeCasesFromLog(
     const key = JSON.stringify([value, surface, tool, call.cwd, fullCommand]);
     if (seen.has(key)) continue;
     seen.add(key);
-    cases.push({ id: requestId, kind: "safe", value, surface, tool, cwd: call.cwd, fullCommand });
+    cases.push({
+      id: requestId,
+      kind: "safe",
+      value,
+      surface,
+      tool,
+      cwd: call.cwd,
+      fullCommand,
+      decider: deciderOf(outcome),
+    });
   }
   return cases;
+}
+
+/** Who approved a request, from its final log entry. */
+function deciderOf(outcome: Record<string, unknown>): Decider {
+  const decidedBy = outcome.decidedBy as { kind?: unknown } | undefined;
+  if (decidedBy?.kind === "user" || decidedBy?.kind === "forwarded") return "user";
+  if (decidedBy?.kind === "authorizer") return "judge";
+  return "other";
 }
 
 /** Pure: the hazard cases as bash asks, run in `cwd` unless a case names one. */

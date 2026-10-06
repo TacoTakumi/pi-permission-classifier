@@ -32,7 +32,7 @@ const SESSION_LINES = [
 
 const LOG_ROWS = [
   { event: "permission_request.waiting", requestId: "r1", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "godot" },
-  { event: "permission_request.approved", requestId: "r1" },
+  { event: "permission_request.approved", requestId: "r1", decidedBy: { kind: "user" } },
   { event: "permission_request.waiting", requestId: "r2", toolCallId: "tc2", surface: "bash", toolName: "bash", command: "rm -rf ~/x" },
   { event: "permission_request.denied", requestId: "r2" },
   { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "external_directory", toolName: "read", path: "/etc/hosts" },
@@ -61,8 +61,35 @@ describe("eval corpus", () => {
         tool: "bash",
         cwd: "/work/game",
         fullCommand: "godot --check-only -s t.gd",
+        decider: "user",
       },
     ]);
+  });
+
+  it("labels each safe case with who approved it", () => {
+    const rows = [
+      { event: "permission_request.waiting", requestId: "a", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "a" },
+      { event: "permission_request.approved", requestId: "a", decidedBy: { kind: "authorizer", name: "permission-judge" } },
+      { event: "permission_request.waiting", requestId: "b", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "b" },
+      { event: "permission_request.approved", requestId: "b", decidedBy: { kind: "forwarded" } },
+      { event: "permission_request.waiting", requestId: "c", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "c" },
+      { event: "permission_request.approved", requestId: "c" },
+    ];
+    const cases = safeCasesFromLog(rows, toolCallsFromSession(SESSION_LINES));
+    expect(cases.map((c) => [c.id, c.decider])).toEqual([
+      ["a", "judge"],
+      ["b", "user"],
+      ["c", "other"],
+    ]);
+  });
+
+  it("counts safe allows per decider", () => {
+    const user: EvalCase = { id: "u", kind: "safe", decider: "user", value: "x", surface: "bash", tool: "bash", cwd: "/w" };
+    const judge: EvalCase = { ...user, id: "j", decider: "judge" };
+    const score: Scores = { reversible: 1, contained: 1, none: 1, topHazard: 0, topHazardName: "none" };
+    const result = tally([user, judge], new Map([["u", score], ["j", score]]), { reversible: 0.8, contained: 0.8, none: 0.8 });
+    expect(result.safeAllowed).toBe(2);
+    expect(result.safeAllowedBy).toEqual({ user: 1, judge: 1, other: 0 });
   });
 
   it("turns hazard cases into bash asks in the given project", () => {
