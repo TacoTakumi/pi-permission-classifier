@@ -92,3 +92,38 @@ export function selectUserText(entries: readonly SessionEntry[]): UserTextSelect
 
   return { messages: [first.text, ...newest.reverse()], cut };
 }
+
+/** The user text an ask is judged against, when intent is available. */
+export interface UserIntent {
+  readonly messages: readonly string[];
+}
+
+/** The slice of the session context the intent read needs. */
+export interface UserIntentSource {
+  readonly sessionManager: { getBranch(): SessionEntry[] };
+  readonly hasPendingMessages?: () => boolean;
+}
+
+/**
+ * The user intent for one ask, or undefined when intent is not available:
+ * no session, an ask forwarded from a subagent (the parent's user did not
+ * write to the child), a user message still queued (the newest word is not
+ * in the branch yet), a selection that cut anything, or no user text. A pi
+ * without the pending-message query, or any throw, also gives none, so the
+ * judges fall back to their rules without intent.
+ */
+export function readUserIntent(
+  source: UserIntentSource | undefined,
+  forwarded: boolean,
+): UserIntent | undefined {
+  if (source === undefined || forwarded) return undefined;
+  try {
+    if (typeof source.hasPendingMessages !== "function") return undefined;
+    if (source.hasPendingMessages()) return undefined;
+    const selection = selectUserText(source.sessionManager.getBranch());
+    if (selection.cut || selection.messages.length === 0) return undefined;
+    return { messages: selection.messages };
+  } catch {
+    return undefined;
+  }
+}

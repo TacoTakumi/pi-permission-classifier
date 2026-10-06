@@ -20,9 +20,16 @@ import {
   createClassifierExtension,
 } from "#src/extension";
 import piPermissionClassifier from "#src/index";
+import { createJudgeLink } from "#src/judge-link";
 import type { CompleteFn } from "#src/model-review";
 import { assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
+
+// Pass-through: the real link, with its deps visible to the tests.
+vi.mock("#src/judge-link", async (importOriginal) => {
+  const original = await importOriginal<typeof import("#src/judge-link")>();
+  return { ...original, createJudgeLink: vi.fn(original.createJudgeLink) };
+});
 
 const READY_CHANNEL = "permissions:ready";
 
@@ -1282,6 +1289,66 @@ describe("default export", () => {
     expect(pi.lifecycle.has("model_select")).toBe(true);
     expect(pi.lifecycle.has("session_shutdown")).toBe(true);
     expect(pi.events.has(READY_CHANNEL)).toBe(true);
+  });
+});
+
+describe("user intent wiring", () => {
+  function ctxWithUserText(texts: string[], pending = false) {
+    return {
+      ...ctxWithModel(),
+      sessionManager: {
+        getBranch: vi.fn(() =>
+          texts.map((text, index) => ({
+            type: "message",
+            id: `u${index}`,
+            parentId: null,
+            timestamp: "2026-10-06T00:00:00Z",
+            message: { role: "user", content: text, timestamp: 0 },
+          })),
+        ),
+      },
+      hasPendingMessages: vi.fn(() => pending),
+    };
+  }
+
+  /** Start a session with the given ctx, register, and return the link's intent reader. */
+  function registeredReader(pi: FakePi, ctx: unknown) {
+    start(pi);
+    publishForSession();
+    pi.lifecycle.get("session_start")?.({}, ctx);
+    pi.events.get(READY_CHANNEL)?.(READY_EVENT);
+    const getUserIntent = vi.mocked(createJudgeLink).mock.lastCall?.[0].getUserIntent;
+    expect(getUserIntent).toBeTypeOf("function");
+    return getUserIntent!;
+  }
+
+  it("reads the user text of the latest session_start ctx on each call", () => {
+    const pi = makeFakePi();
+    const first = ctxWithUserText(["first session task"]);
+    const getUserIntent = registeredReader(pi, first);
+    expect(getUserIntent(false)).toEqual({ messages: ["first session task"] });
+
+    const second = ctxWithUserText(["second session task"]);
+    pi.lifecycle.get("session_start")?.({}, second);
+    expect(getUserIntent(false)).toEqual({ messages: ["second session task"] });
+    expect(first.sessionManager.getBranch).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives no intent for a forwarded ask or while a user message is queued", () => {
+    const getForwarded = registeredReader(makeFakePi(), ctxWithUserText(["task"]));
+    expect(getForwarded(true)).toBeUndefined();
+
+    const getQueued = registeredReader(makeFakePi(), ctxWithUserText(["task"], true));
+    expect(getQueued(false)).toBeUndefined();
+  });
+
+  it("reads no user text after session_shutdown", () => {
+    const pi = makeFakePi();
+    const ctx = ctxWithUserText(["task"]);
+    const getUserIntent = registeredReader(pi, ctx);
+    pi.lifecycle.get("session_shutdown")?.({}, ctx);
+    expect(getUserIntent(false)).toBeUndefined();
+    expect(ctx.sessionManager.getBranch).not.toHaveBeenCalled();
   });
 });
 

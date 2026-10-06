@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_MESSAGE_CHARS,
   MAX_TOTAL_CHARS,
+  readUserIntent,
   selectUserText,
 } from "#src/user-intent";
 
@@ -210,5 +211,55 @@ describe("selectUserText", () => {
   it("returns no messages and no cut for a session without user text", () => {
     expect(selectUserText([])).toEqual({ messages: [], cut: false });
     expect(selectUserText([assistant("hello")])).toEqual({ messages: [], cut: false });
+  });
+});
+
+describe("readUserIntent", () => {
+  function source(entries: SessionEntry[], pending = false) {
+    return {
+      sessionManager: { getBranch: () => entries },
+      hasPendingMessages: () => pending,
+    };
+  }
+
+  it("returns the selected messages when nothing was cut, queued or forwarded", () => {
+    expect(readUserIntent(source([user("deploy it"), assistant("ok")]), false)).toEqual({
+      messages: ["deploy it"],
+    });
+  });
+
+  it("returns none when the selection was cut", () => {
+    expect(readUserIntent(source([user("z".repeat(MAX_MESSAGE_CHARS + 1))]), false)).toBeUndefined();
+  });
+
+  it("returns none when a user message is queued", () => {
+    expect(readUserIntent(source([user("deploy it")], true), false)).toBeUndefined();
+  });
+
+  it("returns none for an ask forwarded from a subagent", () => {
+    expect(readUserIntent(source([user("deploy it")]), true)).toBeUndefined();
+  });
+
+  it("returns none with no session or no user text", () => {
+    expect(readUserIntent(undefined, false)).toBeUndefined();
+    expect(readUserIntent(source([assistant("hi")]), false)).toBeUndefined();
+  });
+
+  it("returns none when reading the session throws", () => {
+    const broken = {
+      sessionManager: {
+        getBranch: (): SessionEntry[] => {
+          throw new Error("gone");
+        },
+      },
+      hasPendingMessages: () => false,
+    };
+    expect(readUserIntent(broken, false)).toBeUndefined();
+  });
+
+  it("returns none when the context has no pending-message query", () => {
+    expect(
+      readUserIntent({ sessionManager: { getBranch: () => [user("deploy it")] } }, false),
+    ).toBeUndefined();
   });
 });

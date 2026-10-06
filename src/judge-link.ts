@@ -26,6 +26,7 @@ import {
 } from "./config-schema";
 import { createQuickJudge, type QuickJudgeDeps, type QuickJudgeSettings } from "./quick-judge";
 import { type ClassifierReviewerDeps, createClassifierReviewer } from "./reviewer";
+import type { UserIntent } from "./user-intent";
 
 /** The quick judge policy in front of the LLM judge: never deny, never fail closed. */
 const CASCADE_QUICK_POLICY = { verdicts: "allow-defer", onError: "defer" } as const;
@@ -38,6 +39,12 @@ export interface JudgeLinkDeps {
   llm: Omit<ClassifierReviewerDeps, "getConfig">;
   /** The quick judge's collaborators; its settings come from `getConfig`. */
   quick: Omit<QuickJudgeDeps, "getSettings">;
+  /**
+   * The user intent for an ask, read live from the session; undefined when
+   * intent is not available. `forwarded` is true for an ask a subagent
+   * forwarded.
+   */
+  getUserIntent?: (forwarded: boolean) => UserIntent | undefined;
   /** Operator warning sink, for the cascade's policy override. */
   warn: (message: string) => void;
 }

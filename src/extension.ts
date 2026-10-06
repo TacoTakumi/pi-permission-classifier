@@ -29,6 +29,10 @@
  * (never cached at ready), and the selection applies the trust gate and the
  * byte caps. An older pi without a trust query counts as untrusted.
  *
+ * The user's own messages are read for each ask from the session manager of
+ * the ctx the latest `session_start` delivered (see `user-intent.ts`); no
+ * file is read, and `session_shutdown` drops the ctx.
+ *
  * Once the link registers, the footer status `zz-permission-classifier` names
  * the active judges (see `judge.ts`); it follows `model_select` and is
  * cleared at `session_shutdown`. No status is set when the link does not
@@ -100,6 +104,7 @@ import type { CompleteFn } from "./model-review";
 import { createNamedAuthorizers } from "./name-alias";
 import type { QuickJudgeRegistryLike } from "./quick-judge";
 import type { ModelRegistryLike } from "./reviewer";
+import { readUserIntent, type UserIntent } from "./user-intent";
 
 
 /** The footer status key naming the effective judge. pi sorts extension
@@ -223,6 +228,14 @@ export function createClassifierExtension(
       throw new Error("no session context to read the cwd from");
     }
     return session.cwd;
+  }
+
+  /**
+   * The user intent for one ask, read from the latest session_start ctx at
+   * the moment of the ask (never cached); none once the session shut down.
+   */
+  function getUserIntent(forwarded: boolean): UserIntent | undefined {
+    return readUserIntent(session, forwarded);
   }
 
   /** Read the launch flag; each item that does not apply is ignored with a warning. */
@@ -385,6 +398,7 @@ export function createClassifierExtension(
     // One link per session: its once-per-session warnings live in the closures.
     const judge = createJudgeLink({
       getConfig: effectiveConfig,
+      getUserIntent,
       warn,
       llm: {
         getSessionModel: () => sessionModel,
