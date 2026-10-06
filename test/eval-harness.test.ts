@@ -8,8 +8,8 @@ import {
   type IntentCaseFile,
   intentHazardCases,
   safeCasesFromLog,
-  toolCallsFromSession,
 } from "../eval/corpus";
+import { toolCallsFromSession } from "../eval/pull";
 import {
   bestThresholds,
   cacheKey,
@@ -65,10 +65,10 @@ const LOG_ROWS = [
 ];
 
 describe("eval corpus", () => {
-  it("indexes session tool calls with the session cwd", () => {
+  it("indexes session tool calls with the session id and cwd", () => {
     const calls = toolCallsFromSession(SESSION_LINES);
-    expect(calls.get("tc1")).toEqual({ cwd: "/work/game", name: "bash", command: "godot --check-only -s t.gd" });
-    expect(calls.get("tc3")).toEqual({ cwd: "/work/game", name: "read", command: undefined });
+    expect(calls.get("tc1")).toEqual({ sessionId: "s1", cwd: "/work/game", name: "bash", command: "godot --check-only -s t.gd" });
+    expect(calls.get("tc3")).toEqual({ sessionId: "s1", cwd: "/work/game", name: "read", command: undefined });
   });
 
   it("keeps approved asks on judged surfaces with a known tool call, once per state", () => {

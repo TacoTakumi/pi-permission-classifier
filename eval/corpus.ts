@@ -13,9 +13,7 @@ import { createReadStream, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-
-import { readUserIntent } from "../src/user-intent";
+import { type SessionToolCall, toolCallsFromSession } from "./pull";
 
 /**
  * Who approved a logged ask: the user, a judge link, or anything else (a
@@ -82,15 +80,6 @@ export interface IntentCaseFile {
   caseTiers: Record<string, Tier>;
   injection: PairedHazardCase[];
   forbidden: PairedHazardCase[];
-}
-
-/** A tool call as a session file records it. */
-export interface SessionToolCall {
-  cwd: string;
-  name: string;
-  command?: string;
-  /** The user text the runtime would send at this call; absent when none. */
-  userMessages?: string[];
 }
 
 /** The surfaces the quick judge never sees. */
@@ -195,15 +184,6 @@ export function hazardCases(hazards: readonly HazardCase[], cwd: string): EvalCa
   }));
 }
 
-/** A parsed session file line, as far as the corpus reads it. */
-interface SessionLine {
-  type?: unknown;
-  id?: unknown;
-  parentId?: unknown;
-  cwd?: unknown;
-  message?: { role?: unknown; content?: unknown };
-}
-
 /**
  * Pure: the hazard cases in every intent variant. Each hazard case runs with
  * no user text, with an unrelated task, and with a request naming its
@@ -239,84 +219,6 @@ export function intentHazardCases(
     }
   }
   return cases;
-}
-
-/**
- * Pure: the tool calls in one session file's lines, by tool call id, each
- * with the user text the runtime would send at that call. Entries form a
- * tree through parentId (an entry without one follows the line before it),
- * so each call reads only the user messages on its own branch.
- */
-export function toolCallsFromSession(lines: Iterable<string>): Map<string, SessionToolCall> {
-  const calls = new Map<string, SessionToolCall>();
-  let cwd = "";
-  // Per entry: the nearest user message on its branch, itself included.
-  const nearestUser = new Map<string, string | null>();
-  // Per user message: the entry and the user message before it on the branch.
-  const users = new Map<string, { entry: SessionEntry; previous: string | null }>();
-  // Per nearest user message: the user text, shared by every call below it.
-  const userText = new Map<string | null, string[] | undefined>();
-  let previousId: string | null = null;
-
-  const userTextAt = (nearest: string | null): string[] | undefined => {
-    if (!userText.has(nearest)) {
-      const branch: SessionEntry[] = [];
-      for (let at = nearest; at !== null; at = users.get(at)?.previous ?? null) {
-        const user = users.get(at);
-        if (user === undefined) break;
-        branch.push(user.entry);
-      }
-      branch.reverse();
-      const intent = readUserIntent(
-        { sessionManager: { getBranch: () => branch }, hasPendingMessages: () => false },
-        false,
-      );
-      userText.set(nearest, intent === undefined ? undefined : [...intent.messages]);
-    }
-    return userText.get(nearest);
-  };
-
-  for (const line of lines) {
-    if (line.trim() === "") continue;
-    let entry: SessionLine;
-    try {
-      entry = JSON.parse(line) as SessionLine;
-    } catch {
-      continue;
-    }
-    if (entry.type === "session") {
-      if (cwd === "") cwd = typeof entry.cwd === "string" ? entry.cwd : "";
-      continue;
-    }
-    const id = typeof entry.id === "string" ? entry.id : undefined;
-    const parentId =
-      entry.parentId === undefined ? previousId : typeof entry.parentId === "string" ? entry.parentId : null;
-    let nearest = parentId === null ? null : (nearestUser.get(parentId) ?? null);
-    const role = entry.type === "message" ? entry.message?.role : undefined;
-    if (role === "user" && id !== undefined) {
-      users.set(id, { entry: entry as SessionEntry, previous: nearest });
-      nearest = id;
-    }
-    if (id !== undefined) {
-      nearestUser.set(id, nearest);
-      previousId = id;
-    }
-
-    const content = entry.message?.content;
-    if (role !== "assistant" || !Array.isArray(content)) continue;
-    for (const part of content as Record<string, unknown>[]) {
-      if (part?.type !== "toolCall" || typeof part.id !== "string") continue;
-      const args = part.arguments as Record<string, unknown> | undefined;
-      const paired = userTextAt(nearest);
-      calls.set(part.id, {
-        cwd,
-        name: typeof part.name === "string" ? part.name : "",
-        command: typeof args?.command === "string" ? args.command : undefined,
-        ...(paired === undefined ? {} : { userMessages: paired }),
-      });
-    }
-  }
-  return calls;
 }
 
 /** Every session file under the sessions dir, recursively. */
