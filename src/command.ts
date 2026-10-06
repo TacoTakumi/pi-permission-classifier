@@ -250,8 +250,8 @@ const MODE_ITEMS: readonly { mode: Mode; description: string }[] = [
 /** The picker's verdicts step, in schema order. */
 const VERDICTS_ITEMS: readonly { value: Verdicts; description: string }[] = [
   { value: "allow-deny-defer", description: "Allow, deny, or send the ask to you when unsure." },
-  { value: "allow-defer", description: "Never denies: a deny or an unsure answer goes to you." },
-  { value: "allow-deny", description: "Never asks you: an unsure answer denies." },
+  { value: "allow-defer", description: "A model deny or an unsure answer goes to you." },
+  { value: "allow-deny", description: "An unsure answer denies instead of asking you." },
 ];
 
 /** The picker's onError step, in schema order. */

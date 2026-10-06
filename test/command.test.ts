@@ -800,6 +800,20 @@ describe("two-step picker in the TUI", () => {
     },
   );
 
+  it("verdicts descriptions claim no more than the verdicts do, whatever onError is", async () => {
+    const { deps } = makeDeps(EMPTY_CONFIG);
+    const pending = createPermissionModelCommand(deps).handler("", makeCtx("tui"));
+    (await stepRequest(deps, 0)).onSelect("llm");
+    (await stepRequest(deps, 1)).onSelect("chat-model");
+    const step = await stepRequest(deps, 2);
+    const description = (value: string) =>
+      step.items.find((item) => item.value === value)?.description;
+    expect(description("allow-deny")).toBe("An unsure answer denies instead of asking you.");
+    expect(description("allow-defer")).toBe("A model deny or an unsure answer goes to you.");
+    step.onCancel();
+    await pending;
+  });
+
   it("warns and writes nothing when no classifier model is available", async () => {
     const { deps } = makeDeps(CONFIG_QN);
     const ctx = makeCtx("tui");
