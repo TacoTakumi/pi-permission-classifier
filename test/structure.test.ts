@@ -1,7 +1,9 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { findUnscrubbed } from "../eval/scrub";
 
 import { classifierConfigSchema } from "#src/config-schema";
 import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "#src/prompt";
@@ -236,6 +238,26 @@ describe("quick judge eval", () => {
         expect(email, testCase.id).toMatch(/@example\.(com|org)$/);
       }
       expect(text, testCase.id).not.toMatch(/\/home\/[a-z]/);
+    }
+  });
+
+  it("holds no raw machine detail or project name in the judged ask store", () => {
+    // The checker reports what a scrub would still change; a raw line fails.
+    expect(findUnscrubbed("cd /home/user/x").map((hit) => hit.rule)).toEqual(["home-dir"]);
+    const lines = readFileSync(join(ROOT, "data", "asks.jsonl"), "utf-8").split("\n");
+    for (const [index, line] of lines.entries()) {
+      expect(findUnscrubbed(line), `data/asks.jsonl line ${index + 1}`).toEqual([]);
+    }
+    expect(readFileSync(join(ROOT, ".gitignore"), "utf-8").split("\n")).toContain("data/project-aliases.json");
+    // The alias table exists on the machine that pulls; its names must be gone.
+    const aliasPath = join(ROOT, "data", "project-aliases.json");
+    if (existsSync(aliasPath)) {
+      const names = Object.keys(JSON.parse(readFileSync(aliasPath, "utf-8")) as Record<string, string>);
+      const store = lines.join("\n");
+      for (const name of names) {
+        const pattern = new RegExp(String.raw`(?<![A-Za-z0-9_])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`);
+        expect(store, name).not.toMatch(pattern);
+      }
     }
   });
 

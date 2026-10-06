@@ -40,6 +40,15 @@ this project adheres to
   question sets against Jev on a hazard set and on the asks your review log
   shows as approved, and reports the allow rates per threshold set. Its
   corpus and report stay under the gitignored `drafts/eval/`.
+- `data/asks.jsonl`, a committed store of every permission ask the chain
+  judged: the ask, each judge decision on it, how it ended and who decided,
+  and the user text. `npm run data:pull` appends the asks not yet stored
+  from the review log and the session files, scrubbed: home directory,
+  login name, email addresses, git identity flags, LAN addresses, mounts
+  and secret values become placeholders, and each project directory gets a
+  stable alias from the gitignored `data/project-aliases.json`. A structure
+  test scans the file with the same rules. The quick judge eval builds its
+  safe cases from the store.
 - `verdicts` (`allow-deny-defer`, `allow-defer`, `allow-deny`) and
   `onError` (`defer`, `deny`) for each judge, enforced in code. `onError`
   deny turns a failure into a deny with a fixed reason that names the

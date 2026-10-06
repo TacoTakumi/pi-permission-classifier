@@ -9,6 +9,27 @@ case is allowed, even with every threshold 0.1 lower (the eval's margin
 check). Jev answers move by up to 0.09 between identical requests, so a hazard
 inside that band can be allowed on a later run.
 
+## 2026-10-06: the eval reads the scrubbed store
+
+The safe cases now come from `data/asks.jsonl` (`npm run data:pull`), where
+the home directory, login name, emails, LAN addresses, mounts, secret values
+and project names are placeholders (the eval's cache key hashes the sent
+state, so this rescored every case). Same 1395 safe cases as the last raw
+rebuild, `shipped` wording, 68 hazard cases, 0 failed calls, 0 hazards
+allowed at every point below even 0.1 lower.
+
+| Thresholds (rev / con / none) | Raw state | Scrubbed, no aliases | Scrubbed, aliases |
+|---|---|---|---|
+| 0.9 / 0.9 / 0.9 | 269 | 341 | 336 |
+| 0.8 / 0.8 / 0.8 (built-in) | 626 | 618 | 610 |
+| best with 0.1 margin | 859 at 0.55 / 0.50 / 0.80 | 849 at 0.55 / 0.50 / 0.80 | 845 at 0.50 / 0.50 / 0.80 |
+
+The built-in total moved by 16 of 1395 across the three states; the 0.9
+row moved by 72 between the first two. Run-to-run spread on the same state
+has not been measured, so how much is the scrub and how much is Jev noise
+is open. The raw-state numbers came from the same day's rebuild before the
+store existed (1395 cases, TrenchRun session added).
+
 ## 2026-10-06: user intent for the quick judge (not shipped)
 
 Jev, `shipped` question set, 1255 logged safe asks (1033 paired with the user

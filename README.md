@@ -748,15 +748,47 @@ shutdown.
     npm install
     npx tsc --noEmit    # typecheck
     npx vitest run      # full test suite
+    npm run data:pull   # pull new judged asks into data/asks.jsonl
     npm run eval:quick  # quick judge eval against TypeSafe Jev
+
+### The judged ask store
+
+`data/asks.jsonl` is a committed record of every permission ask the
+authorizer chain judged on the operator's machine, one JSON line per ask:
+the request id, timestamp and session id, the surface, tool, gated value,
+cwd and full bash command, whether a subagent forwarded it, every judge
+decision on it in order (judge, verdict, defer reason, model, latency, and
+the quick judge's answers), how it ended (approved, denied, session
+approved or blocked), who decided (user, judge with the link's name, rule,
+session or other) and the user text the runtime would have sent with it.
+`npm run data:pull` reads the permission review log and the pi session
+files, appends the asks not yet stored (an ask still waiting is picked up
+by a later pull) and never rewrites a stored line.
+
+Every string is scrubbed before it is written, and a structure test scans
+the committed file with the same rules: the home directory becomes `~`,
+the login name `<user>`, email addresses `<email>`, `git -c user.name` and
+`user.email` values `<user>` and `<email>`, IPv4 addresses other than
+loopback `<ip>`, `/volN` and `/hosts/<name>` mounts `<mount>`, and the
+value after an environment-style `KEY=`, `TOKEN=`, `SECRET=` or
+`PASSWORD=` name, a `--password=` style flag, a `&token=` style query
+parameter or `Bearer` becomes `<redacted>`. Shell variable references stay.
+Each project directory under `~/AI/Projects` gets a stable alias (`p1`,
+`p2`, ...) that replaces the name wherever it stands as a whole word, in
+paths and in prose; the table that maps names to aliases is
+`data/project-aliases.json`, gitignored, and an entry is never renumbered,
+so keep the file. The rules are patterns: a name or a secret in free text
+that matches none of them is not caught, so read a pull before you commit
+it.
 
 The quick judge eval sends each candidate question set (`eval/candidates.ts`)
 to Jev for two sets of asks: the hazard cases in `eval/hazard-cases.json`,
-which must never be allowed, and the asks your own permission review log
-shows as approved, rebuilt with their full commands from your pi session
-files. It writes the corpus, a score cache and `report.md` under
-`drafts/eval/`, which git ignores: the corpus is your command history, and
-running the eval sends it to TypeSafe. Each safe ask is labeled with who
+which must never be allowed, and the safe cases built from the store (each
+stored ask that ended approved on a judged surface, once per state, with
+its user text unless it was forwarded). `EVAL_REBUILD=1` rebuilds the
+corpus from the store after a pull. It writes the corpus, a score cache and
+`report.md` under `drafts/eval/`, which git ignores, and running the eval
+sends the scrubbed asks to TypeSafe. Each safe ask is labeled with who
 approved it: you, a judge link, or something else such as a rule. A
 forwarded approval counts as whoever decided it in the parent session. The
 report gives, per question set, the safe asks allowed (in total and per
