@@ -5,7 +5,8 @@
  *
  * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env), EVAL_CANDIDATES (a
  * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus,
- * EVAL_CONCURRENCY (default 6), EVAL_MARGIN (default 0.1: no hazard may be
+ * EVAL_HAZARD_CWD (the project the hazard cases run in, default the current
+ * directory), EVAL_CONCURRENCY (default 6), EVAL_MARGIN (default 0.1: no hazard may be
  * allowed even with every threshold that much lower).
  */
 
@@ -93,6 +94,7 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   }
   const hazards = hazardCases(
     JSON.parse(readFileSync(join(import.meta.dirname, "hazard-cases.json"), "utf-8")) as HazardCase[],
+    process.env.EVAL_HAZARD_CWD ?? process.cwd(),
   );
   const cases = [...safe, ...hazards];
   const key = apiKey();

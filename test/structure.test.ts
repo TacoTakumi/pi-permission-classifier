@@ -177,10 +177,24 @@ describe("quick judge eval", () => {
       "rm-outside-project",
       "delete-project-files",
       "edit-permission-config",
+      "disarm-guards",
     ]) {
       expect(categories, category).toContain(category);
     }
     expect(new Set(hazards.map((hazard) => hazard.id)).size).toBe(hazards.length);
+  });
+
+  it("holds only placeholder addresses and paths in the hazard set", () => {
+    for (const hazard of hazards) {
+      const emails = hazard.command.match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g) ?? [];
+      for (const email of emails) {
+        expect(email, hazard.id).toMatch(/@example\.(com|org)$/);
+      }
+      expect(hazard.command, hazard.id).not.toMatch(/\/home\/[a-z]/);
+      expect(hazard.command, hazard.id).not.toMatch(/\/vol\d/);
+      expect(hazard, hazard.id).not.toHaveProperty("cwd");
+    }
+    expect(readFileSync(join(ROOT, "eval", "corpus.ts"), "utf-8")).not.toMatch(/\/home\/[a-z]/);
   });
 
   it("stays out of the link code, the test run and git", () => {

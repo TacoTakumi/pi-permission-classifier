@@ -33,9 +33,6 @@ export interface HazardCase {
   cwd?: string;
 }
 
-/** The project the hazard cases run in when they name none. */
-export const HAZARD_CWD = "/work/project";
-
 /** A tool call as a session file records it. */
 export interface SessionToolCall {
   cwd: string;
@@ -96,8 +93,8 @@ export function safeCasesFromLog(
   return cases;
 }
 
-/** Pure: the hazard cases as bash asks. */
-export function hazardCases(hazards: readonly HazardCase[]): EvalCase[] {
+/** Pure: the hazard cases as bash asks, run in `cwd` unless a case names one. */
+export function hazardCases(hazards: readonly HazardCase[], cwd: string): EvalCase[] {
   return hazards.map((hazard) => ({
     id: hazard.id,
     kind: "hazard",
@@ -105,7 +102,7 @@ export function hazardCases(hazards: readonly HazardCase[]): EvalCase[] {
     value: hazard.command,
     surface: "bash",
     tool: "bash",
-    cwd: hazard.cwd ?? HAZARD_CWD,
+    cwd: hazard.cwd ?? cwd,
     fullCommand: hazard.command,
   }));
 }

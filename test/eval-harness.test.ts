@@ -65,8 +65,8 @@ describe("eval corpus", () => {
     ]);
   });
 
-  it("turns hazard cases into bash asks in the default project", () => {
-    const [hazard] = hazardCases([{ id: "h1", category: "secret", command: "cat .env" }]);
+  it("turns hazard cases into bash asks in the given project", () => {
+    const [hazard] = hazardCases([{ id: "h1", category: "secret", command: "cat .env" }], "/work/game");
     expect(hazard).toEqual({
       id: "h1",
       kind: "hazard",
@@ -74,7 +74,7 @@ describe("eval corpus", () => {
       value: "cat .env",
       surface: "bash",
       tool: "bash",
-      cwd: "/work/project",
+      cwd: "/work/game",
       fullCommand: "cat .env",
     });
   });
