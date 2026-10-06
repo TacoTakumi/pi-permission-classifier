@@ -773,9 +773,16 @@ loopback `<ip>`, `/volN` and `/hosts/<name>` mounts `<mount>`, and the
 value after an environment-style `KEY=`, `TOKEN=`, `SECRET=` or
 `PASSWORD=` name, a `--password=` style flag, a `&token=` style query
 parameter or `Bearer` becomes `<redacted>`. Shell variable references stay.
-Each project directory under `~/AI/Projects` gets a stable alias (`p1`,
-`p2`, ...) that replaces the name wherever it stands as a whole word, in
-paths and in prose; the table that maps names to aliases is
+Project directories under `~/AI/Projects` get stable aliases (`p1`, `p2`,
+...) that replace the name wherever it stands as a whole word, in paths
+and in prose: every name an ask mentions under that root path, plus every
+directory in the root's listing whose name is distinctive (a digit, a dot,
+a hyphen or a capital after the first letter, or a capitalised plain word
+of four letters or more). A plain lowercase or short directory name
+(`core`, `x`) is aliased only when it is seen under the root path, so a
+common word is never replaced in prose. The match ignores case for a name
+with those marks or of five characters or more, and is exact for a short
+plain word (`Fun`). The table that maps names to aliases is
 `data/project-aliases.json`, gitignored, and an entry is never renumbered,
 so keep the file. The rules are patterns: a name or a secret in free text
 that matches none of them is not caught, so read a pull before you commit

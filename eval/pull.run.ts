@@ -21,6 +21,7 @@ import {
   projectNames,
   rawAsksFromLog,
   scrubAsks,
+  seedProjectNames,
   type SessionToolCall,
   toolCallsFromSession,
 } from "./pull";
@@ -29,7 +30,7 @@ const AGENT_DIR = join(homedir(), ".pi", "agent");
 const LOG_PATH = join(AGENT_DIR, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl");
 const SESSIONS_DIR = join(AGENT_DIR, "sessions");
 const STORE_PATH = join(import.meta.dirname, "..", "data", "asks.jsonl");
-/** The projects root: each directory name under it gets a stable alias. */
+/** The projects root: its directory names get stable aliases (see seedProjectNames). */
 const PROJECTS_ROOT = join(homedir(), "AI", "Projects");
 /** The alias table, gitignored: it holds the real project names. */
 const ALIASES_PATH = join(import.meta.dirname, "..", "data", "project-aliases.json");
@@ -69,9 +70,12 @@ it("pulls the judged asks into the store", { timeout: 0 }, async () => {
   }
   const raw = rawAsksFromLog(rows, toolCalls);
   mkdirSync(dirname(STORE_PATH), { recursive: true });
+  const directories = existsSync(PROJECTS_ROOT)
+    ? readdirSync(PROJECTS_ROOT).filter((name) => statSync(join(PROJECTS_ROOT, name)).isDirectory())
+    : [];
   const aliases = assignProjectAliases(
     existsSync(ALIASES_PATH) ? (JSON.parse(readFileSync(ALIASES_PATH, "utf-8")) as Record<string, string>) : {},
-    projectNames(raw, PROJECTS_ROOT, homedir()),
+    [...projectNames(raw, PROJECTS_ROOT, homedir()), ...seedProjectNames(directories)],
   );
   writeFileSync(ALIASES_PATH, `${JSON.stringify(aliases, null, 2)}\n`);
   const asks = scrubAsks(raw, { homeDir: homedir(), userName: userInfo().username, projects: aliases });

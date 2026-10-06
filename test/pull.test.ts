@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assignProjectAliases,
   mergeStore,
+  seedProjectNames,
   projectNames,
   rawAsksFromLog,
   type StoredAsk,
@@ -255,10 +256,17 @@ describe("project aliases", () => {
     expect(projectNames(asks, "/home/you/AI/Projects", "/home/you")).toEqual(["game", "other", "third"]);
   });
 
+  it("seeds the distinctive directory names from a root listing and drops common or short ones", () => {
+    const listing = ["LLMaster", "AgentSquire", "core", "x", "MCP", "Health", "pi-env", "h3-reels", "specflo", "Fun", "claude-env.20260615", "kilo"];
+    expect(seedProjectNames(listing)).toEqual(["LLMaster", "AgentSquire", "Health", "pi-env", "h3-reels", "claude-env.20260615"]);
+  });
+
   it("keeps given aliases and numbers new names on from them", () => {
     const first = assignProjectAliases({}, ["game", "other"]);
     expect(first).toEqual({ game: "p1", other: "p2" });
     expect(assignProjectAliases(first, ["other", "third", "game"])).toEqual({ game: "p1", other: "p2", third: "p3" });
+    // A gap in the table (an entry removed by hand) never reuses a number.
+    expect(assignProjectAliases({ game: "p1", third: "p3" }, ["fourth"])).toEqual({ game: "p1", third: "p3", fourth: "p4" });
   });
 
   it("replaces the project name in the stored ask through the scrub", () => {

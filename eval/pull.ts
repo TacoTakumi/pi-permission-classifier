@@ -326,16 +326,41 @@ export function projectNames(asks: readonly StoredAsk[], projectsRoot: string, h
 }
 
 /**
+ * Pure: the names from a listing of the projects root that are distinctive
+ * enough to alias wherever they stand as a word: a digit, a dot, a hyphen
+ * (pi-env, h3-reels), or a capital letter in a name of four characters or
+ * more (LLMaster, Health). A plain lowercase name (core, kilo) or a short
+ * one (x, MCP, Fun) is left out: aliasing it would hit common words and
+ * flags. Such a name still gets an alias when an ask
+ * mentions it under the root path (see `projectNames`).
+ */
+export function seedProjectNames(listing: Iterable<string>): string[] {
+  const names: string[] = [];
+  for (const name of listing) {
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) continue;
+    const distinctive = /[0-9.-]/.test(name) || (name.length >= 4 && /[A-Z]/.test(name));
+    if (distinctive) names.push(name);
+  }
+  return names;
+}
+
+/**
  * Pure: `existing` aliases plus a new one (p<n>, n counting on from the
- * aliases already given) for each name not yet aliased, in the order the
- * names come. An alias once given never changes.
+ * highest alias already given) for each name not yet aliased, in the
+ * order the names come. An alias once given never changes.
  */
 export function assignProjectAliases(
   existing: Readonly<Record<string, string>>,
   names: Iterable<string>,
 ): Record<string, string> {
   const aliases: Record<string, string> = { ...existing };
-  let next = Object.keys(existing).length + 1;
+  // Count on from the highest alias given, so a removed entry never frees
+  // a number that is still in use.
+  let next = 1;
+  for (const alias of Object.values(existing)) {
+    const number = Number(/^p(\d+)$/.exec(alias)?.[1]);
+    if (number >= next) next = number + 1;
+  }
   for (const name of names) {
     if (name in aliases) continue;
     aliases[name] = `p${next}`;
