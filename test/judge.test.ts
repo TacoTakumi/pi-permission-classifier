@@ -330,7 +330,6 @@ describe("applySessionOverride", () => {
       ...quick,
       verdicts: "allow-defer",
       onError: "defer",
-      allowThreshold: 0.9,
       denyThreshold: 0.9,
       guidance: true,
       timeoutMs: 5000,

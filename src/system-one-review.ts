@@ -121,9 +121,22 @@ export function buildSystemOneContext(inputs: SystemOneContextInputs): Classifie
   return { state, questions: SYSTEM_ONE_QUESTIONS };
 }
 
-/** The probabilities the verdict mapping compares against. */
+/**
+ * The built-in allow threshold for each question, used when the config sets
+ * no allowThreshold. An allow needs every answer at or above its own value.
+ */
+export const ALLOW_THRESHOLDS = {
+  reversible: 0.9,
+  contained: 0.9,
+  none: 0.9,
+} as const;
+
+/**
+ * The probabilities the verdict mapping compares against. `allowThreshold`,
+ * when set, replaces every per-question allow threshold.
+ */
 export interface SystemOneThresholds {
-  allowThreshold: number;
+  allowThreshold?: number;
   denyThreshold: number;
 }
 
@@ -141,7 +154,9 @@ function boolProbability(answer: ClassifierAnswer | undefined): number | undefin
  * Map a classify result to a link outcome. An error reply is call-failed and
  * an aborted one is timeout. A deny needs one non-none hazard at or above
  * the deny threshold and wins over an allow. An allow needs reversible,
- * contained and hazard none all at or above the allow threshold. Anything
+ * contained and hazard none each at or above its allow threshold: the
+ * built-in {@link ALLOW_THRESHOLDS}, or `allowThreshold` for all three when it
+ * is set. Anything
  * else, including a missing or malformed answer, is uncertain.
  */
 export function mapSystemOneResult(
@@ -172,11 +187,12 @@ export function mapSystemOneResult(
   }
 
   const none = hazard.probabilities.none;
+  const allow = thresholds.allowThreshold;
   if (
     isProbability(none) &&
-    reversible >= thresholds.allowThreshold &&
-    contained >= thresholds.allowThreshold &&
-    none >= thresholds.allowThreshold
+    reversible >= (allow ?? ALLOW_THRESHOLDS.reversible) &&
+    contained >= (allow ?? ALLOW_THRESHOLDS.contained) &&
+    none >= (allow ?? ALLOW_THRESHOLDS.none)
   ) {
     return { kind: "allow" };
   }

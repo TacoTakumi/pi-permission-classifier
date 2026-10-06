@@ -63,7 +63,9 @@ export const quickJudgeConfigSchema = z
     model: z.string().min(1).optional(),
     verdicts: verdictsSchema.default("allow-defer"),
     onError: onErrorSchema.default("defer"),
-    allowThreshold: thresholdSchema,
+    // Absent by default: the quick judge then uses its built-in threshold per
+    // question. A value set here applies to all three questions.
+    allowThreshold: z.number().min(0).max(1).optional(),
     denyThreshold: thresholdSchema,
     guidance: z.boolean().default(true),
     timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),

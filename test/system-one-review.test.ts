@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { FullCommandContext } from "#src/context";
 import type { IncludedGuidance } from "#src/guidance";
 import {
+  ALLOW_THRESHOLDS,
   buildSystemOneContext,
   HAZARD_OPTIONS,
   mapSystemOneResult,
@@ -210,6 +211,47 @@ function answers(
     hazard: hazard(hazards),
   };
 }
+
+describe("per-question allow thresholds", () => {
+  const BUILT_IN = { denyThreshold: 0.9 };
+  const { reversible, contained, none } = ALLOW_THRESHOLDS;
+
+  it("allows with no allowThreshold when each answer reaches its built-in threshold", () => {
+    expect(
+      mapSystemOneResult(result(answers(reversible, contained, { none })), BUILT_IN),
+    ).toEqual({ kind: "allow" });
+  });
+
+  it.each([
+    ["reversible", [reversible - 0.01, contained, none]],
+    ["contained", [reversible, contained - 0.01, none]],
+    ["none", [reversible, contained, none - 0.01]],
+  ] as const)("defers with no allowThreshold when %s is just below its threshold", (_q, [r, c, n]) => {
+    expect(mapSystemOneResult(result(answers(r, c, { none: n })), BUILT_IN)).toEqual({
+      kind: "uncertain",
+    });
+  });
+
+  it.each([
+    [0.89, 0.95, 0.95],
+    [0.95, 0.89, 0.95],
+    [0.95, 0.95, 0.89],
+  ])("an explicit allowThreshold of 0.9 applies to all three (%p, %p, %p)", (r, c, n) => {
+    expect(
+      mapSystemOneResult(result(answers(r, c, { none: n })), {
+        allowThreshold: 0.9,
+        denyThreshold: 0.9,
+      }),
+    ).toEqual({ kind: "uncertain" });
+  });
+
+  it("keeps every built-in threshold a probability", () => {
+    for (const value of Object.values(ALLOW_THRESHOLDS)) {
+      expect(value).toBeGreaterThan(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+});
 
 describe("mapSystemOneResult", () => {
   it("allows when all three clear the allow threshold", () => {
