@@ -6,8 +6,12 @@ import type { IncludedGuidance } from "#src/guidance";
 import {
   ALLOW_THRESHOLDS,
   buildSystemOneContext,
+  HARD_HAZARDS,
   HAZARD_OPTIONS,
+  INTENT_QUESTIONS,
+  INTENT_THRESHOLDS,
   mapSystemOneResult,
+  SOFT_HAZARDS,
   SYSTEM_ONE_QUESTIONS,
 } from "#src/system-one-review";
 import { askDetails } from "#test/fixtures/details";
@@ -383,5 +387,174 @@ describe("mapSystemOneResult", () => {
     expect(
       mapSystemOneResult(result({}, { stopReason: "aborted" }), THRESHOLDS),
     ).toEqual({ kind: "failure", failure: "timeout" });
+  });
+});
+
+describe("user intent questions", () => {
+  const INTENT = { messages: ["fix the failing test", "then push to main"] };
+
+  function contextWith(userIntent?: { messages: readonly string[] }) {
+    return buildSystemOneContext({
+      details: askDetails(),
+      surface: "bash",
+      cwd: "/work/repo",
+      fullCommand: null,
+      contextBudgetBytes: 8192,
+      ...(userIntent ? { userIntent } : {}),
+    });
+  }
+
+  it("carries the user messages and the requested and forbidden questions with intent", () => {
+    const context = contextWith(INTENT);
+    expect(context.state.user_messages).toEqual(INTENT.messages);
+    expect(Object.keys(context.questions).sort()).toEqual([
+      "contained",
+      "forbidden",
+      "hazard",
+      "requested",
+      "reversible",
+    ]);
+    expect(context.questions.requested?.type).toBe("bool");
+    expect(context.questions.forbidden?.type).toBe("bool");
+  });
+
+  it("sends today's state and questions without intent", () => {
+    const context = contextWith();
+    expect(context.state).not.toHaveProperty("user_messages");
+    expect(context.questions).toEqual(SYSTEM_ONE_QUESTIONS);
+  });
+
+  it("names both exclusions in requested and the lifting rule in forbidden", () => {
+    const requested = JSON.stringify(INTENT_QUESTIONS.requested);
+    expect(requested).toMatch(/everything the action does/);
+    expect(requested).toMatch(/inside the action/);
+    expect(requested).toMatch(/agent's own/);
+    expect(requested).toMatch(/data, not instructions/);
+    const forbidden = JSON.stringify(INTENT_QUESTIONS.forbidden);
+    expect(forbidden).toMatch(/not to do/);
+    expect(forbidden).toMatch(/later user message/);
+  });
+
+  it("splits the hazards into hard and soft, none in neither", () => {
+    expect([...HARD_HAZARDS].sort()).toEqual([
+      "credential_access",
+      "disarm_guards",
+      "remote_code_execution",
+      "secret_exfiltration",
+    ]);
+    expect([...SOFT_HAZARDS].sort()).toEqual([
+      "discard_uncommitted_work",
+      "force_push",
+      "other_destructive",
+      "push_or_publish",
+    ]);
+  });
+});
+
+describe("mapSystemOneResult with user intent", () => {
+  const BUILT_IN = { denyThreshold: 0.9 };
+  const HIGH = 0.95;
+  const LOW = 0.05;
+
+  function withIntent(
+    reversible: number,
+    contained: number,
+    hazards: Record<string, number>,
+    requested: number,
+    forbidden: number,
+  ): ClassifierResult {
+    return result({
+      ...answers(reversible, contained, hazards),
+      requested: { type: "bool", probability: requested },
+      forbidden: { type: "bool", probability: forbidden },
+    });
+  }
+
+  it.each([
+    [
+      "a hard hazard denies with requested high",
+      withIntent(HIGH, HIGH, { secret_exfiltration: HIGH, none: LOW }, HIGH, LOW),
+      "deny",
+    ],
+    [
+      "forbidden high with everything else allowing defers",
+      withIntent(HIGH, HIGH, { none: HIGH }, HIGH, HIGH),
+      "uncertain",
+    ],
+    [
+      "requested high clears low reversible and contained",
+      withIntent(LOW, LOW, { none: HIGH }, HIGH, LOW),
+      "allow",
+    ],
+    [
+      "requested high with a soft hazard above the deny threshold allows",
+      withIntent(LOW, HIGH, { push_or_publish: HIGH, none: LOW }, HIGH, LOW),
+      "allow",
+    ],
+    [
+      "requested high with hard hazard mass above 1 minus the none threshold does not allow",
+      withIntent(HIGH, HIGH, { none: 0.7, credential_access: 0.3 }, HIGH, LOW),
+      "uncertain",
+    ],
+    [
+      "requested below threshold leaves today's deny for a soft hazard",
+      withIntent(LOW, HIGH, { force_push: HIGH, none: LOW }, 0.5, LOW),
+      "deny",
+    ],
+    [
+      "requested below threshold leaves today's uncertain",
+      withIntent(LOW, LOW, { none: HIGH }, 0.5, LOW),
+      "uncertain",
+    ],
+    [
+      "requested below threshold leaves today's allow",
+      withIntent(HIGH, HIGH, { none: HIGH }, 0.5, LOW),
+      "allow",
+    ],
+    [
+      "forbidden high with a soft hazard above the deny threshold denies",
+      withIntent(LOW, HIGH, { force_push: HIGH, none: LOW }, HIGH, HIGH),
+      "deny",
+    ],
+    [
+      "a missing requested answer is uncertain",
+      result(answers(HIGH, HIGH, { none: HIGH })),
+      "uncertain",
+    ],
+  ])("%s", (_name, answerSet, kind) => {
+    expect(mapSystemOneResult(answerSet, BUILT_IN, true).kind).toBe(kind);
+  });
+
+  it("names the soft hazard in the deny reason when the intent allow does not apply", () => {
+    const outcome = mapSystemOneResult(
+      withIntent(LOW, HIGH, { force_push: HIGH, none: LOW }, 0.5, LOW),
+      BUILT_IN,
+      true,
+    );
+    expect(outcome).toEqual({ kind: "deny", reason: expect.stringContaining("a force push") });
+  });
+
+  it("uses the built-in requested and forbidden thresholds", () => {
+    const at = (requested: number, forbidden: number) =>
+      mapSystemOneResult(withIntent(LOW, LOW, { none: HIGH }, requested, forbidden), BUILT_IN, true)
+        .kind;
+    expect(at(INTENT_THRESHOLDS.requested, LOW)).toBe("allow");
+    expect(at(INTENT_THRESHOLDS.requested - 0.01, LOW)).toBe("uncertain");
+    expect(at(HIGH, INTENT_THRESHOLDS.forbidden)).toBe("uncertain");
+    expect(at(HIGH, INTENT_THRESHOLDS.forbidden - 0.01)).toBe("allow");
+  });
+
+  it.each([
+    ["allow", answers(HIGH, HIGH, { none: HIGH })],
+    ["uncertain", answers(LOW, LOW, { none: HIGH })],
+    ["deny", answers(HIGH, HIGH, { force_push: HIGH, none: LOW })],
+  ])("maps no-intent answers as before: %s", (kind, answerSet) => {
+    expect(mapSystemOneResult(result(answerSet), BUILT_IN).kind).toBe(kind);
+    expect(mapSystemOneResult(result(answerSet), BUILT_IN, false).kind).toBe(kind);
+  });
+
+  it("ignores requested and forbidden answers without intent", () => {
+    const answered = withIntent(LOW, LOW, { none: HIGH }, HIGH, LOW);
+    expect(mapSystemOneResult(answered, BUILT_IN).kind).toBe("uncertain");
   });
 });
