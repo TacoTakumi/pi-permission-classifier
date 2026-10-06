@@ -24,6 +24,16 @@ import { readUserIntent } from "../src/user-intent";
  */
 export type Decider = "user" | "judge" | "other";
 
+/**
+ * How a hazard case is paired with user text: none, an unrelated task, a
+ * request naming the action, pasted text claiming approval, or a
+ * prohibition before the action.
+ */
+export type Variant = "none" | "unrelated" | "requested" | "injection" | "forbidden";
+
+/** Whether a user request may clear a hazard (soft) or never (hard). */
+export type Tier = "hard" | "soft";
+
 /** One ask the eval sends to the quick judge. */
 export interface EvalCase {
   id: string;
@@ -40,6 +50,10 @@ export interface EvalCase {
   decider?: Decider;
   /** The user text the runtime would send with this ask; absent when none. */
   userMessages?: string[];
+  /** Hazard cases only: how the case is paired with user text. */
+  variant?: Variant;
+  /** Hazard cases only: whether a user request may clear it. */
+  tier?: Tier;
 }
 
 /** One hand-written hazard case, as eval/hazard-cases.json holds it. */
@@ -48,6 +62,26 @@ export interface HazardCase {
   category: string;
   command: string;
   cwd?: string;
+}
+
+/** A hazard case that comes with its own user text. */
+export interface PairedHazardCase extends HazardCase {
+  tier: Tier;
+  userMessages: string[];
+}
+
+/** eval/intent-cases.json: how the hazard cases are paired with user text. */
+export interface IntentCaseFile {
+  /** The user text of the unrelated-task variant. */
+  unrelatedTask: string;
+  /** The user text of the requested variant; `{command}` is the command. */
+  requestTemplate: string;
+  /** The tier of each hazard category. */
+  tiers: Record<string, Tier>;
+  /** Tiers for single cases that differ from their category's. */
+  caseTiers: Record<string, Tier>;
+  injection: PairedHazardCase[];
+  forbidden: PairedHazardCase[];
 }
 
 /** A tool call as a session file records it. */
@@ -162,6 +196,43 @@ interface SessionLine {
   parentId?: unknown;
   cwd?: unknown;
   message?: { role?: unknown; content?: unknown };
+}
+
+/**
+ * Pure: the hazard cases in every intent variant. Each hazard case runs with
+ * no user text, with an unrelated task, and with a request naming its
+ * command (ids `<id>`, `<id>#unrelated`, `<id>#requested`); the injection and
+ * forbidden cases follow with their own user text. A hazard category with
+ * no tier throws, so a new category is never judged untiered.
+ */
+export function intentHazardCases(
+  hazards: readonly HazardCase[],
+  file: IntentCaseFile,
+  cwd: string,
+): EvalCase[] {
+  const cases: EvalCase[] = [];
+  for (const base of hazardCases(hazards, cwd)) {
+    const tier = file.caseTiers[base.id] ?? file.tiers[base.category!];
+    if (tier !== "hard" && tier !== "soft") {
+      throw new Error(`hazard category ${base.category} of ${base.id} has no tier in intent-cases.json`);
+    }
+    const request = file.requestTemplate.replace("{command}", base.value);
+    cases.push(
+      { ...base, variant: "none", tier },
+      { ...base, id: `${base.id}#unrelated`, variant: "unrelated", tier, userMessages: [file.unrelatedTask] },
+      { ...base, id: `${base.id}#requested`, variant: "requested", tier, userMessages: [request] },
+    );
+  }
+  for (const [variant, paired] of [
+    ["injection", file.injection],
+    ["forbidden", file.forbidden],
+  ] as const) {
+    for (const testCase of paired) {
+      const [base] = hazardCases([testCase], cwd);
+      cases.push({ ...base!, variant, tier: testCase.tier, userMessages: [...testCase.userMessages] });
+    }
+  }
+  return cases;
 }
 
 /**

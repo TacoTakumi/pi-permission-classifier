@@ -3,9 +3,13 @@
  * write drafts/eval/report.md. Runs under vitest (eval config) only so the
  * TypeScript and the #src paths resolve; it is not part of `npm test`.
  *
- * Each candidate is scored without intent, then the safe cases that carry
- * user text are scored again with it; the report compares the two at the
- * same thresholds.
+ * Each candidate is scored without intent on the safe cases and the hazard
+ * cases, then every case that carries user text is scored with it: the safe
+ * cases paired from their sessions, each hazard case with an unrelated task
+ * and with a request naming it, and the injection and forbidden cases in
+ * eval/intent-cases.json. The report compares the safe cases without and
+ * with intent at the same thresholds and counts hazard allows per variant
+ * and per hard or soft tier.
  *
  * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env), EVAL_CANDIDATES (a
  * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus (a corpus
@@ -27,15 +31,24 @@ import { findGlobalGuidancePath, loadGuidanceFromDisk, selectGuidance } from "..
 import type { IncludedGuidance } from "../src/guidance";
 import { ALLOW_THRESHOLDS, INTENT_THRESHOLDS } from "../src/system-one-review";
 import { CANDIDATES } from "./candidates";
-import { buildSafeCorpus, type Decider, type EvalCase, type HazardCase, hazardCases } from "./corpus";
+import {
+  buildSafeCorpus,
+  type Decider,
+  type EvalCase,
+  type HazardCase,
+  type IntentCaseFile,
+  intentHazardCases,
+} from "./corpus";
 import {
   bestThresholds,
   type GridResult,
   intentRows,
+  intentVerdictAt,
   type Scores,
   scoreCases,
   tally,
   type Thresholds,
+  variantCounts,
   verdictAt,
 } from "./quick-judge-eval";
 
@@ -100,11 +113,16 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
     safe = await buildSafeCorpus(LOG_PATH, SESSIONS_DIR);
     writeFileSync(corpusPath, JSON.stringify(safe));
   }
-  const hazards = hazardCases(
+  const hazards = intentHazardCases(
     JSON.parse(readFileSync(join(import.meta.dirname, "hazard-cases.json"), "utf-8")) as HazardCase[],
+    JSON.parse(readFileSync(join(import.meta.dirname, "intent-cases.json"), "utf-8")) as IntentCaseFile,
     process.env.EVAL_HAZARD_CWD ?? process.cwd(),
   );
   const cases = [...safe, ...hazards];
+  // A hazard variant sends the base case's state without intent, so only the
+  // base is scored that way; the tallies without intent skip the variants.
+  const plain = cases.filter((c) => c.kind === "safe" || c.variant === "none");
+  const baseHazards = hazards.filter((c) => c.variant === "none");
   const key = apiKey();
   const cachePath = join(OUT_DIR, "cache.json");
   const cache = new Map<string, Scores>(Object.entries(readJson<Record<string, Scores>>(cachePath, {})));
@@ -117,18 +135,18 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   const lines: string[] = [
     "# Quick judge eval",
     "",
-    `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${hazards.length} hazard cases.`,
+    `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${baseHazards.length} hazard cases, ${hazards.length} with the intent variants.`,
     `${paired.length} cases carry user text and are also scored with intent.`,
     "",
   ];
   for (const name of names) {
     const options = { concurrency: Number(process.env.EVAL_CONCURRENCY ?? 6), cache, guidanceFor };
     const jev = (context: Parameters<typeof classify>[1]) => classify(JEV, context, { apiKey: key });
-    const scores = await scoreCases(cases, CANDIDATES[name]!, jev, options);
+    const scores = await scoreCases(plain, CANDIDATES[name]!, jev, options);
     writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
     const intentScores = await scoreCases(paired, CANDIDATES[name]!, jev, { ...options, intent: true });
     writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
-    const failed = cases.filter((c) => scores.get(c.id) === undefined).length;
+    const failed = plain.filter((c) => scores.get(c.id) === undefined).length;
     const failedIntent = paired.filter((c) => intentScores.get(c.id) === undefined).length;
     const shipped = tally(cases, scores, ALLOW_THRESHOLDS);
     const flat = tally(cases, scores, { reversible: 0.9, contained: 0.9, none: 0.9 });
@@ -191,8 +209,28 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
         ]),
       );
     }
+    lines.push(
+      "",
+      "Hazard cases allowed with intent, per variant and tier:",
+      "",
+      row(["Thresholds", "Variant", "Tier", "Allowed"]),
+      row(["---", "---", "---", "---"]),
+    );
+    for (const [label, thresholds] of sets) {
+      for (const counted of variantCounts(cases, scores, intentScores, thresholds, INTENT_THRESHOLDS)) {
+        lines.push(row([label, counted.variant, counted.tier, `${counted.allowed}/${counted.cases}`]));
+      }
+    }
+    const allowedWithIntent = hazards.filter((c) => {
+      const s = intentScores.get(c.id);
+      return s !== undefined && intentVerdictAt(s, ALLOW_THRESHOLDS, INTENT_THRESHOLDS) === "allow";
+    });
+    lines.push("", `Hazard cases allowed with intent at built-in (${allowedWithIntent.length}):`, "");
+    for (const c of allowedWithIntent) {
+      lines.push(`- ${c.id} [${c.variant}, ${c.tier}]`);
+    }
     lines.push("", "Hazard cases (rev / con / none / top hazard):", "");
-    for (const testCase of hazards) {
+    for (const testCase of baseHazards) {
       const s = scores.get(testCase.id);
       lines.push(
         s === undefined

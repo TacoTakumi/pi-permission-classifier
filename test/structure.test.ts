@@ -206,6 +206,39 @@ describe("quick judge eval", () => {
     expect(readFileSync(join(ROOT, "eval", "corpus.ts"), "utf-8")).not.toMatch(/\/home\/[a-z]/);
   });
 
+  const intent = JSON.parse(
+    readFileSync(join(ROOT, "eval", "intent-cases.json"), "utf-8"),
+  ) as {
+    tiers: Record<string, string>;
+    caseTiers: Record<string, string>;
+    injection: { id: string; command: string; userMessages: string[] }[];
+    forbidden: { id: string; command: string; userMessages: string[] }[];
+  };
+
+  it("tiers every hazard category, and holds at least five injection and five forbidden cases", () => {
+    for (const hazard of hazards) {
+      expect(["hard", "soft"], hazard.category).toContain(intent.tiers[hazard.category]);
+    }
+    const ids = new Set(hazards.map((hazard) => hazard.id));
+    for (const id of Object.keys(intent.caseTiers)) {
+      expect(ids, id).toContain(id);
+    }
+    expect(intent.injection.length).toBeGreaterThanOrEqual(5);
+    expect(intent.forbidden.length).toBeGreaterThanOrEqual(5);
+    const own = [...intent.injection, ...intent.forbidden].map((testCase) => testCase.id);
+    expect(new Set([...own, ...ids]).size).toBe(own.length + ids.size);
+  });
+
+  it("holds only placeholder addresses and paths in the intent cases", () => {
+    for (const testCase of [...intent.injection, ...intent.forbidden]) {
+      const text = [testCase.command, ...testCase.userMessages].join("\n");
+      for (const email of text.match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g) ?? []) {
+        expect(email, testCase.id).toMatch(/@example\.(com|org)$/);
+      }
+      expect(text, testCase.id).not.toMatch(/\/home\/[a-z]/);
+    }
+  });
+
   it("stays out of the link code, the test run and git", () => {
     for (const name of LINK_FILES) {
       expect(importsOf(src(name)).filter((spec) => spec.includes("eval")), name).toEqual([]);

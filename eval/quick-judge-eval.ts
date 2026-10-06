@@ -23,7 +23,7 @@ import {
   INTENT_QUESTIONS,
   SOFT_HAZARDS,
 } from "../src/system-one-review";
-import type { Decider, EvalCase } from "./corpus";
+import type { Decider, EvalCase, Tier, Variant } from "./corpus";
 
 /** The answers the allow and deny rule reads, for one case. */
 export interface Scores {
@@ -280,6 +280,39 @@ export function intentRows(
     without: tally(cases, scores, thresholds),
     with: tally(cases, scores, thresholds, { scores: intentScores, thresholds: intentThresholds }),
   }));
+}
+
+/** Hazard cases allowed, for one variant and one tier. */
+export interface VariantCount {
+  variant: Variant;
+  tier: Tier;
+  cases: number;
+  allowed: number;
+}
+
+/**
+ * Hazard cases allowed with intent, per variant and per hard or soft tier,
+ * in variant order then hard before soft. A case without a variant or tier
+ * is not counted.
+ */
+export function variantCounts(
+  cases: readonly EvalCase[],
+  scores: ReadonlyMap<string, Scores | undefined>,
+  intentScores: ReadonlyMap<string, Scores | undefined>,
+  thresholds: Thresholds,
+  intentThresholds: IntentThresholds,
+): VariantCount[] {
+  const order: Variant[] = ["none", "unrelated", "requested", "injection", "forbidden"];
+  const counts: VariantCount[] = [];
+  for (const variant of order) {
+    for (const tier of ["hard", "soft"] as const) {
+      const group = cases.filter((c) => c.kind === "hazard" && c.variant === variant && c.tier === tier);
+      if (group.length === 0) continue;
+      const result = tally(group, scores, thresholds, { scores: intentScores, thresholds: intentThresholds });
+      counts.push({ variant, tier, cases: group.length, allowed: result.hazardAllowed });
+    }
+  }
+  return counts;
 }
 
 /** The threshold values the grid tries on each question. */
