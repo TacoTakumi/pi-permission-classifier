@@ -44,6 +44,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "vitest run",
+    "eval:quick": "vitest run --config vitest.eval.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

@@ -160,6 +160,38 @@ describe("no output channels beyond the seams", () => {
   });
 });
 
+describe("quick judge eval", () => {
+  const hazards = JSON.parse(
+    readFileSync(join(ROOT, "eval", "hazard-cases.json"), "utf-8"),
+  ) as { id: string; category: string; command: string }[];
+
+  it("covers every guard category in the hazard set", () => {
+    const categories = new Set(hazards.map((hazard) => hazard.category));
+    for (const category of [
+      "secret",
+      "data-out",
+      "pipe-to-shell",
+      "force-push",
+      "discard-uncommitted",
+      "git-clean",
+      "rm-outside-project",
+      "delete-project-files",
+      "edit-permission-config",
+    ]) {
+      expect(categories, category).toContain(category);
+    }
+    expect(new Set(hazards.map((hazard) => hazard.id)).size).toBe(hazards.length);
+  });
+
+  it("stays out of the link code, the test run and git", () => {
+    for (const name of LINK_FILES) {
+      expect(importsOf(src(name)).filter((spec) => spec.includes("eval")), name).toEqual([]);
+    }
+    expect(readFileSync(join(ROOT, "vitest.config.ts"), "utf-8")).toContain('include: ["test/**/*.test.ts"]');
+    expect(readFileSync(join(ROOT, ".gitignore"), "utf-8").split("\n")).toContain("drafts/");
+  });
+});
+
 describe("manifest", () => {
   const manifest = JSON.parse(
     readFileSync(join(ROOT, "package.json"), "utf-8"),
