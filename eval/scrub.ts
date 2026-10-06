@@ -71,6 +71,27 @@ export interface Machine {
   homeDir?: string;
   /** The login name, replaced by `<user>` wherever it stands as a whole word. */
   userName?: string;
+  /**
+   * Project directory names and their stable aliases (p1, p2, ...). A name
+   * is replaced wherever it stands as a whole word: in a path, in a session
+   * directory name, in prose. The match ignores case when the name has
+   * mixed case, a digit, a dot or a hyphen (OpenHeart, U4R, pi-env), and is
+   * exact for a plain word (Fun), so prose keeps its common words.
+   */
+  projects?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Whether a project name is matched without regard to case: it has a digit,
+ * a dot or a hyphen, or a capital after its first letter (OpenHeart, not Fun).
+ */
+function looseCase(name: string): boolean {
+  return /[0-9.-]/.test(name) || (/[a-z]/.test(name) && /[A-Z]/.test(name.slice(1)));
+}
+
+/** The whole-word pattern of a name; longer names are applied first by the caller. */
+function wordPattern(name: string, ignoreCase: boolean): RegExp {
+  return new RegExp(String.raw`(?<![A-Za-z0-9_])${escapeRegExp(name)}(?![A-Za-z0-9_])`, ignoreCase ? "gi" : "g");
 }
 
 /**
@@ -79,7 +100,7 @@ export interface Machine {
  */
 export function scrubString(text: string, machine: Machine = {}): string {
   let out = text;
-  const { homeDir, userName } = machine;
+  const { homeDir, userName, projects } = machine;
   if (homeDir !== undefined && homeDir !== "" && homeDir !== "/") {
     out = out.replace(new RegExp(escapeRegExp(homeDir.replace(/\/+$/, "")) + "(?![A-Za-z0-9._-])", "g"), "~");
   }
@@ -88,7 +109,12 @@ export function scrubString(text: string, machine: Machine = {}): string {
   }
   // Last, so an email or a git flag holding the name is already a placeholder.
   if (userName !== undefined && userName !== "") {
-    out = out.replace(new RegExp(String.raw`(?<![A-Za-z0-9_])${escapeRegExp(userName)}(?![A-Za-z0-9_])`, "g"), "<user>");
+    out = out.replace(wordPattern(userName, false), "<user>");
+  }
+  if (projects !== undefined) {
+    for (const name of Object.keys(projects).sort((a, b) => b.length - a.length)) {
+      out = out.replace(wordPattern(name, looseCase(name)), projects[name]!);
+    }
   }
   return out;
 }

@@ -13,7 +13,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 import { readUserIntent } from "../src/user-intent";
-import { type Machine, scrubDeep } from "./scrub";
+import { type Machine, scrubDeep, scrubString } from "./scrub";
 
 /** One judge's decision on an ask, as the log's classifier.decision row has it. */
 export interface StoredDecision {
@@ -220,13 +220,12 @@ function decisionOf(row: Record<string, unknown>): StoredDecision {
  * Pure: the stored asks from parsed review log rows and a tool call index,
  * in log order. A waiting row becomes a stored ask once its request has a
  * final event and its tool call is in the index; a request still waiting
- * is left for a later pull. Every string is scrubbed of the `machine`
- * details and the fixed rules.
+ * is left for a later pull. The asks are raw: `scrubAsks` scrubs them
+ * once the project aliases are known.
  */
-export function storedAsksFromLog(
+export function rawAsksFromLog(
   rows: readonly Record<string, unknown>[],
   toolCalls: ReadonlyMap<string, SessionToolCall>,
-  machine: Machine,
 ): StoredAsk[] {
   const final = new Map<string, Record<string, unknown>>();
   const decisions = new Map<string, StoredDecision[]>();
@@ -281,9 +280,68 @@ export function storedAsksFromLog(
       deciderName: decider.name,
       ...(call.userMessages === undefined || isForwarded ? {} : { userMessages: call.userMessages }),
     };
-    asks.push(scrubDeep(ask, machine));
+    asks.push(ask);
   }
   return asks;
+}
+
+/** Pure: every string of every ask scrubbed of the `machine` details and the fixed rules. */
+export function scrubAsks(asks: readonly StoredAsk[], machine: Machine): StoredAsk[] {
+  return asks.map((ask) => scrubDeep(ask, machine));
+}
+
+/** The raw asks from the log, scrubbed; see `rawAsksFromLog` and `scrubAsks`. */
+export function storedAsksFromLog(
+  rows: readonly Record<string, unknown>[],
+  toolCalls: ReadonlyMap<string, SessionToolCall>,
+  machine: Machine,
+): StoredAsk[] {
+  return scrubAsks(rawAsksFromLog(rows, toolCalls), machine);
+}
+
+/**
+ * Pure: the project directory names the raw asks mention under
+ * `projectsRoot` (an absolute path; its `~` form, with `homeDir` replaced,
+ * is found too), in first-seen order. A name is one path segment.
+ */
+export function projectNames(asks: readonly StoredAsk[], projectsRoot: string, homeDir: string): string[] {
+  const roots = [projectsRoot];
+  const tilde = scrubString(projectsRoot, { homeDir });
+  if (tilde !== projectsRoot) roots.push(tilde);
+  const pattern = new RegExp(
+    String.raw`(?:${roots.map((root) => root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})/([A-Za-z0-9._-]+)`,
+    "g",
+  );
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const ask of asks) {
+    for (const match of JSON.stringify(ask).matchAll(pattern)) {
+      const name = match[1]!;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Pure: `existing` aliases plus a new one (p<n>, n counting on from the
+ * aliases already given) for each name not yet aliased, in the order the
+ * names come. An alias once given never changes.
+ */
+export function assignProjectAliases(
+  existing: Readonly<Record<string, string>>,
+  names: Iterable<string>,
+): Record<string, string> {
+  const aliases: Record<string, string> = { ...existing };
+  let next = Object.keys(existing).length + 1;
+  for (const name of names) {
+    if (name in aliases) continue;
+    aliases[name] = `p${next}`;
+    next += 1;
+  }
+  return aliases;
 }
 
 /** The ids already in the store, from its lines; a line that is not JSON is skipped. */

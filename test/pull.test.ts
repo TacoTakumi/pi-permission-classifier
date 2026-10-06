@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeStore, type StoredAsk, storedAsksFromLog, storedIds, toolCallsFromSession } from "../eval/pull";
+import {
+  assignProjectAliases,
+  mergeStore,
+  projectNames,
+  rawAsksFromLog,
+  type StoredAsk,
+  storedAsksFromLog,
+  storedIds,
+  toolCallsFromSession,
+} from "../eval/pull";
 
 const HOME = { homeDir: "/home/you", userName: "you" };
 
@@ -231,5 +240,30 @@ describe("mergeStore", () => {
 
   it("reads ids from the store lines and skips a line that is not JSON", () => {
     expect(storedIds(['{"id":"a"}', "not json", "", '{"id":"b"}'])).toEqual(new Set(["a", "b"]));
+  });
+});
+
+describe("project aliases", () => {
+  const calls = toolCallsFromSession(SESSION_LINES);
+  const raw = rawAsksFromLog(LOG_ROWS, calls);
+
+  it("finds the project names under the root in first-seen order, in the absolute and the ~ form", () => {
+    const asks: StoredAsk[] = [
+      { ...raw[0]!, fullCommand: "cd /home/you/AI/Projects/game && ls ~/AI/Projects/other/x; cat ~/AI/Projects/game/y" },
+      { ...raw[0]!, id: "x", userMessages: ["look in ~/AI/Projects/third please"] },
+    ];
+    expect(projectNames(asks, "/home/you/AI/Projects", "/home/you")).toEqual(["game", "other", "third"]);
+  });
+
+  it("keeps given aliases and numbers new names on from them", () => {
+    const first = assignProjectAliases({}, ["game", "other"]);
+    expect(first).toEqual({ game: "p1", other: "p2" });
+    expect(assignProjectAliases(first, ["other", "third", "game"])).toEqual({ game: "p1", other: "p2", third: "p3" });
+  });
+
+  it("replaces the project name in the stored ask through the scrub", () => {
+    const [ask] = storedAsksFromLog(LOG_ROWS, calls, { ...HOME, projects: { game: "p1" } });
+    expect(ask?.cwd).toBe("~/AI/Projects/p1");
+    expect(ask?.fullCommand).toBe("cd ~/AI/Projects/p1 && tools/test.sh 2>&1 | tail -5");
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { findUnscrubbed, scrubDeep, scrubString } from "../eval/scrub";
 
-const MACHINE = { homeDir: "/home/you", userName: "you" };
+const MACHINE = { homeDir: "/home/you", userName: "you", projects: { OpenHeart: "p1", U4R: "p2", Fun: "p3", "pi-env": "p4" } };
 
 describe("scrubString: each rule", () => {
   it.each([
@@ -28,6 +28,10 @@ describe("scrubString: each rule", () => {
     ["a quoted token value", 'TOKEN="sk-live-0123456789" node x.js', "TOKEN=<redacted> node x.js"],
     ["a password value", "mysql --password=hunter2 db", "mysql --password=<redacted> db"],
     ["a query parameter token", "curl 'https://x.io/s?q=1&security_token=abcd1234' -o y", "curl 'https://x.io/s?q=1&security_token=<redacted>' -o y"],
+    ["a project name in a path, its lowercase form too", "cd /home/you/AI/Projects/OpenHeart/openheart && ls", "cd ~/AI/Projects/p1/p1 && ls"],
+    ["a project name in a session dir name", "D=~/.pi/agent/sessions/--home-you-AI-Projects-U4R--/x", "D=~/.pi/agent/sessions/--home-<user>-AI-Projects-p2--/x"],
+    ["a project name in prose", "the u4r build and the pi-env checkout", "the p2 build and the p4 checkout"],
+    ["a plain-word project name only in its exact form", "cd ~/AI/Projects/Fun; that was fun", "cd ~/AI/Projects/p3; that was fun"],
     ["a bearer token", 'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc" u', 'curl -H "Authorization: Bearer <redacted>" u'],
   ])("scrubs %s", (_name, input, expected) => {
     expect(scrubString(input, MACHINE)).toBe(expected);
@@ -48,6 +52,7 @@ describe("scrubString: kept forms", () => {
     ["a git sha", "git checkout 9ccd445 -- game/scripts/audio/music.gd"],
     ["the login name inside a longer word", "yount myou you_x"],
     ["a lowercase sort key", "sorted(xs, key=lambda d: d['num'])"],
+    ["a project name inside a longer word", "OpenHearted funny pi-envelope"],
   ])("keeps %s", (_name, input) => {
     expect(scrubString(input, MACHINE)).toBe(input);
   });

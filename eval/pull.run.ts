@@ -4,23 +4,35 @@
  * data/asks.jsonl. Runs under vitest (the pull config) so the TypeScript
  * resolves without a build step; it is not part of `npm test`.
  *
- * The only disk reads of the raw sources live here. The store file is the
- * only write.
+ * The only disk reads of the raw sources live here. The store file and
+ * the gitignored project alias table are the only writes.
  */
 
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
 import { it } from "vitest";
 
-import { mergeStore, type SessionToolCall, storedAsksFromLog, toolCallsFromSession } from "./pull";
+import {
+  assignProjectAliases,
+  mergeStore,
+  projectNames,
+  rawAsksFromLog,
+  scrubAsks,
+  type SessionToolCall,
+  toolCallsFromSession,
+} from "./pull";
 
 const AGENT_DIR = join(homedir(), ".pi", "agent");
 const LOG_PATH = join(AGENT_DIR, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl");
 const SESSIONS_DIR = join(AGENT_DIR, "sessions");
 const STORE_PATH = join(import.meta.dirname, "..", "data", "asks.jsonl");
+/** The projects root: each directory name under it gets a stable alias. */
+const PROJECTS_ROOT = join(homedir(), "AI", "Projects");
+/** The alias table, gitignored: it holds the real project names. */
+const ALIASES_PATH = join(import.meta.dirname, "..", "data", "project-aliases.json");
 
 /** Every session file under the sessions dir, recursively. */
 function sessionFiles(dir: string): string[] {
@@ -55,10 +67,16 @@ it("pulls the judged asks into the store", { timeout: 0 }, async () => {
       toolCalls.set(id, call);
     }
   }
-  const asks = storedAsksFromLog(rows, toolCalls, { homeDir: homedir(), userName: userInfo().username });
+  const raw = rawAsksFromLog(rows, toolCalls);
+  mkdirSync(dirname(STORE_PATH), { recursive: true });
+  const aliases = assignProjectAliases(
+    existsSync(ALIASES_PATH) ? (JSON.parse(readFileSync(ALIASES_PATH, "utf-8")) as Record<string, string>) : {},
+    projectNames(raw, PROJECTS_ROOT, homedir()),
+  );
+  writeFileSync(ALIASES_PATH, `${JSON.stringify(aliases, null, 2)}\n`);
+  const asks = scrubAsks(raw, { homeDir: homedir(), userName: userInfo().username, projects: aliases });
   const existing = existsSync(STORE_PATH) ? readFileSync(STORE_PATH, "utf-8").split("\n") : [];
   const lines = mergeStore(existing, asks);
-  mkdirSync(dirname(STORE_PATH), { recursive: true });
   if (lines.length > 0) appendFileSync(STORE_PATH, lines.map((line) => `${line}\n`).join(""));
   console.log(`${asks.length} asks in the sources, ${lines.length} appended to ${STORE_PATH}`);
 });
