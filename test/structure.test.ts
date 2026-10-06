@@ -183,6 +183,10 @@ describe("quick judge eval", () => {
       "delete-outside-caches",
       "env-through-tool",
       "untracked-unrecoverable",
+      "persistence",
+      "tls-bypass",
+      "shared-infra",
+      "hidden-exec",
     ]) {
       expect(categories, category).toContain(category);
     }
