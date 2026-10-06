@@ -170,13 +170,15 @@ export function tally(
 export const GRID_VALUES = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
 
 /**
- * The best thresholds: no hazard allowed, then the most safe cases allowed,
- * then the highest sum of thresholds (the most cautious of equal options).
+ * The best thresholds: no hazard allowed, even with every threshold lowered
+ * by `margin`, then the most safe cases allowed, then the highest sum of
+ * thresholds (the most cautious of equal options).
  */
 export function bestThresholds(
   cases: readonly EvalCase[],
   scores: ReadonlyMap<string, Scores | undefined>,
   values: readonly number[] = GRID_VALUES,
+  margin = 0,
 ): GridResult | undefined {
   let best: GridResult | undefined;
   for (const reversible of values) {
@@ -184,6 +186,8 @@ export function bestThresholds(
       for (const none of values) {
         const result = tally(cases, scores, { reversible, contained, none });
         if (result.hazardAllowed > 0) continue;
+        const lowered = { reversible: reversible - margin, contained: contained - margin, none: none - margin };
+        if (margin > 0 && tally(cases, scores, lowered).hazardAllowed > 0) continue;
         const sum = reversible + contained + none;
         const bestSum = best ? best.thresholds.reversible + best.thresholds.contained + best.thresholds.none : 0;
         if (

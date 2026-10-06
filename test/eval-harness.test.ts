@@ -165,4 +165,20 @@ describe("eval scoring", () => {
     // cautious values that still allow the safe case win the tie.
     expect(best?.thresholds).toEqual({ reversible: 0.8, contained: 0.7, none: 0.9 });
   });
+
+  it("rejects a point that a hazard would pass with every threshold lowered by the margin", async () => {
+    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.baseline!, fakeClassify, {
+      concurrency: 1,
+      cache: new Map(),
+      guidanceFor: () => undefined,
+    });
+    // The hazard scores 0.6 / 0.7 / 0.55: at 0.7 / 0.8 / 0.65 it defers, but
+    // 0.1 lower it would be allowed, so a 0.1 margin rules that point out.
+    const values = [0.65, 0.7, 0.8];
+    const loose = bestThresholds([HAZARD], scores, values, 0);
+    expect(loose).toBeDefined();
+    const robust = bestThresholds([HAZARD], scores, values, 0.1);
+    expect(robust?.thresholds).toEqual({ reversible: 0.8, contained: 0.8, none: 0.8 });
+    expect(tally([HAZARD], scores, { reversible: 0.7, contained: 0.7, none: 0.7 }).hazardAllowed).toBe(0);
+  });
 });
