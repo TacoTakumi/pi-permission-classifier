@@ -58,25 +58,39 @@ describe("SYSTEM_ONE_QUESTIONS", () => {
     expect(Object.keys(HAZARD_OPTIONS)).toEqual(Object.keys(hazard.criteria));
   });
 
-  it("defines contained and names project inspection as contained", () => {
+  it("counts the project's own toolchain and its caches as contained", () => {
     const contained = SYSTEM_ONE_QUESTIONS.contained;
     if (contained?.type !== "bool") {
       throw new Error("contained is not a bool question");
     }
     expect(contained.instructions).toMatch(/Contained means/);
-    expect(contained.instructions).toMatch(/Inspecting the project/);
-    expect(contained.instructions).toMatch(/version-control status/);
+    expect(contained.instructions).toMatch(/project's own build, run and test tools/);
+    expect(contained.instructions).toMatch(/caches, build output, temp files and display/);
     expect(contained.criteria.true).toMatch(/^Contained:/);
     expect(contained.criteria.false).toMatch(/^Not contained:/);
   });
 
-  it("says contained means the project tree or /tmp, no secret reads, no data sent out", () => {
-    const contained = SYSTEM_ONE_QUESTIONS.contained;
-    const text = JSON.stringify(contained);
-    expect(text).toMatch(/project/);
+  it("keeps secrets, data sent out and changes elsewhere outside contained", () => {
+    const text = JSON.stringify(SYSTEM_ONE_QUESTIONS.contained);
     expect(text).toMatch(/\/tmp/);
-    expect(text).toMatch(/secret/);
-    expect(text).toMatch(/sen[dt]/);
+    expect(text).toMatch(/reads a secret/);
+    expect(text).toMatch(/\.env files or the environment/);
+    expect(text).toMatch(/sends data off this machine/);
+    expect(text).toMatch(/changes files outside the project/);
+  });
+
+  it("counts regenerable output as reversible and keeps the guard cases irreversible", () => {
+    const text = JSON.stringify(SYSTEM_ONE_QUESTIONS.reversible);
+    expect(text).toMatch(/caches, build output, test output/);
+    expect(text).toMatch(/files that git does not hold/);
+    expect(text).toMatch(/discards uncommitted work/);
+    expect(text).toMatch(/rewrites git history/);
+    expect(text).toMatch(/publishes or pushes a change/);
+    expect(text).toMatch(/sends a message/);
+  });
+
+  it("ships the per-question allow thresholds the eval chose", () => {
+    expect(ALLOW_THRESHOLDS).toEqual({ reversible: 0.8, contained: 0.8, none: 0.8 });
   });
 });
 

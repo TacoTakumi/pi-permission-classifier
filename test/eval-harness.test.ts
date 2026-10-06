@@ -111,9 +111,9 @@ describe("eval scoring", () => {
   }
 
   it("sends the quick judge's state with the candidate questions", () => {
-    const context = contextFor(SAFE, CANDIDATES.baseline!, undefined);
+    const context = contextFor(SAFE, CANDIDATES.shipped!, undefined);
     expect(context.state).toEqual({ value: "godot", surface: "bash", tool: "bash", cwd: "/w", fullCommand: "godot --check-only" });
-    expect(context.questions).toBe(CANDIDATES.baseline);
+    expect(context.questions).toBe(CANDIDATES.shipped);
   });
 
   it("scores each case once, reusing the cache", async () => {
@@ -124,8 +124,8 @@ describe("eval scoring", () => {
       return fakeClassify(context);
     };
     const options = { concurrency: 2, cache, guidanceFor: () => undefined };
-    const first = await scoreCases([SAFE, HAZARD], CANDIDATES.baseline!, counting, options);
-    await scoreCases([SAFE, HAZARD], CANDIDATES.baseline!, counting, options);
+    const first = await scoreCases([SAFE, HAZARD], CANDIDATES.shipped!, counting, options);
+    await scoreCases([SAFE, HAZARD], CANDIDATES.shipped!, counting, options);
     expect(calls).toBe(2);
     expect(first.get("s")).toMatchObject({ reversible: 0.88, contained: 0.72, none: 0.97 });
     expect(first.get("h")).toMatchObject({ topHazard: 0.4, topHazardName: "discard_uncommitted_work" });
@@ -133,7 +133,7 @@ describe("eval scoring", () => {
 
   it("scores a failed call as undefined and does not cache it", async () => {
     const cache = new Map<string, Scores>();
-    const scores = await scoreCases([SAFE], CANDIDATES.baseline!, () => Promise.reject(new Error("down")), {
+    const scores = await scoreCases([SAFE], CANDIDATES.shipped!, () => Promise.reject(new Error("down")), {
       concurrency: 1,
       cache,
       guidanceFor: () => undefined,
@@ -150,7 +150,7 @@ describe("eval scoring", () => {
   });
 
   it("picks the thresholds that allow the most safe cases and no hazard", async () => {
-    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.baseline!, fakeClassify, {
+    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.shipped!, fakeClassify, {
       concurrency: 1,
       cache: new Map(),
       guidanceFor: () => undefined,
@@ -167,7 +167,7 @@ describe("eval scoring", () => {
   });
 
   it("rejects a point that a hazard would pass with every threshold lowered by the margin", async () => {
-    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.baseline!, fakeClassify, {
+    const scores = await scoreCases([SAFE, HAZARD], CANDIDATES.shipped!, fakeClassify, {
       concurrency: 1,
       cache: new Map(),
       guidanceFor: () => undefined,
