@@ -1,19 +1,16 @@
 /**
- * The eval corpus: asks rebuilt from the permission review log and the pi
- * session files. Each permission_request.waiting entry that ended approved
- * is a safe case; its full command and cwd come from the session file that
- * holds the same tool call id, and so does the user text: the runtime
- * selection of the user messages on the call's branch up to the call, or
- * none when the runtime would send none. The corpus is the operator's own
- * command history, so it is written only under drafts/ (gitignored) and
- * never committed.
+ * The eval corpus: the safe cases read from the judged ask store
+ * (data/asks.jsonl, written by `npm run data:pull`) and the hazard cases
+ * from eval/hazard-cases.json with their intent variants. Each stored ask
+ * that ended approved on a judged surface is a safe case, with the user
+ * text the runtime would have sent, or none for an ask forwarded from a
+ * subagent. The raw review log and session files are read by the pull
+ * only, never here.
  */
 
-import { createReadStream, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 
-import { type SessionToolCall, toolCallsFromSession } from "./pull";
+import type { StoredAsk } from "./pull";
 
 /**
  * Who approved a logged ask: the user, a judge link, or anything else (a
@@ -85,89 +82,47 @@ export interface IntentCaseFile {
 /** The surfaces the quick judge never sees. */
 const UNJUDGED_SURFACE = /^(path|external_directory)/;
 
-/** The final events of a permission request, by its last word. */
-const FINAL_EVENTS = new Set([
-  "permission_request.approved",
-  "permission_request.denied",
-  "permission_request.session_approved",
-  "permission_request.blocked",
-]);
-
 /**
- * Pure: the safe cases from parsed review log rows and a tool call index.
- * A request counts once it waited for a decision and ended approved, its
- * tool call is in the index, and it is on a judged surface. Cases that send
- * the same state are kept once.
+ * Pure: the safe cases from stored asks. An ask counts once it ended
+ * approved on a judged surface; asks that send the same state are kept
+ * once. The user text is left out of a forwarded ask, as the runtime
+ * sends none for it.
  */
-export function safeCasesFromLog(
-  rows: readonly Record<string, unknown>[],
-  toolCalls: ReadonlyMap<string, SessionToolCall>,
-): EvalCase[] {
-  const final = new Map<string, Record<string, unknown>>();
-  // Requests a subagent forwarded: the judge runs in the parent with the ask
-  // marked forwarded, so the runtime sends no user text for them.
-  const forwarded = new Set<string>();
-  for (const row of rows) {
-    if (typeof row.event === "string" && FINAL_EVENTS.has(row.event) && typeof row.requestId === "string") {
-      final.set(row.requestId, row);
-    }
-    if (row.event === "permission_request.waiting" && row.forwarded === true && typeof row.requestId === "string") {
-      forwarded.add(row.requestId);
-    }
-  }
+export function safeCasesFromStore(asks: readonly StoredAsk[]): EvalCase[] {
   const cases: EvalCase[] = [];
   const seen = new Set<string>();
-  for (const row of rows) {
-    if (row.event !== "permission_request.waiting") continue;
-    const requestId = row.requestId;
-    const toolCallId = row.toolCallId;
-    if (typeof requestId !== "string" || typeof toolCallId !== "string") continue;
-    const outcome = final.get(requestId);
-    if (outcome?.event !== "permission_request.approved") continue;
-    const surface = typeof row.surface === "string" ? row.surface : undefined;
-    if (surface === undefined || UNJUDGED_SURFACE.test(surface)) continue;
-    const call = toolCalls.get(toolCallId);
-    if (call === undefined) continue;
-    const value = [row.command, row.target, row.path].find(
-      (candidate): candidate is string => typeof candidate === "string" && candidate !== "",
-    );
-    if (value === undefined) continue;
-    const tool = typeof row.toolName === "string" ? row.toolName : call.name;
-    const fullCommand = tool === "bash" ? call.command : undefined;
-    const key = JSON.stringify([value, surface, tool, call.cwd, fullCommand]);
+  for (const ask of asks) {
+    if (ask.resolution !== "approved" || UNJUDGED_SURFACE.test(ask.surface)) continue;
+    const key = JSON.stringify([ask.value, ask.surface, ask.tool, ask.cwd, ask.fullCommand]);
     if (seen.has(key)) continue;
     seen.add(key);
     cases.push({
-      id: requestId,
+      id: ask.id,
       kind: "safe",
-      value,
-      surface,
-      tool,
-      cwd: call.cwd,
-      fullCommand,
-      decider: deciderOf(outcome),
-      ...(call.userMessages === undefined || forwarded.has(requestId) ? {} : { userMessages: call.userMessages }),
+      value: ask.value,
+      surface: ask.surface,
+      tool: ask.tool,
+      cwd: ask.cwd,
+      ...(ask.fullCommand === undefined ? {} : { fullCommand: ask.fullCommand }),
+      decider: ask.decider === "user" || ask.decider === "judge" ? ask.decider : "other",
+      ...(ask.userMessages === undefined || ask.forwarded ? {} : { userMessages: [...ask.userMessages] }),
     });
   }
   return cases;
 }
 
-/** Forwarded hops followed before a decider counts as unknown. */
-const MAX_FORWARD_DEPTH = 8;
-
-/**
- * Who approved a request, from its final log entry. A forwarded approval was
- * decided in the parent session, so its nested decision is followed through
- * every hop, as pi-permission-system's effectiveDecider does.
- */
-function deciderOf(outcome: Record<string, unknown>): Decider {
-  let decidedBy = outcome.decidedBy as { kind?: unknown; decision?: unknown } | null | undefined;
-  for (let hop = 0; hop < MAX_FORWARD_DEPTH && decidedBy?.kind === "forwarded"; hop++) {
-    decidedBy = decidedBy.decision as typeof decidedBy;
+/** The stored asks in the store file; a line that is not JSON is skipped. */
+export function loadStoredAsks(path: string): StoredAsk[] {
+  const asks: StoredAsk[] = [];
+  for (const line of readFileSync(path, "utf-8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      asks.push(JSON.parse(line) as StoredAsk);
+    } catch {
+      continue;
+    }
   }
-  if (decidedBy?.kind === "user") return "user";
-  if (decidedBy?.kind === "authorizer") return "judge";
-  return "other";
+  return asks;
 }
 
 /** Pure: the hazard cases as bash asks, run in `cwd` unless a case names one. */
@@ -219,41 +174,4 @@ export function intentHazardCases(
     }
   }
   return cases;
-}
-
-/** Every session file under the sessions dir, recursively. */
-function sessionFiles(dir: string): string[] {
-  const files: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
-      files.push(...sessionFiles(path));
-    } else if (name.endsWith(".jsonl")) {
-      files.push(path);
-    }
-  }
-  return files;
-}
-
-async function readLines(path: string): Promise<string[]> {
-  const lines: string[] = [];
-  for await (const line of createInterface({ input: createReadStream(path), crlfDelay: Infinity })) {
-    lines.push(line);
-  }
-  return lines;
-}
-
-/** Read the log and the session files and build the safe cases. */
-export async function buildSafeCorpus(logPath: string, sessionsDir: string): Promise<EvalCase[]> {
-  const rows = readFileSync(logPath, "utf-8")
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const toolCalls = new Map<string, SessionToolCall>();
-  for (const file of sessionFiles(sessionsDir)) {
-    for (const [id, call] of toolCallsFromSession(await readLines(file))) {
-      toolCalls.set(id, call);
-    }
-  }
-  return safeCasesFromLog(rows, toolCalls);
 }

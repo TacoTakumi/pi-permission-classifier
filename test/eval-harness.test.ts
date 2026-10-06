@@ -7,9 +7,9 @@ import {
   hazardCases,
   type IntentCaseFile,
   intentHazardCases,
-  safeCasesFromLog,
+  safeCasesFromStore,
 } from "../eval/corpus";
-import { toolCallsFromSession } from "../eval/pull";
+import { type StoredAsk, toolCallsFromSession } from "../eval/pull";
 import {
   bestThresholds,
   cacheKey,
@@ -51,18 +51,25 @@ const SESSION_LINES = [
   }),
 ];
 
-const LOG_ROWS = [
-  { event: "permission_request.waiting", requestId: "r1", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "godot" },
-  { event: "permission_request.approved", requestId: "r1", decidedBy: { kind: "user" } },
-  { event: "permission_request.waiting", requestId: "r2", toolCallId: "tc2", surface: "bash", toolName: "bash", command: "rm -rf ~/x" },
-  { event: "permission_request.denied", requestId: "r2" },
-  { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "external_directory", toolName: "read", path: "/etc/hosts" },
-  { event: "permission_request.approved", requestId: "r3" },
-  { event: "permission_request.waiting", requestId: "r4", toolCallId: "tc4", surface: "bash", toolName: "bash", command: "godot" },
-  { event: "permission_request.approved", requestId: "r4" },
-  { event: "permission_request.waiting", requestId: "r5", toolCallId: "missing", surface: "bash", toolName: "bash", command: "ls" },
-  { event: "permission_request.approved", requestId: "r5" },
-];
+/** A stored ask as the pull writes it, approved by a judge unless overridden. */
+function stored(id: string, overrides: Partial<StoredAsk> = {}): StoredAsk {
+  return {
+    id,
+    timestamp: "2026-10-06T16:00:00.000Z",
+    sessionId: "s1",
+    surface: "bash",
+    tool: "bash",
+    value: "godot",
+    cwd: "/work/game",
+    fullCommand: "godot --check-only -s t.gd",
+    forwarded: false,
+    decisions: [],
+    resolution: "approved",
+    decider: "judge",
+    deciderName: "permission-judge",
+    ...overrides,
+  };
+}
 
 describe("eval corpus", () => {
   it("indexes session tool calls with the session id and cwd", () => {
@@ -71,9 +78,15 @@ describe("eval corpus", () => {
     expect(calls.get("tc3")).toEqual({ sessionId: "s1", cwd: "/work/game", name: "read", command: undefined });
   });
 
-  it("keeps approved asks on judged surfaces with a known tool call, once per state", () => {
-    const cases = safeCasesFromLog(LOG_ROWS, toolCallsFromSession(SESSION_LINES));
-    expect(cases).toEqual([
+  it("keeps approved asks on judged surfaces from the store, once per state", () => {
+    const asks = [
+      stored("r1"),
+      stored("r2", { surface: "external_directory", tool: "read", value: "/etc/hosts", fullCommand: undefined }),
+      stored("r3", { resolution: "denied", decider: "other", deciderName: null }),
+      stored("r4"),
+      stored("r5", { value: "ls", fullCommand: "ls" }),
+    ];
+    expect(safeCasesFromStore(asks)).toEqual([
       {
         id: "r1",
         kind: "safe",
@@ -82,42 +95,26 @@ describe("eval corpus", () => {
         tool: "bash",
         cwd: "/work/game",
         fullCommand: "godot --check-only -s t.gd",
-        decider: "user",
+        decider: "judge",
       },
+      { id: "r5", kind: "safe", value: "ls", surface: "bash", tool: "bash", cwd: "/work/game", fullCommand: "ls", decider: "judge" },
     ]);
   });
 
-  it("labels each safe case with who approved it", () => {
-    const rows = [
-      { event: "permission_request.waiting", requestId: "a", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "a" },
-      { event: "permission_request.approved", requestId: "a", decidedBy: { kind: "authorizer", name: "permission-judge" } },
-      { event: "permission_request.waiting", requestId: "c", toolCallId: "tc1", surface: "bash", toolName: "bash", command: "c" },
-      { event: "permission_request.approved", requestId: "c" },
+  it("labels each safe case with who approved it, rules and session approvals as other", () => {
+    const asks: StoredAsk[] = [
+      stored("u", { value: "u", decider: "user", deciderName: null }),
+      stored("j", { value: "j", decider: "judge", deciderName: "classifier" }),
+      stored("r", { value: "r", decider: "rule", deciderName: null }),
+      stored("s", { value: "s", decider: "session", deciderName: null }),
+      stored("o", { value: "o", decider: "other", deciderName: null }),
     ];
-    // A forwarded approval was decided in the parent session: its nested
-    // decision, followed through every hop, says who decided.
-    const forwarded: [string, unknown][] = [
-      ["fu", { kind: "forwarded", decision: { kind: "user" } }],
-      ["fj", { kind: "forwarded", decision: { kind: "authorizer", name: "classifier", verdict: "allow" } }],
-      ["fr", { kind: "forwarded", decision: { kind: "rule" } }],
-      ["fn", { kind: "forwarded", decision: null }],
-      ["ff", { kind: "forwarded", decision: { kind: "forwarded", decision: { kind: "user" } } }],
-    ];
-    for (const [id, decidedBy] of forwarded) {
-      rows.push(
-        { event: "permission_request.waiting", requestId: id, toolCallId: "tc1", surface: "bash", toolName: "bash", command: id },
-        { event: "permission_request.approved", requestId: id, decidedBy } as never,
-      );
-    }
-    const cases = safeCasesFromLog(rows, toolCallsFromSession(SESSION_LINES));
-    expect(cases.map((c) => [c.id, c.decider])).toEqual([
-      ["a", "judge"],
-      ["c", "other"],
-      ["fu", "user"],
-      ["fj", "judge"],
-      ["fr", "other"],
-      ["fn", "other"],
-      ["ff", "user"],
+    expect(safeCasesFromStore(asks).map((c) => [c.id, c.decider])).toEqual([
+      ["u", "user"],
+      ["j", "judge"],
+      ["r", "other"],
+      ["s", "other"],
+      ["o", "other"],
     ]);
   });
 
@@ -329,22 +326,13 @@ describe("eval user text", () => {
     expect(toolCallsFromSession(lines).get("tc1")?.userMessages).toBeUndefined();
   });
 
-  it("attaches the paired user text to the safe case", () => {
-    const rows = [
-      { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "bash", toolName: "bash", command: "git push" },
-      { event: "permission_request.approved", requestId: "r3", decidedBy: { kind: "user" } },
-    ];
-    const [safe] = safeCasesFromLog(rows, toolCallsFromSession(LINES));
+  it("keeps the stored user text on a safe case", () => {
+    const [safe] = safeCasesFromStore([stored("r3", { userMessages: ["build the game", "other branch: push it"] })]);
     expect(safe?.userMessages).toEqual(["build the game", "other branch: push it"]);
   });
 
   it("pairs no user text with an ask forwarded from a subagent, as the runtime sends none", () => {
-    const rows = [
-      { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "bash", toolName: "bash", command: "git push" },
-      { event: "permission_request.waiting", requestId: "r3", toolCallId: null, surface: "bash", forwarded: true },
-      { event: "permission_request.approved", requestId: "r3", decidedBy: { kind: "forwarded", decision: { kind: "user" } } },
-    ];
-    const [safe] = safeCasesFromLog(rows, toolCallsFromSession(LINES));
+    const [safe] = safeCasesFromStore([stored("r3", { forwarded: true, decider: "user", userMessages: ["build the game"] })]);
     expect(safe).toMatchObject({ id: "r3", decider: "user" });
     expect(safe).not.toHaveProperty("userMessages");
   });

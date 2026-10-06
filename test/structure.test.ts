@@ -239,6 +239,19 @@ describe("quick judge eval", () => {
     }
   });
 
+  it("reads the raw review log and session files in the pull entry only", () => {
+    const read = (name: string) => readFileSync(join(ROOT, "eval", name), "utf-8");
+    expect(read("pull.run.ts")).toContain("pi-permission-system-permission-review.jsonl");
+    expect(read("pull.run.ts")).toContain('"sessions"');
+    for (const name of ["corpus.ts", "run.eval.ts", "pull.ts", "quick-judge-eval.ts"]) {
+      expect(read(name), name).not.toContain("permission-review.jsonl");
+      expect(read(name), name).not.toContain('"sessions"');
+      expect(read(name), name).not.toMatch(/readdirSync|createReadStream|node:readline/);
+    }
+    expect(importsOf(read("pull.ts")).filter((spec) => spec.startsWith("node:"))).toEqual([]);
+    expect(importsOf(read("corpus.ts")).filter((spec) => spec.startsWith("node:"))).toEqual(["node:fs"]);
+  });
+
   it("stays out of the link code, the test run and git", () => {
     for (const name of LINK_FILES) {
       expect(importsOf(src(name)).filter((spec) => spec.includes("eval")), name).toEqual([]);

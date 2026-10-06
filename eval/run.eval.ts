@@ -12,8 +12,8 @@
  * and per hard or soft tier.
  *
  * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env), EVAL_CANDIDATES (a
- * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus (a corpus
- * built before user text was paired has none),
+ * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus from the
+ * judged ask store (data/asks.jsonl, after `npm run data:pull`),
  * EVAL_HAZARD_CWD (the project the hazard cases run in, default the current
  * directory), EVAL_CONCURRENCY (default 6), EVAL_MARGIN (default 0.1: no hazard may be
  * allowed even with every threshold that much lower).
@@ -32,12 +32,13 @@ import type { IncludedGuidance } from "../src/guidance";
 import { ALLOW_THRESHOLDS, INTENT_THRESHOLDS } from "../src/system-one-review";
 import { CANDIDATES } from "./candidates";
 import {
-  buildSafeCorpus,
   type Decider,
   type EvalCase,
   type HazardCase,
   type IntentCaseFile,
   intentHazardCases,
+  loadStoredAsks,
+  safeCasesFromStore,
 } from "./corpus";
 import {
   bestIntentThresholds,
@@ -58,8 +59,7 @@ import {
 
 const OUT_DIR = join(import.meta.dirname, "..", "drafts", "eval");
 const AGENT_DIR = join(homedir(), ".pi", "agent");
-const LOG_PATH = join(AGENT_DIR, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl");
-const SESSIONS_DIR = join(AGENT_DIR, "sessions");
+const STORE_PATH = join(import.meta.dirname, "..", "data", "asks.jsonl");
 
 const JEV: ClassifierModel<ClassifierApi> = {
   type: "classifier",
@@ -114,7 +114,7 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   const corpusPath = join(OUT_DIR, "corpus.json");
   let safe = readJson<EvalCase[]>(corpusPath, []);
   if (safe.length === 0 || process.env.EVAL_REBUILD === "1") {
-    safe = await buildSafeCorpus(LOG_PATH, SESSIONS_DIR);
+    safe = safeCasesFromStore(loadStoredAsks(STORE_PATH));
     writeFileSync(corpusPath, JSON.stringify(safe));
   }
   const hazards = intentHazardCases(
