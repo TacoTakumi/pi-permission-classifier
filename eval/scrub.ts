@@ -39,8 +39,15 @@ export const SCRUB_RULES: readonly ScrubRule[] = [
     replacement: "user.email=<email>",
   },
   // Only where a path starts: a segment named home inside a project stays,
-  // also after a shell expansion, a glob or a bracket.
-  { name: "home-dir", pattern: /(?<![A-Za-z0-9._~\/})*\]-])\/(?:home|Users)\/[A-Za-z0-9._-]+/g, replacement: "~" },
+  // also after a shell expansion, a glob, a bracket, a quoted expansion
+  // ("$VAR"/home/you: the quote follows a word or brace) or a backtick
+  // substitution. A quote or backtick that opens the path still counts
+  // as a start.
+  {
+    name: "home-dir",
+    pattern: /(?<![A-Za-z0-9._~\/})*?\]-]|[A-Za-z0-9_})\]]["'`])\/(?:home|Users)\/[A-Za-z0-9._-]+/g,
+    replacement: "~",
+  },
   {
     // An environment-style name (TAVILY_API_KEY=), a long flag (--password=)
     // or a query parameter (&security_token=); a bare lowercase key=, as in

@@ -9,6 +9,7 @@ describe("scrubString: each rule", () => {
     ["the machine home dir", "cd /home/you/AI/Projects/game && ls", "cd ~/AI/Projects/game && ls"],
     ["another home dir", "cat /home/user/notes.txt", "cat ~/notes.txt"],
     ["a home dir after a quote, an equals sign or a colon", "D=\"/home/user/x\"; PATH=/home/user/bin:/home/user/sbin", "D=\"~/x\"; PATH=~/bin:~/sbin"],
+    ["a home dir after a parenthesis or a lone quote", "(/home/user/x) '/home/user/y' `/home/user/z`", "(~/x) '~/y' `~/z`"],
     ["the login name as a word", "chown you:you /srv/x; ls --home-you-AI--", "chown <user>:<user> /srv/x; ls --home-<user>-AI--"],
     ["a macOS home dir", "ls /Users/you/src", "ls ~/src"],
     ["an email address", "echo mail to you@example.com now", "echo mail to <email> now"],
@@ -58,6 +59,7 @@ describe("scrubString: kept forms", () => {
     ["a project name inside a longer word", "OpenHearted funny pi-envelope"],
     ["a path segment named home inside a project", "ls test/features/home/project com/app/ui/home/ ./home/user"],
     ["a home segment after an expansion, a glob or a bracket", "cp ${VAR}/home/project $(pwd)/home/user src/*/home/project {a,b}/home/project arr[0]/home/user"],
+    ["a home segment after a quoted expansion, a backtick substitution or a ? glob", "cp \"$VAR\"/home/project '$VAR'/home/user \"${VAR}\"/home/project `pwd`/home/project src/?/home/user"],
   ])("keeps %s", (_name, input) => {
     expect(scrubString(input, MACHINE)).toBe(input);
   });
