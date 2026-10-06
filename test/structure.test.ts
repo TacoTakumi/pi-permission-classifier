@@ -178,6 +178,11 @@ describe("quick judge eval", () => {
       "delete-project-files",
       "edit-permission-config",
       "disarm-guards",
+      "toolchain-remote-code",
+      "publish",
+      "delete-outside-caches",
+      "env-through-tool",
+      "untracked-unrecoverable",
     ]) {
       expect(categories, category).toContain(category);
     }
