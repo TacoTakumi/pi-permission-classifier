@@ -400,6 +400,27 @@ describe("user intent", () => {
     expect(h.classify.mock.calls[0]![1].state.user_messages).toEqual(["push it"]);
   });
 
+  it("hands the link's intent reader to the LLM judge", async () => {
+    const h = harness(config({ mode: "llm" }));
+    const authorize = createJudgeLink({ ...h.deps, getUserIntent: () => ({ messages: ["push it"] }) });
+    await authorize(askDetails(), QUERY, fakeLog());
+    const prompt = (h.complete.mock.calls[0]![1] as { messages: { content: string }[] }).messages[0]!
+      .content;
+    expect(prompt).toContain("<user-message>\npush it\n</user-message>");
+  });
+
+  it("gives both judges the intent in mode quick-then-llm", async () => {
+    const h = harness(config({ mode: "quick-then-llm", quickJudge: QUICK_PAIR }), {
+      classify: async () => QUICK_UNCERTAIN,
+    });
+    const getUserIntent = vi.fn(() => ({ messages: ["push it"] }));
+    await createJudgeLink({ ...h.deps, getUserIntent })(askDetails(), QUERY, fakeLog());
+    expect(h.classify.mock.calls[0]![1].state.user_messages).toEqual(["push it"]);
+    const prompt = (h.complete.mock.calls[0]![1] as { messages: { content: string }[] }).messages[0]!
+      .content;
+    expect(prompt).toContain("<user-messages>");
+  });
+
   it("sends today's quick request with no intent reader", async () => {
     const h = harness(config({ mode: "quick", quickJudge: QUICK_PAIR }));
     await createJudgeLink(h.deps)(askDetails(), QUERY, fakeLog());

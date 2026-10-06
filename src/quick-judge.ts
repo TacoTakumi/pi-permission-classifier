@@ -57,6 +57,7 @@ import {
   guidanceFields,
   isExcludedSurface,
   SHORT_CIRCUIT_EVENT,
+  userIntentFor,
 } from "./reviewer";
 import { buildSystemOneContext, mapSystemOneResult } from "./system-one-review";
 import type { UserIntent } from "./user-intent";
@@ -279,7 +280,7 @@ async function decide(
     }
   }
 
-  const userIntent = readIntent(deps, details);
+  const userIntent = userIntentFor(deps.getUserIntent, details);
   const context = buildSystemOneContext({
     details,
     surface,
@@ -318,21 +319,6 @@ async function decide(
     guidance: guidance ?? EMPTY_GUIDANCE,
     answers,
   });
-}
-
-/**
- * The user intent for this ask, or undefined. An ask whose requester facts
- * are missing counts as forwarded, and a throwing seam gives no intent.
- */
-function readIntent(
-  deps: QuickJudgeDeps,
-  details: PromptPermissionDetails,
-): UserIntent | undefined {
-  try {
-    return deps.getUserIntent?.(details.payload?.request?.requester?.forwarded !== false);
-  } catch {
-    return undefined;
-  }
 }
 
 /**

@@ -35,8 +35,11 @@ const CASCADE_QUICK_POLICY = { verdicts: "allow-defer", onError: "defer" } as co
 export interface JudgeLinkDeps {
   /** The loaded config, read live per ask (absent until session config loads). */
   getConfig: () => ClassifierConfig | undefined;
-  /** The LLM judge's collaborators; its config comes from `getConfig`. */
-  llm: Omit<ClassifierReviewerDeps, "getConfig">;
+  /**
+   * The LLM judge's collaborators; its config comes from `getConfig` and its
+   * intent from `getUserIntent`.
+   */
+  llm: Omit<ClassifierReviewerDeps, "getConfig" | "getUserIntent">;
   /**
    * The quick judge's collaborators; its settings come from `getConfig` and
    * its intent from `getUserIntent`.
@@ -60,7 +63,11 @@ export function createJudgeLink(deps: JudgeLinkDeps): Authorizer["authorize"] {
   let warnedOverride = false;
   const quickBreaker = deps.quick.breaker ?? new CircuitBreaker("quick");
 
-  const llmJudge = createClassifierReviewer({ ...deps.llm, getConfig: deps.getConfig });
+  const llmJudge = createClassifierReviewer({
+    ...deps.llm,
+    ...(deps.getUserIntent ? { getUserIntent: deps.getUserIntent } : {}),
+    getConfig: deps.getConfig,
+  });
 
   const quickSettings = (forced: boolean): QuickJudgeSettings | undefined => {
     const config = deps.getConfig();

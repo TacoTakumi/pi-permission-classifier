@@ -1039,3 +1039,91 @@ describe("short-circuit debug entries", () => {
     expect(log.debug.mock.calls[0]?.[1]).toMatchObject({ judge: "llm" });
   });
 });
+
+describe("user intent", () => {
+  const INTENT = { messages: ["fix the test, then push to main"] };
+
+  function sentPrompt(complete: CompleteFn): string {
+    const context = vi.mocked(complete).mock.calls[0]![1] as {
+      messages: { content: string }[];
+    };
+    return context.messages[0]!.content;
+  }
+
+  function systemPrompt(complete: CompleteFn): string {
+    return (vi.mocked(complete).mock.calls[0]![1] as { systemPrompt: string }).systemPrompt;
+  }
+
+  it("renders the user block when the dep returns intent", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const getUserIntent = vi.fn(() => INTENT);
+    const authorize = createClassifierReviewer(makeDeps({ complete, getUserIntent }));
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getUserIntent).toHaveBeenCalledWith(false);
+    expect(sentPrompt(complete)).toContain(
+      `<user-messages>\n<user-message>\n${INTENT.messages[0]}\n</user-message>\n</user-messages>`,
+    );
+  });
+
+  it("tells the dep a forwarded ask is forwarded", async () => {
+    const getUserIntent = vi.fn(() => undefined);
+    const authorize = createClassifierReviewer(makeDeps({ getUserIntent }));
+    await authorize(
+      askDetails({ requester: { agentName: "child", forwarded: true, sessionId: "s2" } }),
+      QUERY,
+      fakeLog(),
+    );
+    expect(getUserIntent).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ["the dep returns none", { getUserIntent: () => undefined }],
+    ["there is no dep", {}],
+    [
+      "the dep throws",
+      {
+        getUserIntent: () => {
+          throw new Error("session gone");
+        },
+      },
+    ],
+  ])("leaves the user block out when %s", async (_name, intentDeps) => {
+    const complete = completeReporting({ verdict: "allow" });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, ...(intentDeps as Partial<ClassifierReviewerDeps>) }),
+    );
+    expect(await authorize(askDetails(), QUERY, fakeLog())).toEqual({ kind: "allow" });
+    expect(sentPrompt(complete)).not.toContain("<user-messages>");
+  });
+
+  it("gives a custom rubric the block verbatim, without the intent rules", async () => {
+    const complete = completeReporting({ verdict: "defer" });
+    const instructions = "Custom rubric: defer everything.";
+    const config = classifierConfigSchema.parse({ instructions });
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete, getConfig: () => config, getUserIntent: () => INTENT }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(systemPrompt(complete)).toBe(instructions);
+    expect(sentPrompt(complete)).toContain("<user-messages>");
+    expect(sentPrompt(complete)).not.toMatch(/directly and\s+specifically/);
+  });
+
+  it("never logs the user text", async () => {
+    const log = fakeLog();
+    const authorize = createClassifierReviewer(makeDeps({ getUserIntent: () => INTENT }));
+    await authorize(askDetails(), QUERY, log);
+    expect(JSON.stringify([log.review.mock.calls, log.debug.mock.calls])).not.toContain(
+      INTENT.messages[0],
+    );
+  });
+
+  it("never reads intent on a short circuit", async () => {
+    const getUserIntent = vi.fn(() => INTENT);
+    const authorize = createClassifierReviewer(
+      makeDeps({ getUserIntent, getRegistry: () => undefined }),
+    );
+    await authorize(askDetails(), QUERY, fakeLog());
+    expect(getUserIntent).not.toHaveBeenCalled();
+  });
+});

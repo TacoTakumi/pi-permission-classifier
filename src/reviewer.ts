@@ -16,7 +16,9 @@
  *   4. the judge model and its auth resolve (else defer, recorded),
  *   5. the guidance seam selects the operator and trusted-project guidance
  *      files for this ask (a throw defers, recorded — no model call),
- *   6. the model reviews the ask facts plus guidance.
+ *   6. the user intent seam gives the user's own messages, or none,
+ *   7. the model reviews the ask facts plus guidance and, with intent, the
+ *      user's messages.
  *
  * Once a config is loaded, every outcome from step 3 on goes through the
  * verdict policy, which applies the link's `verdicts` and `onError`
@@ -40,6 +42,7 @@ import { extractFullCommandContext, type FullCommandContext } from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
 import { type CompleteFn, type ReviewOutcome, reviewAsk } from "./model-review";
+import type { UserIntent } from "./user-intent";
 import {
   applyVerdictPolicy,
   type FailureKind,
@@ -132,6 +135,12 @@ export interface ClassifierReviewerDeps {
    * Absent means no guidance. A throw defers the ask (guidance-load-failed).
    */
   getGuidance?: () => GuidanceSelection;
+  /**
+   * User intent seam: called once per judged ask right before the model
+   * call, with whether the ask was forwarded. Absent, undefined or a throw
+   * means no user block.
+   */
+  getUserIntent?: (forwarded: boolean) => UserIntent | undefined;
   /**
    * Outcome seam: called once per `classifier.decision` entry with the
    * verdict and defer reason, after the entry is logged. Never called for
@@ -343,6 +352,7 @@ async function decide(
     });
   }
 
+  const userIntent = userIntentFor(deps.getUserIntent, details);
   const outcome = await reviewAsk({
     details,
     config,
@@ -352,6 +362,7 @@ async function decide(
     headers: auth.headers,
     context,
     guidance: guidance.included,
+    ...(userIntent === undefined ? {} : { userIntent }),
   });
   if (
     outcome.deferReason !== undefined &&
@@ -403,6 +414,22 @@ async function decide(
       : { verdict: outcome.verdict.kind as "allow" | "deny" },
   );
   return verdict;
+}
+
+/**
+ * The user intent for an ask through a judge's seam, or undefined. An ask
+ * whose requester facts are missing counts as forwarded, and a throwing seam
+ * gives no intent.
+ */
+export function userIntentFor(
+  getUserIntent: ((forwarded: boolean) => UserIntent | undefined) | undefined,
+  details: PromptPermissionDetails,
+): UserIntent | undefined {
+  try {
+    return getUserIntent?.(details.payload?.request?.requester?.forwarded !== false);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

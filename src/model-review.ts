@@ -22,6 +22,7 @@ import type { ClassifierConfig } from "./config-schema";
 import type { FullCommandContext } from "./context";
 import type { IncludedGuidance } from "./guidance";
 import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "./prompt";
+import type { UserIntent } from "./user-intent";
 
 /** The reason used for a deny when the model omits its own. */
 export const GENERIC_TEACHING_REASON =
@@ -109,6 +110,8 @@ export interface ReviewAskInputs {
   context?: FullCommandContext | null;
   /** Selected guidance files, rendered after the preamble; absent renders none. */
   guidance?: readonly IncludedGuidance[];
+  /** The user's own messages when intent is available; absent renders no user block. */
+  userIntent?: UserIntent;
 }
 
 /**
@@ -164,6 +167,7 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
             inputs.details,
             inputs.context ?? null,
             inputs.guidance ?? [],
+            inputs.userIntent,
           ),
           timestamp: Date.now(),
         },
