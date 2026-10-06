@@ -119,6 +119,10 @@ this project adheres to
   by default, and denies under `allow-deny`.
 - When `allow-defer` withholds a model deny, the entry records defer reason
   `deny-capped`.
+- The LLM judge prompt escapes a delimiter tag (such as `</ask-value>` or
+  `<user-messages>`) inside the judged value, the executed unit and the
+  full command, so a command cannot close its block or forge a block of
+  user messages.
 - The warning for an unreachable permission service now says no permission
   link is registered.
 

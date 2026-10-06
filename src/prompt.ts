@@ -10,7 +10,8 @@
  * itself (src/context.ts is the only evidence reader), and the judge decides
  * on the ask, not on session content. Untrusted strings (the judged value,
  * the executed unit, the full command) are delimited as data so a crafted
- * command cannot instruct the judge.
+ * command cannot instruct the judge, and a delimiter tag inside them is
+ * escaped so a command cannot close its block or forge a user block.
  *
  * Guidance files (the operator's global AGENTS.md and a trusted project's own)
  * are rendered verbatim, each in its own labelled data block, after the
@@ -156,7 +157,7 @@ const USER_HEADER = "Messages the user wrote to the agent in this session, oldes
 const DELIMITER_TAG =
   /<(\/?\s*(?:user-messages?|ask-value|executed-unit|full-command|guidance)\b)/gi;
 
-/** Escape the delimiter tags in user text so it cannot open or close a block. */
+/** Escape the delimiter tags in judged or user text so it cannot open or close a block. */
 function escapeDelimiters(text: string): string {
   return text.replace(DELIMITER_TAG, "&lt;$1");
 }
@@ -229,7 +230,7 @@ export function renderReviewPrompt(
     "",
     "Value under review:",
     "<ask-value>",
-    request.value,
+    escapeDelimiters(request.value),
     "</ask-value>",
     ...(request.executedUnit === null
       ? []
@@ -237,7 +238,7 @@ export function renderReviewPrompt(
           "",
           "Unit that will actually execute:",
           "<executed-unit>",
-          request.executedUnit,
+          escapeDelimiters(request.executedUnit),
           "</executed-unit>",
         ]),
     ...(context === null
@@ -246,7 +247,7 @@ export function renderReviewPrompt(
           "",
           "Full command the value runs inside:",
           "<full-command>",
-          context.text,
+          escapeDelimiters(context.text),
           "</full-command>",
         ]),
     "",
