@@ -2,14 +2,20 @@
  * The eval corpus: asks rebuilt from the permission review log and the pi
  * session files. Each permission_request.waiting entry that ended approved
  * is a safe case; its full command and cwd come from the session file that
- * holds the same tool call id. The corpus is the operator's own command
- * history, so it is written only under drafts/ (gitignored) and never
- * committed.
+ * holds the same tool call id, and so does the user text: the runtime
+ * selection of the user messages on the call's branch up to the call, or
+ * none when the runtime would send none. The corpus is the operator's own
+ * command history, so it is written only under drafts/ (gitignored) and
+ * never committed.
  */
 
 import { createReadStream, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+
+import { readUserIntent } from "../src/user-intent";
 
 /**
  * Who approved a logged ask: the user, a judge link, or anything else (a
@@ -32,6 +38,8 @@ export interface EvalCase {
   fullCommand?: string;
   /** Who approved it; safe cases only. */
   decider?: Decider;
+  /** The user text the runtime would send with this ask; absent when none. */
+  userMessages?: string[];
 }
 
 /** One hand-written hazard case, as eval/hazard-cases.json holds it. */
@@ -47,6 +55,8 @@ export interface SessionToolCall {
   cwd: string;
   name: string;
   command?: string;
+  /** The user text the runtime would send at this call; absent when none. */
+  userMessages?: string[];
 }
 
 /** The surfaces the quick judge never sees. */
@@ -107,6 +117,7 @@ export function safeCasesFromLog(
       cwd: call.cwd,
       fullCommand,
       decider: deciderOf(outcome),
+      ...(call.userMessages === undefined ? {} : { userMessages: call.userMessages }),
     });
   }
   return cases;
@@ -144,27 +155,87 @@ export function hazardCases(hazards: readonly HazardCase[], cwd: string): EvalCa
   }));
 }
 
-/** Pure: the tool calls in one session file's lines, by tool call id. */
+/** A parsed session file line, as far as the corpus reads it. */
+interface SessionLine {
+  type?: unknown;
+  id?: unknown;
+  parentId?: unknown;
+  cwd?: unknown;
+  message?: { role?: unknown; content?: unknown };
+}
+
+/**
+ * Pure: the tool calls in one session file's lines, by tool call id, each
+ * with the user text the runtime would send at that call. Entries form a
+ * tree through parentId (an entry without one follows the line before it),
+ * so each call reads only the user messages on its own branch.
+ */
 export function toolCallsFromSession(lines: Iterable<string>): Map<string, SessionToolCall> {
   const calls = new Map<string, SessionToolCall>();
   let cwd = "";
+  // Per entry: the nearest user message on its branch, itself included.
+  const nearestUser = new Map<string, string | null>();
+  // Per user message: the entry and the user message before it on the branch.
+  const users = new Map<string, { entry: SessionEntry; previous: string | null }>();
+  // Per nearest user message: the user text, shared by every call below it.
+  const userText = new Map<string | null, string[] | undefined>();
+  let previousId: string | null = null;
+
+  const userTextAt = (nearest: string | null): string[] | undefined => {
+    if (!userText.has(nearest)) {
+      const branch: SessionEntry[] = [];
+      for (let at = nearest; at !== null; at = users.get(at)?.previous ?? null) {
+        const user = users.get(at);
+        if (user === undefined) break;
+        branch.push(user.entry);
+      }
+      branch.reverse();
+      const intent = readUserIntent(
+        { sessionManager: { getBranch: () => branch }, hasPendingMessages: () => false },
+        false,
+      );
+      userText.set(nearest, intent === undefined ? undefined : [...intent.messages]);
+    }
+    return userText.get(nearest);
+  };
+
   for (const line of lines) {
-    if (cwd === "" && line.includes('"type":"session"')) {
-      const header = JSON.parse(line) as { cwd?: unknown };
-      cwd = typeof header.cwd === "string" ? header.cwd : "";
+    if (line.trim() === "") continue;
+    let entry: SessionLine;
+    try {
+      entry = JSON.parse(line) as SessionLine;
+    } catch {
       continue;
     }
-    if (!line.includes('"toolCall"')) continue;
-    const entry = JSON.parse(line) as { message?: { content?: unknown } };
+    if (entry.type === "session") {
+      if (cwd === "") cwd = typeof entry.cwd === "string" ? entry.cwd : "";
+      continue;
+    }
+    const id = typeof entry.id === "string" ? entry.id : undefined;
+    const parentId =
+      entry.parentId === undefined ? previousId : typeof entry.parentId === "string" ? entry.parentId : null;
+    let nearest = parentId === null ? null : (nearestUser.get(parentId) ?? null);
+    const role = entry.type === "message" ? entry.message?.role : undefined;
+    if (role === "user" && id !== undefined) {
+      users.set(id, { entry: entry as SessionEntry, previous: nearest });
+      nearest = id;
+    }
+    if (id !== undefined) {
+      nearestUser.set(id, nearest);
+      previousId = id;
+    }
+
     const content = entry.message?.content;
-    if (!Array.isArray(content)) continue;
+    if (role !== "assistant" || !Array.isArray(content)) continue;
     for (const part of content as Record<string, unknown>[]) {
       if (part?.type !== "toolCall" || typeof part.id !== "string") continue;
       const args = part.arguments as Record<string, unknown> | undefined;
+      const paired = userTextAt(nearest);
       calls.set(part.id, {
         cwd,
         name: typeof part.name === "string" ? part.name : "",
         command: typeof args?.command === "string" ? args.command : undefined,
+        ...(paired === undefined ? {} : { userMessages: paired }),
       });
     }
   }

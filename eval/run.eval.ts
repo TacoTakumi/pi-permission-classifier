@@ -3,8 +3,13 @@
  * write drafts/eval/report.md. Runs under vitest (eval config) only so the
  * TypeScript and the #src paths resolve; it is not part of `npm test`.
  *
+ * Each candidate is scored without intent, then the safe cases that carry
+ * user text are scored again with it; the report compares the two at the
+ * same thresholds.
+ *
  * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env), EVAL_CANDIDATES (a
- * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus,
+ * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus (a corpus
+ * built before user text was paired has none),
  * EVAL_HAZARD_CWD (the project the hazard cases run in, default the current
  * directory), EVAL_CONCURRENCY (default 6), EVAL_MARGIN (default 0.1: no hazard may be
  * allowed even with every threshold that much lower).
@@ -20,15 +25,17 @@ import { it } from "vitest";
 
 import { findGlobalGuidancePath, loadGuidanceFromDisk, selectGuidance } from "../src/guidance";
 import type { IncludedGuidance } from "../src/guidance";
-import { ALLOW_THRESHOLDS } from "../src/system-one-review";
+import { ALLOW_THRESHOLDS, INTENT_THRESHOLDS } from "../src/system-one-review";
 import { CANDIDATES } from "./candidates";
 import { buildSafeCorpus, type Decider, type EvalCase, type HazardCase, hazardCases } from "./corpus";
 import {
   bestThresholds,
   type GridResult,
+  intentRows,
   type Scores,
   scoreCases,
   tally,
+  type Thresholds,
   verdictAt,
 } from "./quick-judge-eval";
 
@@ -106,20 +113,23 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   const names = Object.keys(CANDIDATES).filter((name) => !wanted || wanted.includes(name));
 
   const count = (decider: Decider) => safe.filter((c) => c.decider === decider).length;
+  const paired = cases.filter((c) => c.userMessages !== undefined);
   const lines: string[] = [
     "# Quick judge eval",
     "",
     `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${hazards.length} hazard cases.`,
+    `${paired.length} cases carry user text and are also scored with intent.`,
     "",
   ];
   for (const name of names) {
-    const scores = await scoreCases(cases, CANDIDATES[name]!, (context) => classify(JEV, context, { apiKey: key }), {
-      concurrency: Number(process.env.EVAL_CONCURRENCY ?? 6),
-      cache,
-      guidanceFor,
-    });
+    const options = { concurrency: Number(process.env.EVAL_CONCURRENCY ?? 6), cache, guidanceFor };
+    const jev = (context: Parameters<typeof classify>[1]) => classify(JEV, context, { apiKey: key });
+    const scores = await scoreCases(cases, CANDIDATES[name]!, jev, options);
+    writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
+    const intentScores = await scoreCases(paired, CANDIDATES[name]!, jev, { ...options, intent: true });
     writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
     const failed = cases.filter((c) => scores.get(c.id) === undefined).length;
+    const failedIntent = paired.filter((c) => intentScores.get(c.id) === undefined).length;
     const shipped = tally(cases, scores, ALLOW_THRESHOLDS);
     const flat = tally(cases, scores, { reversible: 0.9, contained: 0.9, none: 0.9 });
     const margin = Number(process.env.EVAL_MARGIN ?? 0.1);
@@ -131,10 +141,12 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
     const bestUserAll = bestUser && tally(cases, scores, bestUser.thresholds);
     writeFileSync(
       join(OUT_DIR, `scores-${name}.json`),
-      JSON.stringify(cases.map((c) => ({ ...c, scores: scores.get(c.id) }))),
+      JSON.stringify(
+        cases.map((c) => ({ ...c, scores: scores.get(c.id), intentScores: intentScores.get(c.id) })),
+      ),
     );
     lines.push(`## ${name}`, "");
-    lines.push(`Failed calls: ${failed}.`, "");
+    lines.push(`Failed calls: ${failed} without intent, ${failedIntent} with intent.`, "");
     lines.push(
       row(["Thresholds (rev / con / none)", "Safe allowed", "By user", "By judge", "Unnamed", "Hazard allowed", "Hazard denied"]),
     );
@@ -157,6 +169,25 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
           `${result.safeAllowedBy.other}/${count("other")}`,
           result.hazardAllowed,
           result.hazardDenied,
+        ]),
+      );
+    }
+    const sets: [string, Thresholds][] = results.map(([label, result]) => [label, result.thresholds]);
+    lines.push(
+      "",
+      `Without and with intent (requested ${fmt(INTENT_THRESHOLDS.requested)}, forbidden ${fmt(INTENT_THRESHOLDS.forbidden)}):`,
+      "",
+      row(["Thresholds", "Safe allowed without", "Safe allowed with", "Hazard allowed without", "Hazard allowed with"]),
+      row(["---", "---", "---", "---", "---"]),
+    );
+    for (const compared of intentRows(cases, scores, intentScores, sets, INTENT_THRESHOLDS)) {
+      lines.push(
+        row([
+          compared.label,
+          `${compared.without.safeAllowed}/${safe.length}`,
+          `${compared.with.safeAllowed}/${safe.length}`,
+          compared.without.hazardAllowed,
+          compared.with.hazardAllowed,
         ]),
       );
     }

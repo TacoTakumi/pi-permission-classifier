@@ -5,12 +5,23 @@ import { CANDIDATES } from "../eval/candidates";
 import { type EvalCase, hazardCases, safeCasesFromLog, toolCallsFromSession } from "../eval/corpus";
 import {
   bestThresholds,
+  cacheKey,
   contextFor,
+  intentRows,
+  intentVerdictAt,
   type Scores,
   scoreCases,
+  scoresOf,
   tally,
   verdictAt,
 } from "../eval/quick-judge-eval";
+import {
+  ALLOW_THRESHOLDS,
+  HAZARD_OPTIONS,
+  INTENT_THRESHOLDS,
+  mapSystemOneResult,
+} from "../src/system-one-review";
+import { readUserIntent } from "../src/user-intent";
 
 const SESSION_LINES = [
   JSON.stringify({ type: "session", id: "s1", cwd: "/work/game" }),
@@ -249,5 +260,166 @@ describe("eval narrow candidate", () => {
     expect(narrow?.contained).toBe(CANDIDATES.shipped!.contained);
     expect(narrow?.reversible).toBe(CANDIDATES.examples!.reversible);
     expect(narrow?.hazard).toBe(CANDIDATES.examples!.hazard);
+  });
+});
+
+describe("eval user text", () => {
+  const header = JSON.stringify({ type: "session", id: "s1", cwd: "/work/game" });
+  const entry = (id: string, parentId: string | null, message: Record<string, unknown>) => ({
+    type: "message",
+    id,
+    parentId,
+    timestamp: "2026-10-06T00:00:00Z",
+    message: { timestamp: 0, ...message },
+  });
+  const user = (id: string, parentId: string | null, content: string) =>
+    entry(id, parentId, { role: "user", content });
+  const callBy = (id: string, parentId: string, toolCallId: string, command: string) =>
+    entry(id, parentId, {
+      role: "assistant",
+      content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: { command } }],
+    });
+  const skill = '<skill name="check" location="/s/check/SKILL.md">\nSKILL BODY\n</skill>\n\nrun the check';
+  const ENTRIES = [
+    user("u1", null, "build the game"),
+    callBy("a1", "u1", "tc1", "godot --build"),
+    entry("t1", "a1", { role: "toolResult", toolCallId: "tc1", toolName: "bash", content: [{ type: "text", text: "TOOL OUTPUT" }] }),
+    user("u2", "t1", skill),
+    callBy("a2", "u2", "tc2", "godot --check-only"),
+    // A second branch forked from a1.
+    user("u3", "a1", "other branch: push it"),
+    callBy("a3", "u3", "tc3", "git push"),
+  ];
+  const LINES = [header, ...ENTRIES.map((e) => JSON.stringify(e))];
+
+  function runtimeSelection(ids: string[]): readonly string[] | undefined {
+    const branch = ids.map((id) => ENTRIES.find((e) => e.id === id)!) as never[];
+    return readUserIntent(
+      { sessionManager: { getBranch: () => branch }, hasPendingMessages: () => false },
+      false,
+    )?.messages;
+  }
+
+  it("pairs each tool call with the runtime selection of its branch up to the call", () => {
+    const calls = toolCallsFromSession(LINES);
+    expect(calls.get("tc1")?.userMessages).toEqual(["build the game"]);
+    expect(calls.get("tc1")?.userMessages).toEqual(runtimeSelection(["u1", "a1"]));
+    expect(calls.get("tc2")?.userMessages).toEqual(["build the game", "[skill check] run the check"]);
+    expect(calls.get("tc2")?.userMessages).toEqual(runtimeSelection(["u1", "a1", "t1", "u2", "a2"]));
+    expect(calls.get("tc3")?.userMessages).toEqual(["build the game", "other branch: push it"]);
+    expect(calls.get("tc3")?.userMessages).toEqual(runtimeSelection(["u1", "a1", "u3", "a3"]));
+  });
+
+  it("pairs no user text when the selection was cut", () => {
+    const lines = [
+      header,
+      JSON.stringify(user("u1", null, "x".repeat(5_000))),
+      JSON.stringify(callBy("a1", "u1", "tc1", "ls")),
+    ];
+    expect(toolCallsFromSession(lines).get("tc1")?.userMessages).toBeUndefined();
+  });
+
+  it("attaches the paired user text to the safe case", () => {
+    const rows = [
+      { event: "permission_request.waiting", requestId: "r3", toolCallId: "tc3", surface: "bash", toolName: "bash", command: "git push" },
+      { event: "permission_request.approved", requestId: "r3", decidedBy: { kind: "user" } },
+    ];
+    const [safe] = safeCasesFromLog(rows, toolCallsFromSession(LINES));
+    expect(safe?.userMessages).toEqual(["build the game", "other branch: push it"]);
+  });
+});
+
+describe("eval intent scoring", () => {
+  const PLAIN: EvalCase = { id: "p", kind: "safe", value: "git push", surface: "bash", tool: "bash", cwd: "/w", fullCommand: "git push" };
+  const PAIRED: EvalCase = { ...PLAIN, id: "q", userMessages: ["push it"] };
+
+  function intentResult(
+    reversible: number,
+    contained: number,
+    hazards: Record<string, number>,
+    requested: number,
+    forbidden: number,
+  ): ClassifierResult {
+    const probabilities: Record<string, number> = Object.fromEntries(
+      Object.keys(HAZARD_OPTIONS).map((option) => [option, 0]),
+    );
+    Object.assign(probabilities, hazards);
+    return {
+      api: "typesafe-system-one",
+      provider: "typesafe",
+      model: "jev",
+      stopReason: "stop",
+      timestamp: 0,
+      answers: {
+        reversible: { type: "bool", probability: reversible },
+        contained: { type: "bool", probability: contained },
+        hazard: { type: "choice", choice: "none", confidence: 0, probabilities },
+        requested: { type: "bool", probability: requested },
+        forbidden: { type: "bool", probability: forbidden },
+      },
+    } as ClassifierResult;
+  }
+
+  it("sends the user messages and the intent questions only with intent and paired text", () => {
+    const withIntent = contextFor(PAIRED, CANDIDATES.shipped!, undefined, true);
+    expect(withIntent.state.user_messages).toEqual(["push it"]);
+    expect(Object.keys(withIntent.questions)).toEqual(
+      expect.arrayContaining(["requested", "forbidden", "reversible", "contained", "hazard"]),
+    );
+    expect(contextFor(PAIRED, CANDIDATES.shipped!, undefined).state).not.toHaveProperty("user_messages");
+    expect(contextFor(PAIRED, CANDIDATES.shipped!, undefined).questions).toBe(CANDIDATES.shipped);
+    expect(contextFor(PLAIN, CANDIDATES.shipped!, undefined, true).state).not.toHaveProperty("user_messages");
+  });
+
+  it("keeps the cache key without intent unchanged by the paired text", () => {
+    const { userMessages: _, ...unpaired } = PAIRED;
+    expect(cacheKey(PAIRED, CANDIDATES.shipped!)).toBe(cacheKey(unpaired, CANDIDATES.shipped!));
+    expect(cacheKey(PAIRED, CANDIDATES.shipped!, true)).not.toBe(cacheKey(PAIRED, CANDIDATES.shipped!));
+  });
+
+  it("reads requested, forbidden and every hazard probability", () => {
+    const scores = scoresOf(intentResult(0.2, 0.3, { push_or_publish: 0.9, none: 0.1 }, 0.95, 0.05));
+    expect(scores).toMatchObject({ requested: 0.95, forbidden: 0.05, topHazardName: "push_or_publish" });
+    expect(scores?.hazards).toMatchObject({ push_or_publish: 0.9, none: 0.1 });
+  });
+
+  it("applies the quick judge's intent rule at the built-in thresholds", () => {
+    const grid = [0.05, 0.5, 0.85, 0.95];
+    for (const reversible of grid) {
+      for (const requested of grid) {
+        for (const forbidden of grid) {
+          for (const hazards of [
+            { none: 0.95, other_destructive: 0.05 } as Record<string, number>,
+            { none: 0.05, push_or_publish: 0.95 },
+            { none: 0.7, secret_exfiltration: 0.3 },
+            { none: 0.05, credential_access: 0.95 },
+            { none: 0.5, force_push: 0.5 },
+          ]) {
+            const result = intentResult(reversible, 0.9, hazards, requested, forbidden);
+            const expected = mapSystemOneResult(result, { denyThreshold: 0.9 }, true).kind;
+            const got = intentVerdictAt(scoresOf(result)!, ALLOW_THRESHOLDS, INTENT_THRESHOLDS);
+            expect(got, JSON.stringify({ reversible, requested, forbidden, hazards })).toBe(
+              expected === "uncertain" ? "defer" : expected,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("reports safe allows with and without intent at the same thresholds", () => {
+    const plainScores: Scores = { reversible: 0.2, contained: 0.3, none: 0.1, topHazard: 0.9, topHazardName: "push_or_publish" };
+    const intentScores = scoresOf(intentResult(0.2, 0.3, { push_or_publish: 0.9, none: 0.1 }, 0.95, 0.05))!;
+    const rows = intentRows(
+      [PLAIN, PAIRED],
+      new Map([["p", plainScores], ["q", plainScores]]),
+      new Map([["q", intentScores]]),
+      [["built-in", ALLOW_THRESHOLDS]],
+      INTENT_THRESHOLDS,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ label: "built-in" });
+    expect(rows[0]!.without.safeAllowed).toBe(0);
+    expect(rows[0]!.with.safeAllowed).toBe(1);
   });
 });
