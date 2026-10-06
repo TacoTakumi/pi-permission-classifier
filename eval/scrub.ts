@@ -74,14 +74,21 @@ export interface Machine {
   /** The login name, replaced by `<user>` wherever it stands as a whole word. */
   userName?: string;
   /**
-   * Project directory names and their stable aliases (p1, p2, ...). A name
-   * is replaced wherever it stands as a whole word: in a path, in a session
-   * directory name, in prose. A name with a digit, a dot, a hyphen or an
-   * inner capital (OpenHeart, U4R, pi-env) matches in any case; a plain
-   * name (Wholphin, Fun) matches in its exact case, and in other cases only
-   * inside a path or identifier, so prose keeps its common words.
+   * The projects the asks work in (seen under the projects root) and their
+   * stable aliases (p1, p2, ...). A name is replaced wherever it stands as
+   * a whole word, in any case: in a path, in a session directory name, in
+   * prose. A short plain name (Fun) matches in its exact case only, so
+   * prose keeps its common words.
    */
   projects?: Readonly<Record<string, string>>;
+  /**
+   * Directory names only seeded from the projects root listing, with their
+   * aliases. One with a digit, a dot, a hyphen or an inner capital matches
+   * as a project; a plain name (Health) matches in its exact case, and in
+   * other cases only inside a path or identifier, since it may be a common
+   * word in prose.
+   */
+  seededProjects?: Readonly<Record<string, string>>;
 }
 
 /** Whether a project name carries a mark: a digit, a dot, a hyphen or a capital after its first letter. */
@@ -94,21 +101,27 @@ function wordPattern(name: string, ignoreCase: boolean): RegExp {
   return new RegExp(String.raw`(?<![A-Za-z0-9_])${escapeRegExp(name)}(?![A-Za-z0-9_])`, ignoreCase ? "gi" : "g");
 }
 
+/** Plain names shorter than this match in their exact case only (Fun). */
+const SHORT_NAME = 5;
+
 /**
  * The patterns that replace a project name. A name with a mark (OpenHeart,
- * U4R, pi-env) matches as a whole word in any case. A plain name matches
- * in its exact case as a whole word, and in other cases only where it is
- * joined to a path or identifier (a /, -, _ or . directly before or after
- * it), so a file docs/wholphin-migration.md aliases while the common word
- * health in prose stays.
+ * U4R, pi-env) matches as a whole word in any case, and so does a seen
+ * plain name of five characters or more (Wholphin). A short plain name,
+ * or a seeded plain name of any length, matches in its exact case as a
+ * whole word; a seeded one also in other cases where it is joined to a
+ * path or identifier (a /, -, _ or . directly before or after it), so a
+ * file docs/health-check.md aliases while the common word health in prose
+ * stays.
  */
-function namePatterns(name: string): RegExp[] {
-  if (hasMark(name)) return [wordPattern(name, true)];
-  const escaped = escapeRegExp(name);
-  return [
-    wordPattern(name, false),
-    new RegExp(String.raw`(?<=[\/._-])${escaped}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])${escaped}(?=[\/._-])`, "gi"),
-  ];
+function namePatterns(name: string, seeded: boolean): RegExp[] {
+  if (hasMark(name) || (!seeded && name.length >= SHORT_NAME)) return [wordPattern(name, true)];
+  const patterns = [wordPattern(name, false)];
+  if (seeded) {
+    const escaped = escapeRegExp(name);
+    patterns.push(new RegExp(String.raw`(?<=[\/._-])${escaped}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])${escaped}(?=[\/._-])`, "gi"));
+  }
+  return patterns;
 }
 
 /**
@@ -117,7 +130,7 @@ function namePatterns(name: string): RegExp[] {
  */
 export function scrubString(text: string, machine: Machine = {}): string {
   let out = text;
-  const { homeDir, userName, projects } = machine;
+  const { homeDir, userName, projects, seededProjects } = machine;
   if (homeDir !== undefined && homeDir !== "" && homeDir !== "/") {
     out = out.replace(new RegExp(escapeRegExp(homeDir.replace(/\/+$/, "")) + "(?![A-Za-z0-9._-])", "g"), "~");
   }
@@ -128,11 +141,13 @@ export function scrubString(text: string, machine: Machine = {}): string {
   if (userName !== undefined && userName !== "") {
     out = out.replace(wordPattern(userName, false), "<user>");
   }
-  if (projects !== undefined) {
-    for (const name of Object.keys(projects).sort((a, b) => b.length - a.length)) {
-      for (const pattern of namePatterns(name)) {
-        out = out.replace(pattern, projects[name]!);
-      }
+  const aliases: [string, string, boolean][] = [
+    ...Object.entries(projects ?? {}).map(([name, alias]): [string, string, boolean] => [name, alias, false]),
+    ...Object.entries(seededProjects ?? {}).map(([name, alias]): [string, string, boolean] => [name, alias, true]),
+  ];
+  for (const [name, alias, seeded] of aliases.sort((a, b) => b[0].length - a[0].length)) {
+    for (const pattern of namePatterns(name, seeded)) {
+      out = out.replace(pattern, alias);
     }
   }
   return out;

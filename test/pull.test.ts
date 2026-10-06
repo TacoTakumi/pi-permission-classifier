@@ -4,6 +4,7 @@ import {
   assignProjectAliases,
   mergeStore,
   seedProjectNames,
+  splitProjectAliases,
   projectNames,
   rawAsksFromLog,
   type StoredAsk,
@@ -259,6 +260,14 @@ describe("project aliases", () => {
   it("seeds the distinctive directory names from a root listing and drops common or short ones", () => {
     const listing = ["LLMaster", "AgentSquire", "core", "x", "MCP", "Health", "pi-env", "h3-reels", "specflo", "Fun", "claude-env.20260615", "kilo"];
     expect(seedProjectNames(listing)).toEqual(["LLMaster", "AgentSquire", "Health", "pi-env", "h3-reels", "claude-env.20260615"]);
+  });
+
+  it("splits the table into the projects seen under the root path and the names only seeded", () => {
+    const table = { game: "p1", Health: "p2", other: "p3" };
+    expect(splitProjectAliases(table, ["game", "other"])).toEqual({
+      projects: { game: "p1", other: "p3" },
+      seededProjects: { Health: "p2" },
+    });
   });
 
   it("keeps given aliases and numbers new names on from them", () => {

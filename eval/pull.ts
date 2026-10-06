@@ -345,6 +345,24 @@ export function seedProjectNames(listing: Iterable<string>): string[] {
 }
 
 /**
+ * Pure: the alias table split into the projects the asks work in (named
+ * in `seenNames`, which `projectNames` gives) and the names only seeded
+ * from the root listing, for the two scrub sets.
+ */
+export function splitProjectAliases(
+  aliases: Readonly<Record<string, string>>,
+  seenNames: Iterable<string>,
+): { projects: Record<string, string>; seededProjects: Record<string, string> } {
+  const seen = new Set(seenNames);
+  const projects: Record<string, string> = {};
+  const seededProjects: Record<string, string> = {};
+  for (const [name, alias] of Object.entries(aliases)) {
+    (seen.has(name) ? projects : seededProjects)[name] = alias;
+  }
+  return { projects, seededProjects };
+}
+
+/**
  * Pure: `existing` aliases plus a new one (p<n>, n counting on from the
  * highest alias already given) for each name not yet aliased, in the
  * order the names come. An alias once given never changes.

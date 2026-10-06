@@ -780,10 +780,12 @@ directory in the root's listing whose name is distinctive (a digit, a dot,
 a hyphen or a capital after the first letter, or a capitalised plain word
 of four letters or more). A plain lowercase or short directory name
 (`core`, `x`) is aliased only when it is seen under the root path, so a
-common word is never replaced in prose. A name with those marks matches in any
-case; a plain name matches in its exact case, and in other cases only
-where it is joined to a path or identifier (`docs/wholphin-migration.md`
-aliases, `health check` in prose does not). The table that maps names to aliases is
+common word is never replaced in prose. A project an ask works in, and any
+name with those marks, matches in any case wherever it stands (a short
+plain name such as `Fun` only in its exact case); a plain name that is
+only seeded matches in its exact case, and in other cases only where it
+is joined to a path or identifier (`docs/health-check.md` aliases,
+`health check` in prose does not), since it may be a common word. The table that maps names to aliases is
 `data/project-aliases.json`, gitignored, and an entry is never renumbered,
 so keep the file. The rules are patterns: a name or a secret in free text
 that matches none of them is not caught, so read a pull before you commit

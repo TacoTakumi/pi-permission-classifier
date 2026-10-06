@@ -23,6 +23,7 @@ import {
   scrubAsks,
   seedProjectNames,
   type SessionToolCall,
+  splitProjectAliases,
   toolCallsFromSession,
 } from "./pull";
 
@@ -73,12 +74,13 @@ it("pulls the judged asks into the store", { timeout: 0 }, async () => {
   const directories = existsSync(PROJECTS_ROOT)
     ? readdirSync(PROJECTS_ROOT).filter((name) => statSync(join(PROJECTS_ROOT, name)).isDirectory())
     : [];
+  const seen = projectNames(raw, PROJECTS_ROOT, homedir());
   const aliases = assignProjectAliases(
     existsSync(ALIASES_PATH) ? (JSON.parse(readFileSync(ALIASES_PATH, "utf-8")) as Record<string, string>) : {},
-    [...projectNames(raw, PROJECTS_ROOT, homedir()), ...seedProjectNames(directories)],
+    [...seen, ...seedProjectNames(directories)],
   );
   writeFileSync(ALIASES_PATH, `${JSON.stringify(aliases, null, 2)}\n`);
-  const asks = scrubAsks(raw, { homeDir: homedir(), userName: userInfo().username, projects: aliases });
+  const asks = scrubAsks(raw, { homeDir: homedir(), userName: userInfo().username, ...splitProjectAliases(aliases, seen) });
   const existing = existsSync(STORE_PATH) ? readFileSync(STORE_PATH, "utf-8").split("\n") : [];
   const lines = mergeStore(existing, asks);
   if (lines.length > 0) appendFileSync(STORE_PATH, lines.map((line) => `${line}\n`).join(""));
