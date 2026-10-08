@@ -1,5 +1,12 @@
 {
+  "mode": "quick-then-llm",
   "provider": "anthropic",
   "model": "claude-haiku-4-5",
-  "timeoutMs": 5000
+  "timeoutMs": 5000,
+  "quickJudge": {
+    "provider": "typesafe",
+    "model": "jev-latest",
+    "guidance": true,
+    "timeoutMs": 5000
+  }
 }

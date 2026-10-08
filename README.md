@@ -94,8 +94,8 @@ and installing it grants it no authority until you name it in the chain.
 
    `{}` means: mode `llm`, judged by the session's chat model, every surface
    except `path` and `external_directory`, 5000 ms timeout, built-in
-   rubric. See `config/config.example.json` for a version with a dedicated
-   judge model.
+   rubric. See `config/config.example.json` for a version that names a
+   dedicated model and a quick judge, each with its own call budget.
 
 5. Choose the judges. Start a new pi session and run `/permission-model`:
    in the menu, set who judges, the model for each judge that mode runs,
@@ -166,7 +166,7 @@ and every quick judge ask is then `model-unresolved`; repeat `provider` and
 | `model` | unset | LLM judge model id, resolved from the session model registry. Set together with `provider`. |
 | `instructions` | built-in rubric | System prompt for the LLM judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
-| `timeoutMs` | `5000` | LLM judge model call budget in milliseconds (positive integer). |
+| `timeoutMs` | `5000` | The LLM judge's own model call budget in milliseconds (positive integer). The quick judge has a separate `quickJudge.timeoutMs`. |
 | `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer), for both judges. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
 | `verdicts` | `"allow-deny-defer"` | Which verdicts the LLM judge may return. See "Verdicts and onError". |
 | `onError` | `"defer"` | What the LLM judge returns on a failure: `"defer"` or `"deny"`. Never allow. |
@@ -491,13 +491,22 @@ families and an undeterminable surface defer with no model call, whatever
 | `allowThreshold` | unset | Probability (0 to 1) that reversible, contained and hazard none must each reach to allow. Unset uses the built-in threshold per question (0.8 each), chosen by the eval (see "Development"). |
 | `denyThreshold` | `0.9` | Probability (0 to 1) one hazard must reach to deny. |
 | `guidance` | `true` | Send the selected guidance files, chosen by the same rules as for the LLM judge. |
-| `timeoutMs` | `5000` | Per-call budget in milliseconds, enforced with an abort signal. |
+| `timeoutMs` | `5000` | The quick judge's own model call budget in milliseconds, enforced with an abort signal. The top-level `timeoutMs` belongs to the LLM judge alone. |
+
+Each judge gets its own call budget: the top-level `timeoutMs` is the LLM
+judge's, `quickJudge.timeoutMs` is the quick judge's, and setting one does
+not move the other.
 
 A config for the quick judge in front of the LLM judge:
 
     {
       "mode": "quick-then-llm",
-      "quickJudge": { "provider": "typesafe", "model": "jev-latest" }
+      "timeoutMs": 15000,
+      "quickJudge": {
+        "provider": "typesafe",
+        "model": "jev-latest",
+        "timeoutMs": 5000
+      }
     }
 
 The quick judge alone, never waiting for a human:
@@ -724,7 +733,9 @@ shutdown.
   guidance and your messages are delimited as data, not instructions.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
-  The call is aborted after `timeoutMs`.
+  The call is aborted after that judge's own timeout: the top-level
+  `timeoutMs` for the LLM judge, `quickJudge.timeoutMs` for the quick
+  judge.
 - Each judge's `verdicts` and `onError` settings apply to its verdict and
   to every failure; nothing else changes it. The engine's own
   bounded-delegation checkpoint enforces the `path` / `external_directory`
