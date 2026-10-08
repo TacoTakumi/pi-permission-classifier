@@ -14,6 +14,11 @@
  *     the session's chat model.
  *   - `quick <provider>/<id>`: validate through the classifier lookup only
  *     and persist the quick judge pair. A chat model is refused.
+ *   - `llm timeout <seconds>` and `quick timeout <seconds>`: persist that
+ *     judge's model-call budget, entered in whole seconds and written as
+ *     milliseconds. `0` clears the key, returning the judge to its built-in
+ *     budget. A non-integer, a negative value or a value above the cap is
+ *     refused with no write.
  *   - `verdicts <allow-deny-defer|allow-defer|allow-deny>` and
  *     `on-error <defer|deny>`: persist the policy of the last judge in line
  *     for the live mode (launch flag included): the LLM judge's top-level
@@ -22,12 +27,14 @@
  *     so its policy is never offered.
  *   - Setting a model never changes the mode.
  *   - no argument in the TUI: a menu, each list mounted through
- *     `ctx.ui.custom`, with five entries showing their current values: Who
- *     judges (the modes, each with a one-line description), Quick judge
- *     model (the available classifier models), LLM judge model ("Same as the
- *     chat model (follows /model)" and the available chat models), and the
- *     last judge's verdicts and on error. A model entry whose judge the mode
- *     does not run is marked unused. Each entry opens one list with the
+ *     `ctx.ui.custom`, with entries showing their current values: Who judges
+ *     (the modes, each with a one-line description), Quick judge model (the
+ *     available classifier models), LLM judge model ("Same as the chat model
+ *     (follows /model)" and the available chat models), a Model-call timeout
+ *     list for each judge the mode runs (preset budgets, the saved budget
+ *     when it is not a preset, and the clear row), and the last judge's
+ *     verdicts and on error. A model entry whose judge the mode does not run
+ *     is marked unused. Each entry opens one list with the
  *     current value marked and preselected; a pick writes only that entry's
  *     fields, the same as the typed form, and the menu opens again. A quick
  *     mode picked while the global config has no quick model opens the
@@ -40,8 +47,9 @@
  *     `session` and `system-one`, gets the usage line and writes nothing.
  *
  * Argument completion offers the forms `mode`, `llm`, `quick`, `verdicts` and
- * `on-error`, then the
- * values each takes (see `getArgumentCompletions`).
+ * `on-error`, then the values each takes; `llm ` and `quick ` also offer
+ * `timeout`, and `llm timeout `/`quick timeout ` offer the preset budgets
+ * (see `getArgumentCompletions`).
  *
  * Every write form refuses when the global config file is absent or there is
  * no valid merged config - no config file found, or the files found failed
@@ -70,6 +78,7 @@ import {
   type LoadConfigResult,
 } from "./config-loader";
 import {
+  DEFAULT_TIMEOUT_MS,
   type ClassifierConfig,
   type Mode,
   modeSchema,
@@ -82,6 +91,7 @@ import {
 import {
   formatJudgeStatus,
   formatQuickStatus,
+  formatTimeoutSeconds,
   type JudgePair,
   parseJudgePair,
   resolveJudge,
@@ -101,6 +111,25 @@ const VERDICTS_FORM = "verdicts";
 
 const ON_ERROR_FORM = "on-error";
 
+/** The `llm` and `quick` argument that sets that judge's model-call budget. */
+const TIMEOUT_FORM = "timeout";
+
+/** The `llm timeout` form, and the menu entry that opens its list. */
+const LLM_TIMEOUT_FORM = `${LLM_FORM} ${TIMEOUT_FORM}`;
+
+/** The `quick timeout` form, and the menu entry that opens its list. */
+const QUICK_TIMEOUT_FORM = `${QUICK_FORM} ${TIMEOUT_FORM}`;
+
+/**
+ * Largest budget the timeout forms accept, in whole seconds. The config key is
+ * unbounded, so the form needs a cap of its own: a mistyped value reaches a
+ * judge as a budget, and one hour is far past any judge call that answers.
+ */
+const MAX_TIMEOUT_SECONDS = 3600;
+
+/** Budgets the timeout list and its completion offer, in whole seconds. */
+const TIMEOUT_PRESETS: readonly number[] = [5, 10, 15, 25, 30, 60];
+
 /** The `llm` argument that makes the LLM judge follow the chat model. */
 const CHAT_MODEL = "chat-model";
 
@@ -113,6 +142,7 @@ const ON_ERRORS = onErrorSchema.options;
 const USAGE =
   `/${COMMAND_NAME} ${MODE_FORM} <${MODES.join("|")}> | ${LLM_FORM} <provider>/<id> | ` +
   `${LLM_FORM} ${CHAT_MODEL} | ${QUICK_FORM} <provider>/<id> | ` +
+  `${LLM_FORM} ${TIMEOUT_FORM} <seconds> | ${QUICK_FORM} ${TIMEOUT_FORM} <seconds> | ` +
   `${VERDICTS_FORM} <${VERDICTS.join("|")}> | ${ON_ERROR_FORM} <${ON_ERRORS.join("|")}>`;
 
 /** What a write did: see `persist`. */
@@ -140,6 +170,29 @@ const JUDGE_NAMES: Record<JudgePolicy["judge"], string> = {
  */
 function lastJudge(mode: Mode): JudgePolicy["judge"] {
   return mode === "quick" ? "quick" : "llm";
+}
+
+/**
+ * Whole seconds for a timeout form: a bare non-negative integer no larger than
+ * `MAX_TIMEOUT_SECONDS`. A sign, a decimal point, an exponent, an empty string
+ * or a value over the cap all read as `undefined`, so the caller refuses the
+ * form and writes nothing. A negative budget is meaningless and a budget past
+ * the cap is a mistyped value, never a judge that answers.
+ */
+function parseTimeoutSeconds(text: string | undefined): number | undefined {
+  if (text === undefined || !/^\d+$/.test(text)) {
+    return undefined;
+  }
+  const seconds = Number(text);
+  return seconds <= MAX_TIMEOUT_SECONDS ? seconds : undefined;
+}
+
+/** The model-call budget a config holds for one judge, in milliseconds. */
+function timeoutOf(
+  config: ClassifierConfig,
+  judge: JudgePolicy["judge"],
+): number | undefined {
+  return judge === "llm" ? config.timeoutMs : config.quickJudge?.timeoutMs;
 }
 
 /**
@@ -418,6 +471,9 @@ export function createPermissionModelCommand(
     }
     const judge = lastJudge(config.mode);
     const policy = policyOf(config, judge);
+    // The budgets stay out of the print form: the usage line names the forms
+    // that set them, and a print is a status read, not a place to pick a
+    // number out of a list.
     ctx.ui.notify(
       `Permission judge mode ${config.mode}: ${parts.join(", ")}; ` +
         `${JUDGE_NAMES[judge]} verdicts ${policy.verdicts}, onError ${policy.onError}. ` +
@@ -498,6 +554,18 @@ export function createPermissionModelCommand(
   }
 
   /**
+   * Persist one judge's model-call budget, entered in whole seconds. `0`
+   * clears the key and the judge returns to its built-in budget.
+   */
+  function applyTimeout(
+    judge: JudgePolicy["judge"],
+    seconds: number,
+    ctx: CommandContextLike,
+  ): PersistOutcome {
+    return persist({ timeout: { judge, seconds } }, ctx);
+  }
+
+  /**
    * Persist verdicts or onError for the last judge of the live mode. Called
    * only after `canWrite`, so the config is there.
    */
@@ -529,11 +597,11 @@ export function createPermissionModelCommand(
   }
 
   /**
-   * The no-argument TUI form: a menu of five entries, each showing its
-   * current value. An entry opens one list; a pick there writes only that
-   * entry's fields and the menu opens again with the new values. Esc in a
-   * list returns to the menu without a write; Esc on the menu closes it. A
-   * write that lands but leaves the merged config invalid closes the menu.
+   * The no-argument TUI form: a menu of entries, each showing its current
+   * value. An entry opens one list; a pick there writes only that entry's
+   * fields and the menu opens again with the new values. Esc in a list
+   * returns to the menu without a write; Esc on the menu closes it. A write
+   * that lands but leaves the merged config invalid closes the menu.
    */
   async function pick(ctx: CommandContextLike): Promise<void> {
     let selected: string = MODE_FORM;
@@ -581,6 +649,26 @@ export function createPermissionModelCommand(
         label: "LLM judge model",
         description: config.mode === "quick" ? llmValue + unused : llmValue,
       },
+      // A judge the mode never runs has no budget to set, so its timeout
+      // entry is absent rather than marked unused.
+      ...(config.mode === "llm"
+        ? []
+        : [
+            {
+              value: QUICK_TIMEOUT_FORM,
+              label: `${JUDGE_TITLES.quick} model-call timeout`,
+              description: `${formatTimeoutSeconds(timeoutOf(config, "quick"))} seconds`,
+            },
+          ]),
+      ...(config.mode === "quick"
+        ? []
+        : [
+            {
+              value: LLM_TIMEOUT_FORM,
+              label: `${JUDGE_TITLES.llm} model-call timeout`,
+              description: `${formatTimeoutSeconds(timeoutOf(config, "llm"))} seconds`,
+            },
+          ]),
       {
         value: VERDICTS_FORM,
         label: `${JUDGE_TITLES[judge]} verdicts`,
@@ -621,6 +709,9 @@ export function createPermissionModelCommand(
     }
     if (entry === LLM_FORM) {
       return pickLlmModel(config, ctx);
+    }
+    if (entry === QUICK_TIMEOUT_FORM || entry === LLM_TIMEOUT_FORM) {
+      return pickTimeout(entry === QUICK_TIMEOUT_FORM ? "quick" : "llm", config, ctx);
     }
     const judge = lastJudge(config.mode);
     const policy = policyOf(config, judge);
@@ -696,6 +787,46 @@ export function createPermissionModelCommand(
   }
 
   /**
+   * The timeout list for one judge: the preset budgets, the saved budget when
+   * it is not a preset, and the clear row that returns the judge to its
+   * built-in budget. The saved budget is marked `(current)` and preselected.
+   */
+  async function pickTimeout(
+    judge: JudgePolicy["judge"],
+    config: ClassifierConfig,
+    ctx: CommandContextLike,
+  ): Promise<PersistOutcome> {
+    const current = formatTimeoutSeconds(timeoutOf(config, judge));
+    const presets: { value: string; description: string }[] = TIMEOUT_PRESETS.map(
+      (preset) => ({
+        value: String(preset),
+        description: `Give the ${JUDGE_NAMES[judge]} ${preset} seconds per model call.`,
+      }),
+    );
+    if (!presets.some((item) => item.value === current)) {
+      presets.push({
+        value: current,
+        description: `The budget the config holds for the ${JUDGE_NAMES[judge]} now.`,
+      });
+    }
+    presets.push({
+      value: "0",
+      description: `Clear the saved budget: the ${JUDGE_NAMES[judge]} uses its built-in ${formatTimeoutSeconds(undefined)} seconds.`,
+    });
+    const chosen = await step(
+      ctx,
+      `${JUDGE_TITLES[judge]} model-call timeout`,
+      markCurrent(presets, current),
+      current,
+    );
+    const seconds = parseTimeoutSeconds(chosen);
+    if (seconds === undefined) {
+      return "not-written";
+    }
+    return applyTimeout(judge, seconds, ctx);
+  }
+
+  /**
    * The LLM model list: the chat model option, then the available chat
    * models, the current one marked and preselected. A pick is written at
    * once, with the auth warning for a model that has none.
@@ -737,9 +868,10 @@ export function createPermissionModelCommand(
 
   /**
    * Complete the form, then its value: the modes after `mode `, the
-   * chat-model option and the available chat model labels after `llm `, and
-   * the available classifier model labels after `quick `, each filtered by
-   * the prefix.
+   * chat-model option, `timeout` and the available chat model labels after
+   * `llm `, and `timeout` and the available classifier model labels after
+   * `quick `, each filtered by the prefix. After `llm timeout ` or
+   * `quick timeout ` the preset budgets and the clear value are offered.
    */
   async function getArgumentCompletions(prefix: string): ArgumentCompletions {
     const registry = deps.getRegistry();
@@ -756,15 +888,35 @@ export function createPermissionModelCommand(
     }
     const form = text.slice(0, space);
     const wanted = text.slice(space + 1).trim();
+    const words = text.split(/\s+/);
+    if (
+      (form === LLM_FORM || form === QUICK_FORM) &&
+      words[1] === TIMEOUT_FORM &&
+      words.length > 2
+    ) {
+      const typed = words[2]!;
+      const budgets = [...TIMEOUT_PRESETS, 0]
+        .map((seconds) => String(seconds))
+        .filter((seconds) => seconds.startsWith(typed))
+        .map((seconds) => ({ value: `${form} ${TIMEOUT_FORM} ${seconds}`, label: `${seconds} s` }));
+      return budgets.length > 0 ? budgets : null;
+    }
     const options =
       form === MODE_FORM
         ? [...MODES]
         : form === LLM_FORM
-          ? [CHAT_MODEL, ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`)]
+          ? [
+              CHAT_MODEL,
+              TIMEOUT_FORM,
+              ...registry.getAvailable().map((model) => `${model.provider}/${model.id}`),
+            ]
           : form === QUICK_FORM
-            ? (await registry.getAvailableOfType("classifier")).map(
-                (model) => `${model.provider}/${model.id}`,
-              )
+            ? [
+                TIMEOUT_FORM,
+                ...(await registry.getAvailableOfType("classifier")).map(
+                  (model) => `${model.provider}/${model.id}`,
+                ),
+              ]
             : form === VERDICTS_FORM
               ? [...VERDICTS]
               : form === ON_ERROR_FORM
@@ -802,6 +954,27 @@ export function createPermissionModelCommand(
     if (head === LLM_FORM && value === CHAT_MODEL) {
       if (canWrite(ctx)) {
         persist({ llm: null }, ctx);
+      }
+      return;
+    }
+    // `llm timeout <seconds>` and `quick timeout <seconds>`: the budget form
+    // for one named judge, whatever the mode runs. A judge the mode does not
+    // run keeps its budget: the entry is not offered in the menu.
+    if (
+      (head === LLM_FORM || head === QUICK_FORM) &&
+      tail.length === 2 &&
+      tail[0] === TIMEOUT_FORM
+    ) {
+      const seconds = parseTimeoutSeconds(tail[1]);
+      if (seconds === undefined) {
+        ctx.ui.notify(
+          `Timeout must be a whole number of seconds from 0 to ${MAX_TIMEOUT_SECONDS}, where 0 clears the saved budget. Usage: ${USAGE}`,
+          "error",
+        );
+        return;
+      }
+      if (canWrite(ctx)) {
+        applyTimeout(head === LLM_FORM ? "llm" : "quick", seconds, ctx);
       }
       return;
     }
@@ -911,6 +1084,14 @@ function describeSelection(selection: JudgeSelection): string {
   if (policy?.onError !== undefined) {
     parts.push(`${JUDGE_NAMES[policy.judge]} onError ${policy.onError}`);
   }
+  const timeout = selection.timeout;
+  if (timeout !== undefined) {
+    parts.push(
+      timeout.seconds === 0
+        ? `${JUDGE_NAMES[timeout.judge]} model-call timeout cleared (built-in ${formatTimeoutSeconds(undefined)} s)`
+        : `${JUDGE_NAMES[timeout.judge]} model-call timeout ${timeout.seconds} s`,
+    );
+  }
   return `Permission judge: ${parts.join(", ")}`;
 }
 
@@ -937,6 +1118,18 @@ function shadowedFields(selection: JudgeSelection, config: ClassifierConfig): st
       config.quickJudge?.model !== selection.quick.model)
   ) {
     shadowed.push("quickJudge");
+  }
+  const timeout = selection.timeout;
+  if (timeout !== undefined) {
+    const merged = timeoutOf(config, timeout.judge);
+    const writes = timeout.seconds === 0 ? DEFAULT_TIMEOUT_MS : timeout.seconds * 1000;
+    // A cleared key reads back as the built-in default, so a merged value of
+    // exactly that default is not the project layer shadowing the clear.
+    if (merged !== undefined && merged !== writes) {
+      shadowed.push(
+        timeout.judge === "quick" ? "quickJudge.timeoutMs" : "timeoutMs",
+      );
+    }
   }
   const policy = selection.policy;
   if (policy !== undefined) {
