@@ -312,6 +312,18 @@ export interface JudgePolicy {
 }
 
 /**
+ * One judge's model-call budget in whole seconds: the LLM judge's top-level
+ * `timeoutMs` or the quick judge's `quickJudge.timeoutMs`. `seconds: 0` clears
+ * the key, returning that judge to its built-in default; the config file only
+ * ever holds milliseconds, so the unit conversion happens at this one write
+ * path.
+ */
+export interface JudgeTimeout {
+  judge: "llm" | "quick";
+  seconds: number;
+}
+
+/**
  * What one /permission-model choice sets. An absent field is left as it is;
  * `llm: null` removes the top-level `provider` and `model`, so the LLM judge
  * follows the chat model.
@@ -321,14 +333,17 @@ export interface JudgeSelection {
   llm?: ModelPair | null;
   quick?: ModelPair;
   policy?: JudgePolicy;
+  timeout?: JudgeTimeout;
 }
 
 /**
  * Write a selection to the global config file in one atomic write: `mode`,
- * the top-level LLM pair, `quickJudge.provider`/`quickJudge.model`, and the
- * policy, top-level for the LLM judge and inside `quickJudge` for the quick
- * judge (creating the `quickJudge` object when absent). Every field the
- * selection does not set is preserved, inside `quickJudge` too. See
+ * the top-level LLM pair, `quickJudge.provider`/`quickJudge.model`, the
+ * policy and the model-call timeout, top-level for the LLM judge and inside
+ * `quickJudge` for the quick judge (creating the `quickJudge` object when
+ * absent). Every field the selection does not set is preserved, inside
+ * `quickJudge` too. A timeout of 0 removes that judge's `timeoutMs` key, and
+ * an emptied `quickJudge` object is removed with it. See
  * {@link rewriteGlobalConfig}.
  */
 export function writeGlobalSelection(agentDir: string, selection: JudgeSelection): void {
@@ -366,6 +381,32 @@ export function writeGlobalSelection(agentDir: string, selection: JudgeSelection
       } else {
         const existing = isRecord(next.quickJudge) ? next.quickJudge : {};
         next.quickJudge = { ...existing, ...fields };
+      }
+    }
+    const timeout = selection.timeout;
+    if (timeout !== undefined) {
+      const timeoutMs = timeout.seconds * 1000;
+      if (timeout.judge === "llm") {
+        if (timeoutMs === 0) {
+          const { timeoutMs: _timeoutMs, ...rest } = next;
+          next = rest;
+        } else {
+          next.timeoutMs = timeoutMs;
+        }
+      } else {
+        const existing = isRecord(next.quickJudge) ? next.quickJudge : {};
+        if (timeoutMs > 0) {
+          next.quickJudge = { ...existing, timeoutMs };
+        } else {
+          const { timeoutMs: _timeoutMs, ...kept } = existing;
+          // Clearing the only key of an absent block must not create one.
+          if (Object.keys(kept).length === 0) {
+            const { quickJudge: _quickJudge, ...withoutQuickJudge } = next;
+            next = withoutQuickJudge;
+          } else {
+            next.quickJudge = kept;
+          }
+        }
       }
     }
     return next;

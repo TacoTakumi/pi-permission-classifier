@@ -6,6 +6,7 @@ import {
   applySessionOverride,
   formatJudgeStatus,
   formatQuickStatus,
+  formatTimeoutSeconds,
   type JudgeRegistryLike,
   parseFlagOverride,
   parseJudgePair,
@@ -334,5 +335,17 @@ describe("applySessionOverride", () => {
       guidance: true,
       timeoutMs: 5000,
     });
+  });
+});
+
+describe("formatTimeoutSeconds", () => {
+  it("renders a stored budget as whole seconds", () => {
+    expect(formatTimeoutSeconds(12000)).toBe("12");
+    expect(formatTimeoutSeconds(25000)).toBe("25");
+    expect(formatTimeoutSeconds(750)).toBe("1");
+  });
+
+  it("reads the built-in 5000 ms default when the key is absent", () => {
+    expect(formatTimeoutSeconds(undefined)).toBe("5");
   });
 });

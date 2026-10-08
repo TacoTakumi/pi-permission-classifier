@@ -661,6 +661,95 @@ describe("writeGlobalSelection", () => {
     });
   });
 
+  it("writes the LLM judge's timeout as seconds x 1000 into timeoutMs", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, { timeout: { judge: "llm", seconds: 12 } });
+    expect(readGlobal()).toEqual({ ...existing, timeoutMs: 12000 });
+  });
+
+  it("removes the LLM judge's timeoutMs on 0 and preserves every other field", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, { timeout: { judge: "llm", seconds: 0 } });
+    const cleared = readGlobal();
+    expect(Object.keys(cleared).sort()).toEqual(["instructions", "model", "provider", "surfaces"]);
+    // The key is gone, so the loader hands the judge its built-in budget.
+    const result = loadClassifierConfig({
+      cwd: join(root, "project"),
+      agentDir,
+      projectTrusted: true,
+    });
+    expect(result.config?.timeoutMs).toBe(5000);
+  });
+
+  it("writes quickJudge.timeoutMs and merges with its existing keys", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        ...existing,
+        quickJudge: { provider: "typesafe", model: "jev", guidance: false, allowThreshold: 0.8 },
+      }),
+    );
+    writeGlobalSelection(agentDir, { timeout: { judge: "quick", seconds: 25 } });
+    expect(readGlobal()).toEqual({
+      ...existing,
+      quickJudge: {
+        provider: "typesafe",
+        model: "jev",
+        guidance: false,
+        allowThreshold: 0.8,
+        timeoutMs: 25000,
+      },
+    });
+    const result = loadClassifierConfig({
+      cwd: join(root, "project"),
+      agentDir,
+      projectTrusted: true,
+    });
+    expect(result.config?.quickJudge?.timeoutMs).toBe(25000);
+  });
+
+  it("creates quickJudge for a quick timeout when the file has none", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    writeGlobalSelection(agentDir, { timeout: { judge: "quick", seconds: 8 } });
+    expect(readGlobal()).toEqual({ ...existing, quickJudge: { timeoutMs: 8000 } });
+  });
+
+  it("removes quickJudge.timeoutMs on 0 and keeps its other keys", () => {
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        ...existing,
+        quickJudge: { provider: "typesafe", model: "jev", timeoutMs: 25000 },
+      }),
+    );
+    writeGlobalSelection(agentDir, { timeout: { judge: "quick", seconds: 0 } });
+    const quickJudge = readGlobal().quickJudge as Record<string, unknown>;
+    expect(quickJudge).toEqual({ provider: "typesafe", model: "jev" });
+    expect("timeoutMs" in quickJudge).toBe(false);
+  });
+
+  it("removes quickJudge when clearing its only key empties the object", () => {
+    writeFileSync(globalPath, JSON.stringify({ ...existing, quickJudge: { timeoutMs: 12000 } }));
+    writeGlobalSelection(agentDir, { timeout: { judge: "quick", seconds: 0 } });
+    const cleared = readGlobal();
+    expect("quickJudge" in cleared).toBe(false);
+    expect(cleared).toEqual(existing);
+  });
+
+  it("writes a quick pair and its timeout together in one write", () => {
+    writeFileSync(globalPath, JSON.stringify(existing));
+    fsCalls.length = 0;
+    writeGlobalSelection(agentDir, {
+      quick: { provider: "local", model: "kev-4b-q8" },
+      timeout: { judge: "quick", seconds: 15 },
+    });
+    expect(fsCalls.filter((call) => call.name === "renameSync")).toHaveLength(1);
+    expect(readGlobal()).toEqual({
+      ...existing,
+      quickJudge: { provider: "local", model: "kev-4b-q8", timeoutMs: 15000 },
+    });
+  });
+
   it("leaves the file's fields as they are for an empty selection", () => {
     writeFileSync(globalPath, JSON.stringify(existing));
     writeGlobalSelection(agentDir, {});

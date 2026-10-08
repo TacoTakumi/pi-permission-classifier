@@ -22,6 +22,7 @@
 import type { ClassifierApi, ClassifierModel, Model } from "@earendil-works/pi-ai";
 
 import {
+  DEFAULT_TIMEOUT_MS,
   type ClassifierConfig,
   type Mode,
   modeSchema,
@@ -147,6 +148,16 @@ export function formatQuickStatus(judge: ResolvedQuickJudge): string {
   }
   const text = `quick:${judge.pair.provider}/${judge.pair.model}`;
   return judge.model === undefined ? `${text} (unresolved)` : text;
+}
+
+/**
+ * A judge's model-call budget as whole seconds, for display. An absent
+ * `timeoutMs` (the key was cleared, or never set) reads as the built-in
+ * default. The command's timeout forms take and show seconds and never
+ * milliseconds, so a budget cannot be misread across the two units.
+ */
+export function formatTimeoutSeconds(timeoutMs: number | undefined): string {
+  return String(Math.round((timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000));
 }
 
 /**
