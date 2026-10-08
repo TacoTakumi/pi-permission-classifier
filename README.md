@@ -582,11 +582,13 @@ choosing a judge never changes pi's session model or your default model:
   Each entry shows its current value:
 
   ```
-  Who judges          quick-then-llm
-  Quick judge model   typesafe/jev-latest
-  LLM judge model     Same as the chat model (follows /model)
-  LLM judge verdicts  allow-deny-defer
-  LLM judge on error  defer
+  Who judges                      quick-then-llm
+  Quick judge model               typesafe/jev-latest
+  LLM judge model                 Same as the chat model (follows /model)
+  Quick judge model-call timeout  5 seconds
+  LLM judge model-call timeout    5 seconds
+  LLM judge verdicts              allow-deny-defer
+  LLM judge on error              defer
   ```
 
   - Who judges lists the modes `quick-then-llm`, `llm`, `quick`, each with
@@ -594,6 +596,13 @@ choosing a judge never changes pi's session model or your default model:
   - Quick judge model lists the available classifier models.
   - LLM judge model lists `Same as the chat model (follows /model)` and the
     available chat models.
+  - Each model-call timeout entry lists 5, 10, 15, 25, 30 and 60 seconds,
+    the saved budget when it is not one of those, and `0`, which clears the
+    saved budget so the judge uses its built-in 5 seconds. The menu shows
+    a timeout entry only for a judge the mode runs: the quick judge's in
+    `quick` and `quick-then-llm`, the LLM judge's in `llm` and
+    `quick-then-llm`. A budget that is not whole seconds shows its
+    decimals, for example `2.5`.
   - The verdicts entry lists `allow-deny-defer`, `allow-defer` and
     `allow-deny`; the on error entry lists `defer` and `deny`. Both belong
     to the last judge in line, so they read "LLM judge" in `llm` and
@@ -601,9 +610,9 @@ choosing a judge never changes pi's session model or your default model:
 
   A model entry whose judge the mode does not run is marked, for example
   `(not used in llm)`, and can still be set. Each list marks the current
-  value `(current)` and preselects it. A configured model that is not
-  available shows first as `(current, not available)`; picking it changes
-  nothing and says so. A pick is saved at once, exactly as the matching
+  value `(current)` and preselects it. Picking the current timeout row
+  changes nothing. A configured model that is not available shows first
+  as `(current, not available)`; picking it changes nothing and says so. A pick is saved at once, exactly as the matching
   typed form saves it, and the menu opens again with the new value. If the
   save lands but the merged config no longer validates, the menu closes
   after the error instead. Picking `quick` or `quick-then-llm` while the
@@ -633,17 +642,27 @@ choosing a judge never changes pi's session model or your default model:
   judge in line of the mode in effect (a `mode:` launch flag value or a
   project config mode counts). The confirmation names the judge. An
   unknown value is rejected and nothing changes.
-- Setting a model never changes the mode.
+- `/permission-model llm timeout <seconds>` and
+  `/permission-model quick timeout <seconds>` set one judge's model-call
+  budget in whole seconds, saved as milliseconds: the LLM judge's in
+  `timeoutMs`, the quick judge's in `quickJudge.timeoutMs`. `0` clears that
+  judge's key, so it uses its built-in 5 seconds. A sign, a decimal point,
+  an exponent, a unit, an empty value or anything above 3600 is rejected
+  and nothing changes.
+- Setting a model or a timeout never changes the mode.
 - Tab completion offers `mode`, `llm`, `quick`, `verdicts` and `on-error`,
-  then the mode values, `chat-model` and the chat model labels, the
-  classifier model labels, or the verdicts and onError values.
+  then the mode values, `chat-model`, `timeout` and the chat model labels,
+  `timeout` and the classifier model labels, or the verdicts and onError
+  values. After `llm timeout ` or `quick timeout ` it offers the preset
+  budgets and `0`.
 
 A choice applies to the next reviewed ask immediately and is saved to the
 global config file
 (`~/.pi/agent/extensions/pi-permission-classifier/config.json`): only the
 fields the choice sets are rewritten (`mode`, `provider` and `model`,
-`quickJudge.provider` and `quickJudge.model`, and `verdicts` and `onError`
-at the top level or inside `quickJudge`), every other field is
+`quickJudge.provider` and `quickJudge.model`, `timeoutMs` and
+`quickJudge.timeoutMs`, and `verdicts` and `onError` at the top level or
+inside `quickJudge`), every other field is
 preserved, and the write goes through a temporary file that is fsynced and
 then renamed, so neither a process crash nor an OS crash leaves a truncated
 config. The command never creates the file. Every write form refuses -
