@@ -281,6 +281,8 @@ describe("refusal when there is no valid config or no global file", () => {
     "quick typesafe/jev-latest",
     "verdicts allow-deny",
     "on-error deny",
+    "llm timeout 12",
+    "quick timeout 12",
   ])(
     "%j refuses with a warning naming the global path when the link is not registered",
     async (args) => {
@@ -302,6 +304,8 @@ describe("refusal when there is no valid config or no global file", () => {
     "quick typesafe/jev-latest",
     "verdicts allow-deny",
     "on-error deny",
+    "llm timeout 12",
+    "quick timeout 12",
   ])(
     "%j refuses with a warning naming the global path when the global file is absent",
     async (args) => {
@@ -409,6 +413,7 @@ describe("write failure", () => {
 describe("no-argument form outside the TUI", () => {
   const USAGE_LINE =
     "/permission-model mode <llm|quick|quick-then-llm> | llm <provider>/<id> | llm chat-model | quick <provider>/<id> | " +
+    "llm timeout <seconds> | quick timeout <seconds> | " +
     "verdicts <allow-deny-defer|allow-defer|allow-deny> | on-error <defer|deny>";
 
   it.each(["rpc", "json", "print"] as const)(
@@ -505,6 +510,51 @@ describe("argument completion", () => {
     expect(await values("on-error den")).toEqual(["on-error deny"]);
   });
 
+  it("offers the timeout form after 'llm ti' and after 'quick ti'", async () => {
+    expect(await values("llm ti")).toEqual(["llm timeout"]);
+    expect(await values("quick ti")).toEqual(["quick timeout"]);
+  });
+
+  it.each(["llm", "quick"] as const)(
+    "offers the preset budgets and the clear value after '%s timeout '",
+    async (form) => {
+      expect(await values(`${form} timeout `)).toEqual([
+        `${form} timeout 5`,
+        `${form} timeout 10`,
+        `${form} timeout 15`,
+        `${form} timeout 25`,
+        `${form} timeout 30`,
+        `${form} timeout 60`,
+        `${form} timeout 0`,
+      ]);
+    },
+  );
+
+  it("filters the budgets by the typed digits after 'llm timeout '", async () => {
+    expect(await values("llm timeout 1")).toEqual(["llm timeout 10", "llm timeout 15"]);
+    expect(await values("quick timeout 6")).toEqual(["quick timeout 60"]);
+    expect(await values("quick timeout 0")).toEqual(["quick timeout 0"]);
+  });
+
+  it("labels a budget completion with the seconds", async () => {
+    const items = await createPermissionModelCommand(makeDeps().deps).getArgumentCompletions(
+      "quick timeout ",
+    );
+    expect(items?.map((item) => item.label)).toEqual([
+      "5 s",
+      "10 s",
+      "15 s",
+      "25 s",
+      "30 s",
+      "60 s",
+      "0 s",
+    ]);
+  });
+
+  it("returns null when no budget matches the typed digits", async () => {
+    expect(await values("llm timeout 9")).toBeUndefined();
+  });
+
   it("offers the matching modes after 'mode q'", async () => {
     expect(await values("mode q")).toEqual(["mode quick", "mode quick-then-llm"]);
   });
@@ -513,9 +563,10 @@ describe("argument completion", () => {
     expect(await values("mode ")).toEqual(["mode llm", "mode quick", "mode quick-then-llm"]);
   });
 
-  it("offers chat-model and the chat model labels after 'llm '", async () => {
+  it("offers chat-model, timeout and the chat model labels after 'llm '", async () => {
     expect(await values("llm ")).toEqual([
       "llm chat-model",
+      "llm timeout",
       "llm anthropic/a",
       "llm anthropic/b",
       "llm openai/c",
@@ -530,17 +581,21 @@ describe("argument completion", () => {
     expect(await values("quick ty")).toEqual(["quick typesafe/jev-latest"]);
   });
 
-  it("offers only the available classifiers after 'quick '", async () => {
+  it("offers timeout and only the available classifiers after 'quick '", async () => {
     const made = makeDeps();
     made.registry.getModelsOfType.mockReturnValue([JEV, KEV]);
     made.registry.getAvailableOfType.mockResolvedValue([KEV]);
-    expect(await values("quick ", made)).toEqual(["quick local/kev-4b-q8"]);
+    expect(await values("quick ", made)).toEqual(["quick timeout", "quick local/kev-4b-q8"]);
   });
 
   it("labels a second-level item with the value alone", async () => {
     const { deps } = makeDeps();
     const items = await createPermissionModelCommand(deps).getArgumentCompletions("quick ");
-    expect(items?.map((item) => item.label)).toEqual(["typesafe/jev-latest", "local/kev-4b-q8"]);
+    expect(items?.map((item) => item.label)).toEqual([
+      "timeout",
+      "typesafe/jev-latest",
+      "local/kev-4b-q8",
+    ]);
   });
 
   it("returns null when nothing matches", async () => {
@@ -592,7 +647,7 @@ describe("menu picker in the TUI", () => {
     await pending;
   }
 
-  it("lists the five entries in order with their current values", async () => {
+  it("lists the entries in order with their current values", async () => {
     const { deps, pending } = openMenu({ ...CONFIG_QN, quickJudge: JEV_LATEST });
     const menu = await stepRequest(deps, 0);
     expect(menu.tui).toBe(FAKE_TUI);
@@ -605,6 +660,7 @@ describe("menu picker in the TUI", () => {
         description: "typesafe/jev-latest (not used in llm)",
       },
       { value: "llm", label: "LLM judge model", description: "q/n" },
+      { value: "llm timeout", label: "LLM judge model-call timeout", description: "5 seconds" },
       { value: "verdicts", label: "LLM judge verdicts", description: "allow-deny-defer" },
       { value: "on-error", label: "LLM judge on error", description: "defer" },
     ]);
@@ -626,6 +682,7 @@ describe("menu picker in the TUI", () => {
       ["Who judges", "quick"],
       ["Quick judge model", "typesafe/jev-latest"],
       ["LLM judge model", "Same as the chat model (follows /model) (not used in quick)"],
+      ["Quick judge model-call timeout", "5 seconds"],
       ["Quick judge verdicts", "allow-deny"],
       ["Quick judge on error", "deny"],
     ]);
@@ -640,12 +697,54 @@ describe("menu picker in the TUI", () => {
       "quick-then-llm",
       "not set",
       "Same as the chat model (follows /model)",
+      "5 seconds",
+      "5 seconds",
       "allow-deny-defer",
       "defer",
     ]);
     menu.onCancel();
     await pending;
   });
+
+  it.each([
+    [
+      "llm",
+      ["mode", "quick", "llm", "llm timeout", "verdicts", "on-error"],
+      [["LLM judge model-call timeout", "10 seconds"]],
+    ],
+    [
+      "quick",
+      ["mode", "quick", "llm", "quick timeout", "verdicts", "on-error"],
+      [["Quick judge model-call timeout", "20 seconds"]],
+    ],
+    [
+      "quick-then-llm",
+      ["mode", "quick", "llm", "quick timeout", "llm timeout", "verdicts", "on-error"],
+      [
+        ["Quick judge model-call timeout", "20 seconds"],
+        ["LLM judge model-call timeout", "10 seconds"],
+      ],
+    ],
+  ] as const)(
+    "in mode %s the menu lists one timeout entry per judge the mode runs, at its saved budget",
+    async (mode, values, budgets) => {
+      const { deps, pending } = openMenu({
+        ...CONFIG_QN,
+        mode,
+        timeoutMs: 10000,
+        quickJudge: { ...JEV_LATEST, timeoutMs: 20000 },
+      });
+      const menu = await stepRequest(deps, 0);
+      expect(menu.items.map((item) => item.value)).toEqual(values);
+      expect(
+        menu.items
+          .filter((item) => item.value.endsWith("timeout"))
+          .map((item) => [item.label, item.description]),
+      ).toEqual(budgets);
+      menu.onCancel();
+      await pending;
+    },
+  );
 
   it("Who judges lists the modes with descriptions, writes the pick, and reopens the menu", async () => {
     const { deps, pending } = openMenu({ ...WITH_QUICK, mode: "llm" });
@@ -833,6 +932,101 @@ describe("menu picker in the TUI", () => {
     await closeMenu(deps, 2, pending);
   });
 
+  it("the LLM timeout entry lists the preset budgets, writes the pick, and shows it on the next menu", async () => {
+    const config: ClassifierConfig = {
+      ...CONFIG_QN,
+      mode: "quick-then-llm",
+      quickJudge: JEV_LATEST,
+      timeoutMs: 15000,
+    };
+    const { deps, pending } = openMenu(config);
+    (await stepRequest(deps, 0)).onSelect("llm timeout");
+    const list = await stepRequest(deps, 1);
+    expect(list.title).toBe("LLM judge model-call timeout");
+    expect(list.items.map((item) => item.value)).toEqual(["5", "10", "15", "25", "30", "60", "0"]);
+    expect(list.items.map((item) => item.label)).toEqual([
+      "5",
+      "10",
+      "15 (current)",
+      "25",
+      "30",
+      "60",
+      "0",
+    ]);
+    expect(list.selectedValue).toBe("15");
+    for (const item of list.items) {
+      expect(item.description).toMatch(/\S/);
+      expect(item.description).toContain("LLM judge");
+    }
+    deps.reload.mockReturnValue({ config: { ...config, timeoutMs: 25000 }, issues: [] });
+    list.onSelect("25");
+    const menu = await stepRequest(deps, 2);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ timeout: { judge: "llm", seconds: 25 } });
+    expect(menu.items.find((item) => item.value === "llm timeout")?.description).toBe(
+      "25 seconds",
+    );
+    await closeMenu(deps, 2, pending);
+  });
+
+  it("the quick timeout entry lists the budgets, the saved non-preset budget, and writes the quick judge's key", async () => {
+    const config: ClassifierConfig = {
+      ...EMPTY_CONFIG,
+      mode: "quick",
+      quickJudge: { ...JEV_LATEST, timeoutMs: 7000 },
+    };
+    const { deps, pending } = openMenu(config);
+    (await stepRequest(deps, 0)).onSelect("quick timeout");
+    const list = await stepRequest(deps, 1);
+    expect(list.title).toBe("Quick judge model-call timeout");
+    expect(list.items.map((item) => item.value)).toEqual([
+      "5",
+      "10",
+      "15",
+      "25",
+      "30",
+      "60",
+      "7",
+      "0",
+    ]);
+    expect(list.items[6]?.label).toBe("7 (current)");
+    expect(list.items[6]?.description).toBe(
+      "The budget the config holds for the quick judge now.",
+    );
+    expect(list.selectedValue).toBe("7");
+    deps.reload.mockReturnValue({
+      config: { ...config, quickJudge: { ...JEV_LATEST, timeoutMs: 10000 } },
+      issues: [],
+    });
+    list.onSelect("10");
+    const menu = await stepRequest(deps, 2);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ timeout: { judge: "quick", seconds: 10 } });
+    expect(menu.items.find((item) => item.value === "quick timeout")?.description).toBe(
+      "10 seconds",
+    );
+    await closeMenu(deps, 2, pending);
+  });
+
+  it("the timeout list clear row writes 0 and the menu shows the built-in budget again", async () => {
+    const { deps, ctx, pending } = openMenu({ ...CONFIG_QN, timeoutMs: 30000 });
+    (await stepRequest(deps, 0)).onSelect("llm timeout");
+    const list = await stepRequest(deps, 1);
+    expect(list.items.at(-1)?.description).toBe(
+      "Clear the saved budget: the LLM judge uses its built-in 5 seconds.",
+    );
+    deps.reload.mockReturnValue({ config: { ...CONFIG_QN, timeoutMs: 5000 }, issues: [] });
+    list.onSelect("0");
+    const menu = await stepRequest(deps, 2);
+    expect(deps.write).toHaveBeenCalledWith({ timeout: { judge: "llm", seconds: 0 } });
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toContain(
+      "LLM judge model-call timeout cleared (built-in 5 s)",
+    );
+    expect(menu.items.find((item) => item.value === "llm timeout")?.description).toBe("5 seconds");
+    await closeMenu(deps, 2, pending);
+  });
+
   it("verdicts descriptions claim no more than the verdicts do, whatever onError is", async () => {
     const { deps, pending } = openMenu(EMPTY_CONFIG);
     (await stepRequest(deps, 0)).onSelect("verdicts");
@@ -845,10 +1039,14 @@ describe("menu picker in the TUI", () => {
     await closeMenu(deps, 2, pending);
   });
 
-  it.each(["mode", "quick", "llm", "verdicts", "on-error"])(
+  it.each(["mode", "quick", "llm", "llm timeout", "quick timeout", "verdicts", "on-error"])(
     "a cancel in the %s list returns to the menu and writes nothing",
     async (entry) => {
-      const { state, deps, ctx, pending } = openMenu({ ...CONFIG_QN, quickJudge: JEV_LATEST });
+      const { state, deps, ctx, pending } = openMenu({
+        ...CONFIG_QN,
+        mode: "quick-then-llm",
+        quickJudge: JEV_LATEST,
+      });
       const before = structuredClone(state.config);
       (await stepRequest(deps, 0)).onSelect(entry);
       (await stepRequest(deps, 1)).onCancel();
@@ -885,10 +1083,17 @@ describe("menu picker in the TUI", () => {
     ["llm", ["chat-model"]],
     ["verdicts", ["allow-deny"]],
     ["on-error", ["deny"]],
+    ["llm timeout", ["15"]],
+    ["quick timeout", ["10"]],
   ] as const)(
     "a %s pick %j whose reload is invalid closes the menu after the error",
     async (entry, picks) => {
-      const config = entry === "mode" && picks.length === 1 ? WITH_QUICK : CONFIG_QN;
+      const config =
+        entry === "mode" && picks.length === 1
+          ? WITH_QUICK
+          : entry === "quick timeout"
+            ? { ...CONFIG_QN, mode: "quick-then-llm" as const, quickJudge: JEV_LATEST }
+            : CONFIG_QN;
       const { deps, ctx, pending } = openMenu(config);
       deps.reload.mockReturnValue({ config: undefined, issues: [] });
       (await stepRequest(deps, 0)).onSelect(entry);
@@ -1286,6 +1491,139 @@ describe("typed forms /permission-model verdicts and on-error", () => {
   );
 });
 
+describe("typed form /permission-model <judge> timeout <seconds>", () => {
+  const QTL: ClassifierConfig = {
+    ...WITH_QUICK,
+    mode: "quick-then-llm",
+    quickJudge: { ...QUICK_JUDGE, model: "jev-latest" },
+  };
+
+  it("writes 'llm timeout 12' as the LLM judge's budget and names the judge", async () => {
+    const { state, deps } = makeDeps(QTL);
+    deps.reload.mockReturnValue({ config: { ...QTL, timeoutMs: 12000 }, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("llm timeout 12", ctx);
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write).toHaveBeenCalledWith({ timeout: { judge: "llm", seconds: 12 } });
+    expect(deps.reload).toHaveBeenCalledWith("/project");
+    expect(deps.apply).toHaveBeenCalledWith(
+      { ...QTL, timeoutMs: 12000 },
+      { timeout: { judge: "llm", seconds: 12 } },
+    );
+    expect(state.config?.timeoutMs).toBe(12000);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toContain("LLM judge model-call timeout 12 s");
+  });
+
+  it("writes 'quick timeout 25' as the quick judge's budget, merged with its other keys", async () => {
+    const merged: ClassifierConfig = {
+      ...QTL,
+      quickJudge: { ...QUICK_JUDGE, model: "jev-latest", timeoutMs: 25000 },
+    };
+    const { state, deps } = makeDeps(QTL);
+    deps.reload.mockReturnValue({ config: merged, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("quick timeout 25", ctx);
+    // The selection carries the timeout alone, so the writer merges it into the
+    // quick judge block that already holds provider, model and guidance.
+    expect(deps.write).toHaveBeenCalledTimes(1);
+    expect(deps.write.mock.calls[0]![0]).toEqual({ timeout: { judge: "quick", seconds: 25 } });
+    expect(deps.apply).toHaveBeenCalledWith(merged, { timeout: { judge: "quick", seconds: 25 } });
+    expect(state.config?.quickJudge?.timeoutMs).toBe(25000);
+    expect(state.config?.quickJudge?.provider).toBe("typesafe");
+    expect(state.config?.quickJudge?.guidance).toBe(true);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toContain("quick judge model-call timeout 25 s");
+  });
+
+  it("writes 0 to clear the key and says the judge is back on its built-in budget", async () => {
+    const { deps } = makeDeps({ ...QTL, timeoutMs: 12000 });
+    deps.reload.mockReturnValue({ config: { ...QTL, timeoutMs: 5000 }, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("llm timeout 0", ctx);
+    expect(deps.write).toHaveBeenCalledWith({ timeout: { judge: "llm", seconds: 0 } });
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+    expect(notifyOf(ctx, "info")).toContain(
+      "LLM judge model-call timeout cleared (built-in 5 s)",
+    );
+  });
+
+  it.each([
+    "llm timeout 12.5",
+    "quick timeout -5",
+    "llm timeout 3601",
+    "quick timeout ten",
+    "llm timeout 1e3",
+    "quick timeout 12s",
+  ])("%j is refused with the range message and writes nothing", async (args) => {
+    const { state, deps } = makeDeps(QTL);
+    const before = structuredClone(state.config);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler(args, ctx);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(deps.reload).not.toHaveBeenCalled();
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(state.config).toEqual(before);
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("whole number of seconds from 0 to 3600");
+    expect(notifyOf(ctx, "error")).toContain("llm timeout <seconds> | quick timeout <seconds>");
+  });
+
+  it("refuses a timeout form with no value with the usage line", async () => {
+    const { deps } = makeDeps(QTL);
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("quick timeout", ctx);
+    expect(deps.write).not.toHaveBeenCalled();
+    expect(notifyTypes(ctx)).toEqual(["error"]);
+    expect(notifyOf(ctx, "error")).toContain("llm timeout <seconds> | quick timeout <seconds>");
+  });
+
+  it.each(["llm", "quick", "quick-then-llm"] as const)(
+    "sets a judge's budget in mode %s and never changes the mode",
+    async (mode) => {
+      const { deps } = makeDeps({ ...QTL, mode });
+      const command = createPermissionModelCommand(deps);
+      await command.handler("llm timeout 10", makeCtx());
+      expect(deps.write).toHaveBeenLastCalledWith({ timeout: { judge: "llm", seconds: 10 } });
+      await command.handler("quick timeout 10", makeCtx());
+      expect(deps.write).toHaveBeenLastCalledWith({ timeout: { judge: "quick", seconds: 10 } });
+      for (const call of deps.write.mock.calls) {
+        expect(call[0]).not.toHaveProperty("mode");
+      }
+    },
+  );
+
+  it("warns naming timeoutMs when the project layer shadows the LLM judge's budget", async () => {
+    const { deps } = makeDeps(QTL);
+    deps.reload.mockReturnValue({ config: { ...QTL, timeoutMs: 5000 }, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("llm timeout 12", ctx);
+    expect(notifyTypes(ctx)).toContain("warning");
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+    expect(notifyOf(ctx, "warning")).toContain("timeoutMs");
+  });
+
+  it("warns naming quickJudge.timeoutMs when the project layer shadows the quick judge's budget", async () => {
+    const { deps } = makeDeps(QTL);
+    deps.reload.mockReturnValue({ config: QTL, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("quick timeout 25", ctx);
+    expect(notifyOf(ctx, "warning")).toContain(PROJECT_PATH);
+    expect(notifyOf(ctx, "warning")).toContain("quickJudge.timeoutMs");
+  });
+
+  it("does not warn about shadowing when a clear lands on the built-in default", async () => {
+    const { deps } = makeDeps({
+      ...QTL,
+      quickJudge: { ...QUICK_JUDGE, model: "jev-latest", timeoutMs: 25000 },
+    });
+    deps.reload.mockReturnValue({ config: QTL, issues: [] });
+    const ctx = makeCtx();
+    await createPermissionModelCommand(deps).handler("quick timeout 0", ctx);
+    expect(notifyTypes(ctx)).toEqual(["info"]);
+  });
+});
+
 describe("removed and malformed forms", () => {
   it.each([
     "p/m",
@@ -1297,6 +1635,7 @@ describe("removed and malformed forms", () => {
     "quick",
     "llm p/m extra",
     "quick chat-model",
+    "llm timeout 12 34",
   ])("%j writes nothing and reports the usage line", async (args) => {
     const { deps } = makeDeps(WITH_QUICK);
     const ctx = makeCtx();
