@@ -53,9 +53,11 @@ this project adheres to
   `onError` (`defer`, `deny`) for each judge, enforced in code. `onError`
   deny turns a failure into a deny with a fixed reason that names the
   failure and says to retry later or take another route.
-- `/permission-model` with no argument opens a menu with five entries,
-  each showing its current value: who judges (the mode), the quick judge
-  model, the LLM judge model, and the last judge's verdicts and on error.
+- `/permission-model` with no argument opens a menu with an entry for
+  each choice the mode runs, each showing its current value: who judges
+  (the mode), the quick judge model, the LLM judge model, a model-call
+  timeout for each judge the mode runs, and the last judge's verdicts
+  and on error.
   Each entry opens one list with the current value preselected; a pick is
   saved at once and the menu opens again. The LLM list offers "Same as the
   chat model (follows /model)". Picking a quick mode while the global
@@ -71,6 +73,22 @@ this project adheres to
   typed quick mode is saved only when the global config has a quick
   model. Outside the TUI, `/permission-model` prints the mode, the active
   judges and the usage line.
+- A model-call timeout entry for each judge the mode runs: `Quick judge
+  model-call timeout` (absent in mode `llm`) and `LLM judge model-call
+  timeout` (absent in mode `quick`), each showing the current budget in
+  seconds. The list offers 5, 10, 15, 25, 30 and 60 seconds, the saved
+  budget when it is not one of those, and a clear row that returns the
+  judge to its built-in 5 seconds.
+- Typed forms `/permission-model llm timeout <seconds>` and
+  `/permission-model quick timeout <seconds>` set one judge's model-call
+  budget, entered in whole seconds and written as milliseconds. The LLM
+  judge's form writes the top-level `timeoutMs`; the quick judge's form
+  writes `quickJudge.timeoutMs` and keeps the other `quickJudge` keys.
+  `0` clears that judge's key. A sign, a decimal point, an exponent, an
+  empty value, a negative value and anything above 3600 seconds are
+  refused with no write. Tab completion offers `timeout` after `llm ` and
+  after `quick `, and the preset budgets and the clear value after
+  `llm timeout ` and `quick timeout `, filtered by the digits typed.
 - The `--permission-model` launch flag takes a comma list of
   `quick:<provider>/<id>`, `llm:<provider>/<id>`, `llm:chat-model` and
   `mode:<mode>`, in any subset, for the session only. An item that does not
@@ -113,6 +131,17 @@ this project adheres to
 
 ### Changed
 
+- `config/config.example.json` ships the quick-then-llm shape: a `mode`,
+  the LLM judge's `provider`, `model` and `timeoutMs`, and a `quickJudge`
+  block with `provider`, `model`, `guidance` and its own `timeoutMs`.
+  The file carried one `timeoutMs` and no quick judge block, which read
+  as a single call budget shared by both judges.
+- The README says which judge each `timeoutMs` belongs to: the LLM judge
+  table names the top-level key and points at `quickJudge.timeoutMs`,
+  the `quickJudge` table names its own key and says the top-level key
+  belongs to the LLM judge alone, and the quick-then-llm example config
+  sets both budgets. The notes say a model call is aborted after that
+  judge's own timeout.
 - The chain link is renamed from `classifier` to `permission-judge`. List
   `permission-judge` in `authorizerChain`. For this release the link is
   also registered as `classifier`, which logs a deprecation warning once per
