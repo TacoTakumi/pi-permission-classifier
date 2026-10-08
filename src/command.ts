@@ -789,7 +789,10 @@ export function createPermissionModelCommand(
   /**
    * The timeout list for one judge: the preset budgets, the saved budget when
    * it is not a preset, and the clear row that returns the judge to its
-   * built-in budget. The saved budget is marked `(current)` and preselected.
+   * built-in budget. The saved budget is marked `(current)` and preselected,
+   * and a pick of it writes nothing: the config already holds it, and a
+   * budget that is not whole seconds cannot go through the seconds form
+   * without change.
    */
   async function pickTimeout(
     judge: JudgePolicy["judge"],
@@ -819,6 +822,9 @@ export function createPermissionModelCommand(
       markCurrent(presets, current),
       current,
     );
+    if (chosen === current) {
+      return "not-written";
+    }
     const seconds = parseTimeoutSeconds(chosen);
     if (seconds === undefined) {
       return "not-written";

@@ -78,7 +78,9 @@ this project adheres to
   timeout` (absent in mode `quick`), each showing the current budget in
   seconds. The list offers 5, 10, 15, 25, 30 and 60 seconds, the saved
   budget when it is not one of those, and a clear row that returns the
-  judge to its built-in 5 seconds.
+  judge to its built-in 5 seconds. A saved budget that is not whole
+  seconds shows its decimals (2500 ms as 2.5), and picking the current
+  row changes nothing.
 - Typed forms `/permission-model llm timeout <seconds>` and
   `/permission-model quick timeout <seconds>` set one judge's model-call
   budget, entered in whole seconds and written as milliseconds. The LLM

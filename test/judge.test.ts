@@ -339,10 +339,16 @@ describe("applySessionOverride", () => {
 });
 
 describe("formatTimeoutSeconds", () => {
-  it("renders a stored budget as whole seconds", () => {
+  it("renders a stored budget in seconds", () => {
     expect(formatTimeoutSeconds(12000)).toBe("12");
     expect(formatTimeoutSeconds(25000)).toBe("25");
-    expect(formatTimeoutSeconds(750)).toBe("1");
+  });
+
+  it("keeps the decimals of a budget that is not whole seconds, never rounding", () => {
+    expect(formatTimeoutSeconds(2500)).toBe("2.5");
+    expect(formatTimeoutSeconds(7500)).toBe("7.5");
+    expect(formatTimeoutSeconds(750)).toBe("0.75");
+    expect(formatTimeoutSeconds(300)).toBe("0.3");
   });
 
   it("reads the built-in 5000 ms default when the key is absent", () => {

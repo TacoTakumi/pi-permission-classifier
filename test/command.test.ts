@@ -1008,6 +1008,49 @@ describe("menu picker in the TUI", () => {
     await closeMenu(deps, 2, pending);
   });
 
+  it.each([
+    [2500, "2.5"],
+    [300, "0.3"],
+  ])(
+    "a saved budget of %i ms shows as %s (current) beside one clear row, and its pick writes nothing",
+    async (timeoutMs, shown) => {
+      const config: ClassifierConfig = { ...CONFIG_QN, timeoutMs };
+      const { deps, pending } = openMenu(config);
+      (await stepRequest(deps, 0)).onSelect("llm timeout");
+      const list = await stepRequest(deps, 1);
+      expect(list.items.map((item) => item.value)).toEqual([
+        "5",
+        "10",
+        "15",
+        "25",
+        "30",
+        "60",
+        shown,
+        "0",
+      ]);
+      expect(list.items[6]?.label).toBe(`${shown} (current)`);
+      expect(list.selectedValue).toBe(shown);
+      list.onSelect(shown);
+      const menu = await stepRequest(deps, 2);
+      expect(deps.write).not.toHaveBeenCalled();
+      expect(menu.items.find((item) => item.value === "llm timeout")?.description).toBe(
+        `${shown} seconds`,
+      );
+      await closeMenu(deps, 2, pending);
+    },
+  );
+
+  it("a pick of the current preset row writes nothing", async () => {
+    const { deps, pending } = openMenu({ ...CONFIG_QN, timeoutMs: 10000 });
+    (await stepRequest(deps, 0)).onSelect("llm timeout");
+    const list = await stepRequest(deps, 1);
+    expect(list.items.find((item) => item.value === "10")?.label).toBe("10 (current)");
+    list.onSelect("10");
+    await stepRequest(deps, 2);
+    expect(deps.write).not.toHaveBeenCalled();
+    await closeMenu(deps, 2, pending);
+  });
+
   it("the timeout list clear row writes 0 and the menu shows the built-in budget again", async () => {
     const { deps, ctx, pending } = openMenu({ ...CONFIG_QN, timeoutMs: 30000 });
     (await stepRequest(deps, 0)).onSelect("llm timeout");

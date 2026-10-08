@@ -151,13 +151,15 @@ export function formatQuickStatus(judge: ResolvedQuickJudge): string {
 }
 
 /**
- * A judge's model-call budget as whole seconds, for display. An absent
- * `timeoutMs` (the key was cleared, or never set) reads as the built-in
- * default. The command's timeout forms take and show seconds and never
+ * A judge's model-call budget in seconds, for display. An absent `timeoutMs`
+ * (the key was cleared, or never set) reads as the built-in default. A budget
+ * that is not whole seconds (hand-edited in the config) shows its decimals,
+ * never a rounded value, so the display never claims a budget the config does
+ * not hold. The command's timeout forms take and show seconds and never
  * milliseconds, so a budget cannot be misread across the two units.
  */
 export function formatTimeoutSeconds(timeoutMs: number | undefined): string {
-  return String(Math.round((timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000));
+  return String((timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000);
 }
 
 /**
