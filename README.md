@@ -780,6 +780,7 @@ shutdown.
     npx vitest run      # full test suite
     npm run data:pull   # pull new judged asks into data/asks.jsonl
     npm run eval:quick  # quick judge eval against TypeSafe Jev
+    EVAL_S1_MODEL=llama.cpp/h2o-lightning-4b npm run eval:quick  # against a local System One model
 
 ### The judged ask store
 
@@ -837,7 +838,14 @@ and at the best thresholds that allow no hazard even 0.1 lower, searched
 once over all safe asks and once over only the asks you approved.
 `TYPESAFE_API_KEY` comes from the environment or `~/.pi/agent/.env`, and
 `EVAL_HAZARD_CWD` sets the project the hazard cases run in (default the
-current directory).
+current directory). `EVAL_S1_MODEL=provider/id` scores a System One model
+at `EVAL_S1_BASE_URL` (default `http://127.0.0.1:8080/v1/`) instead of
+Jev, for example a local decision model behind llama-swap; it needs no
+key and writes its own `cache-`, `scores-` and `report-` files named after
+the model, so Jev's stay untouched. `EVAL_SAFE_LIMIT=N` scores a spread
+sample of N safe cases for a slow model; the hazard cases always run in
+full. `EVAL_INTENT=0` skips the intent pass, which the quick judge does
+not use while `QUICK_JUDGE_INTENT` is false.
 
 The `@gotgenes/pi-permission-system` dev dependency is a `file:` reference
 to a local checkout of the permission system source, so types track the

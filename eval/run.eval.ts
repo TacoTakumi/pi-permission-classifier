@@ -1,6 +1,8 @@
 /**
- * `npm run eval:quick`: score every candidate question set against Jev and
- * write drafts/eval/report.md. Runs under vitest (eval config) only so the
+ * `npm run eval:quick`: score every candidate question set against Jev (or
+ * the System One model EVAL_S1_MODEL names) and write drafts/eval/report.md
+ * (report-<provider>-<id>.md, with its own cache and scores, for another
+ * model). Runs under vitest (eval config) only so the
  * TypeScript and the #src paths resolve; it is not part of `npm test`.
  *
  * Each candidate is scored without intent on the safe cases and the hazard
@@ -11,7 +13,13 @@
  * with intent at the same thresholds and counts hazard allows per variant
  * and per hard or soft tier.
  *
- * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env), EVAL_CANDIDATES (a
+ * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env; not needed with
+ * EVAL_S1_MODEL), EVAL_S1_MODEL (`provider/id` of a System One model at
+ * EVAL_S1_BASE_URL, default http://127.0.0.1:8080/v1/, such as a local
+ * decision model behind llama-swap), EVAL_SAFE_LIMIT (score a spread
+ * sample of this many safe cases; the hazard cases always run in full),
+ * EVAL_INTENT=0 (skip the intent pass),
+ * EVAL_CANDIDATES (a
  * comma list, default all), EVAL_REBUILD=1 to rebuild the corpus from the
  * judged ask store (data/asks.jsonl, after `npm run data:pull`),
  * EVAL_HAZARD_CWD (the project the hazard cases run in, default the current
@@ -73,6 +81,25 @@ const JEV: ClassifierModel<ClassifierApi> = {
   contextWindow: 64000,
 } as ClassifierModel<ClassifierApi>;
 
+/**
+ * The model under eval: Jev, or the System One model named by
+ * EVAL_S1_MODEL (`provider/id`) at EVAL_S1_BASE_URL, for example a local
+ * decision model behind llama-swap. A local model needs no key.
+ */
+function evalModel(): { model: ClassifierModel<ClassifierApi>; local: boolean; slug: string } {
+  const named = process.env.EVAL_S1_MODEL;
+  if (!named) return { model: JEV, local: false, slug: "" };
+  const slash = named.indexOf("/");
+  if (slash <= 0 || slash === named.length - 1) {
+    throw new Error(`EVAL_S1_MODEL must be provider/id, got ${JSON.stringify(named)}`);
+  }
+  const provider = named.slice(0, slash);
+  const id = named.slice(slash + 1);
+  const baseUrl = process.env.EVAL_S1_BASE_URL ?? "http://127.0.0.1:8080/v1/";
+  const model = { ...JEV, id, name: id, provider, baseUrl } as ClassifierModel<ClassifierApi>;
+  return { model, local: true, slug: `-${provider}-${id}`.replace(/[^A-Za-z0-9._-]+/g, "_") };
+}
+
 function apiKey(): string {
   if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
   const env = join(AGENT_DIR, ".env");
@@ -109,13 +136,20 @@ function row(cells: (string | number)[]): string {
   return `| ${cells.join(" | ")} |`;
 }
 
-it("scores the candidates against Jev and writes the report", { timeout: 0 }, async () => {
+it("scores the candidates against the quick judge model and writes the report", { timeout: 0 }, async () => {
   mkdirSync(OUT_DIR, { recursive: true });
   const corpusPath = join(OUT_DIR, "corpus.json");
   let safe = readJson<EvalCase[]>(corpusPath, []);
   if (safe.length === 0 || process.env.EVAL_REBUILD === "1") {
     safe = safeCasesFromStore(loadStoredAsks(STORE_PATH));
     writeFileSync(corpusPath, JSON.stringify(safe));
+  }
+  // A slow local model can score a spread sample of the safe cases; the
+  // hazard cases always run in full.
+  const safeLimit = Number(process.env.EVAL_SAFE_LIMIT ?? 0);
+  if (safeLimit > 0 && safeLimit < safe.length) {
+    const stride = Math.ceil(safe.length / safeLimit);
+    safe = safe.filter((_, index) => index % stride === 0).slice(0, safeLimit);
   }
   const hazards = intentHazardCases(
     JSON.parse(readFileSync(join(import.meta.dirname, "hazard-cases.json"), "utf-8")) as HazardCase[],
@@ -127,25 +161,35 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
   // base is scored that way; the tallies without intent skip the variants.
   const plain = cases.filter((c) => c.kind === "safe" || c.variant === "none");
   const baseHazards = hazards.filter((c) => c.variant === "none");
-  const key = apiKey();
-  const cachePath = join(OUT_DIR, "cache.json");
+  const { model, local, slug } = evalModel();
+  const key = local ? "none" : apiKey();
+  // A second model keeps its own cache, scores and report beside Jev's.
+  const cachePath = join(OUT_DIR, `cache${slug}.json`);
   const cache = new Map<string, Scores>(Object.entries(readJson<Record<string, Scores>>(cachePath, {})));
   const guidanceFor = guidanceLoader();
   const wanted = process.env.EVAL_CANDIDATES?.split(",").map((name) => name.trim());
   const names = Object.keys(CANDIDATES).filter((name) => !wanted || wanted.includes(name));
 
   const count = (decider: Decider) => safe.filter((c) => c.decider === decider).length;
-  const paired = cases.filter((c) => c.userMessages !== undefined);
+  // EVAL_INTENT=0 skips the intent pass: the quick judge sends no intent
+  // while QUICK_JUDGE_INTENT is false, and the pass costs a slow local
+  // model the most (user text up to 24,000 characters per case).
+  const withIntent = process.env.EVAL_INTENT !== "0";
+  const paired = withIntent ? cases.filter((c) => c.userMessages !== undefined) : [];
   const lines: string[] = [
     "# Quick judge eval",
     "",
+    `Model: ${model.provider}/${model.id} at ${model.baseUrl}${safeLimit > 0 ? ` (safe cases sampled: limit ${safeLimit})` : ""}`,
+    "",
     `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${baseHazards.length} hazard cases, ${hazards.length} with the intent variants.`,
-    `${paired.length} cases carry user text and are also scored with intent.`,
+    withIntent
+      ? `${paired.length} cases carry user text and are also scored with intent.`
+      : "The intent pass was skipped (EVAL_INTENT=0).",
     "",
   ];
   for (const name of names) {
     const options = { concurrency: Number(process.env.EVAL_CONCURRENCY ?? 6), cache, guidanceFor };
-    const jev = (context: Parameters<typeof classify>[1]) => classify(JEV, context, { apiKey: key });
+    const jev = (context: Parameters<typeof classify>[1]) => classify(model, context, { apiKey: key });
     const scores = await scoreCases(plain, CANDIDATES[name]!, jev, options);
     writeFileSync(cachePath, JSON.stringify(Object.fromEntries(cache)));
     const intentScores = await scoreCases(paired, CANDIDATES[name]!, jev, { ...options, intent: true });
@@ -162,7 +206,7 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
     const bestUser = bestThresholds(userOnly, scores, undefined, margin);
     const bestUserAll = bestUser && tally(cases, scores, bestUser.thresholds);
     writeFileSync(
-      join(OUT_DIR, `scores-${name}.json`),
+      join(OUT_DIR, `scores-${name}${slug}.json`),
       JSON.stringify(
         cases.map((c) => ({ ...c, scores: scores.get(c.id), intentScores: intentScores.get(c.id) })),
       ),
@@ -287,6 +331,6 @@ it("scores the candidates against Jev and writes the report", { timeout: 0 }, as
     }
     lines.push("");
   }
-  writeFileSync(join(OUT_DIR, "report.md"), lines.join("\n"));
+  writeFileSync(join(OUT_DIR, `report${slug}.md`), lines.join("\n"));
   console.log(lines.join("\n"));
 });

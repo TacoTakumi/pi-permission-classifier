@@ -130,6 +130,11 @@ this project adheres to
   thresholds against an intent ship bar. The quick judge does not send
   user text yet: in the first run no thresholds met the bar (see
   `eval/RESULTS.md`).
+- `npm run eval:quick` scores a local System One model instead of Jev with
+  `EVAL_S1_MODEL=provider/id` at `EVAL_S1_BASE_URL` (default
+  `http://127.0.0.1:8080/v1/`), with its own cache, scores and report
+  files. `EVAL_SAFE_LIMIT=N` scores a spread sample of N safe cases and
+  `EVAL_INTENT=0` skips the intent pass.
 
 ### Changed
 
