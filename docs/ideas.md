@@ -1,0 +1,1 @@
+- Have a per project allow list. For example a project building a flutter app should be allowed to run flutter. A project dealing with nostr should be allowed to read releated files in ~/. Should we do this in pi-permission-system config or add to the judge model prompt?
