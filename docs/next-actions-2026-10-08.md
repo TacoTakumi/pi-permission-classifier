@@ -113,9 +113,9 @@ puts off limits to the agent. You apply the edit.
 
 ## State of the repo at handoff
 
-- specflo project `judged-ask-store`: execute phase, complete, 14/14 tasks.
+- Project `judged-ask-store`: execute phase, complete, 14/14 tasks.
   Review round 3 was changes-requested (2026-10-06, `893bd54`); status reports
-  every item settled. Next: `specflo new`.
+  every item settled. Next: start the next project.
 - Uncommitted from 2026-10-07, unchanged: `CLAUDE.md`, `README.md`,
   `eval/run.eval.ts` modified; `docs/ideas.md`, `docs/research.md`,
   `eval/zz-replay.eval.ts` untracked. See the 2026-10-07 file, item 5, for

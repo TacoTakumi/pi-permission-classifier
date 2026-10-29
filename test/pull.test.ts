@@ -258,7 +258,7 @@ describe("project aliases", () => {
   });
 
   it("seeds the distinctive directory names from a root listing and drops common or short ones", () => {
-    const listing = ["LLMaster", "AgentSquire", "core", "x", "MCP", "Health", "pi-env", "h3-reels", "specflo", "Fun", "claude-env.20260615", "kilo"];
+    const listing = ["LLMaster", "AgentSquire", "core", "x", "MCP", "Health", "pi-env", "h3-reels", "notes", "Fun", "claude-env.20260615", "kilo"];
     expect(seedProjectNames(listing)).toEqual(["LLMaster", "AgentSquire", "Health", "pi-env", "h3-reels", "claude-env.20260615"]);
   });
 
