@@ -9,10 +9,12 @@ pi-automode-classifier (see `compare-pi-automode-classifier-2026-10-08.md`).
   ("Scrubbed merged command-evaluation datasets"), revision `bd65f8ba9e7c`,
   updated 2026-10-10T21:26:14Z.
 - Local copy: `data/external/deepu105-merged-datasets-scrubbed.jsonl`
-  (5362 lines, 1.9 MB, sha256 `53e0740fe86f53aa6da368e3e7130df0408336d44473122a67f14911a3d945ff`).
-  One change from the gist (sha256
+  (5362 lines, 1.9 MB, sha256 `63d09b12f626662fcc2d3f95e926a3f350fea1690071788369799f0dbc68bf4f`).
+  Two changes from the gist (sha256
   `072b0a27975d6ba72ba40c441b8618417d75ddbdffed32260472d07cc1cd06c2`): the
-  `STRIPE_SECRET_KEY` value on line 1159 is replaced with `<REDACTED>` (see F4).
+  `STRIPE_SECRET_KEY` value on line 1159 is replaced with `<REDACTED>` (see F4),
+  and the two Hugging Face tokens (`hf_...`) on lines 1193, 2257, 3881 and
+  5115 are replaced with `<REDACTED>` (GitHub push protection flagged them).
 - Licence: the gist states none. Some source sets have their own licence
   (GTFOBins is GPL-3.0). Ask the author before the repo is made public or
   the file is shipped.
