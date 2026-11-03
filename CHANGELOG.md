@@ -5,6 +5,17 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-03
+
+### Fixed
+
+- The test suite runs from a public clone. The structure tests read
+  CLAUDE.md, which the public repository does not carry, so the suite
+  failed to load; those checks now skip when the file is absent.
+- The test fixtures set `matchedSpelling` and `decidingPath`, which
+  pi-permission-system now requires on the request facts, so the
+  typecheck passes again. Runtime behavior is unchanged.
+
 ## [0.6.0] - 2026-10-06
 
 ### Added
