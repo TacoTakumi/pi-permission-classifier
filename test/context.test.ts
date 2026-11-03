@@ -25,6 +25,8 @@ function bashPayload(
       invokedToolName: null,
       value: "rm -f x",
       matchedPattern: null,
+      matchedSpelling: null,
+      decidingPath: null,
       commandContext: null,
       executedUnit: null,
     },

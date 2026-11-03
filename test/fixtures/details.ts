@@ -17,6 +17,8 @@ export function askDetails(
     invokedToolName: null,
     value: "git status --porcelain",
     matchedPattern: null,
+    matchedSpelling: null,
+    decidingPath: null,
     commandContext: null,
     executedUnit: null,
     ...request,

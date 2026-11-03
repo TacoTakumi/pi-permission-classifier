@@ -11,7 +11,7 @@
  *      the engine caps any allow on those families anyway, so the classifier
  *      never attempts them); every other surface, whatever its name, is
  *      judged,
- *   3. the extracted full-command context fits `contextBudgetBytes` (else
+ *   3. combined full-command and operation context fits `contextBudgetBytes` (else
  *      defer, recorded — over-budget context is never rendered),
  *   4. the judge model and its auth resolve (else defer, recorded),
  *   5. the guidance seam selects the operator and trusted-project guidance
@@ -38,7 +38,12 @@ import type {
 
 import { CircuitBreaker } from "./breaker";
 import type { ClassifierConfig } from "./config-schema";
-import { extractFullCommandContext, type FullCommandContext } from "./context";
+import {
+  type ContextMeasurement,
+  extractFullCommandContext,
+  extractOperationContext,
+  measureReviewContext,
+} from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
 import { type CompleteFn, type ReviewOutcome, reviewAsk } from "./model-review";
@@ -187,7 +192,10 @@ export function createClassifierReviewer(
       // link's onError, and never an allow.
       const verdict = backstopVerdict(deps);
       try {
-        const context = extractFullCommandContext(details.payload);
+        const context = measureReviewContext(
+          extractFullCommandContext(details.payload),
+          extractOperationContext(details.payload),
+        );
         log.review(DECISION_EVENT, {
           judge: JUDGE_TAG,
           requestId: details.requestId,
@@ -242,7 +250,9 @@ async function decide(
   const { requestId } = details;
   const surface = gateSurfaceOf(details);
   const value = details.payload.request.value;
-  const context = extractFullCommandContext(details.payload);
+  const fullCommand = extractFullCommandContext(details.payload);
+  const operationContext = extractOperationContext(details.payload);
+  const context = measureReviewContext(fullCommand, operationContext);
 
   const config = deps.getConfig();
   if (!config) {
@@ -275,7 +285,7 @@ async function decide(
     });
     return { kind: "defer" };
   }
-  // The budget gate: an over-budget full command is never rendered,
+  // The budget gate: over-budget operation context is never rendered,
   // not even truncated. The ask is uncertain under the policy, with the
   // measurements on record. Decided before the breaker and model stages: it
   // is a property of the ask and the config alone.
@@ -360,7 +370,8 @@ async function decide(
     complete: deps.complete,
     apiKey: auth.apiKey,
     headers: auth.headers,
-    context,
+    context: fullCommand,
+    operationContext,
     guidance: guidance.included,
     ...(userIntent === undefined ? {} : { userIntent }),
   });
@@ -466,7 +477,7 @@ function recordPreModel(
     value: string;
     modelId: string | null;
     deferReason: PreModelDeferReason;
-    context: FullCommandContext | null;
+    context: ContextMeasurement | null;
   },
 ): AuthorizerVerdict {
   const verdict: AuthorizerVerdict =
@@ -502,11 +513,11 @@ function preModelOutcome(
 /**
  * The three context fields every decision entry carries. Only the
  * measurements are logged — bytes and a hash prefix — never the text, so the
- * review log stays free of command content beyond the gated value itself.
+ * review log stays free of operation content beyond the gated value itself.
  */
 export function contextFields(
   included: boolean,
-  context: FullCommandContext | null,
+  context: ContextMeasurement | null,
 ): {
   contextIncluded: boolean;
   contextBytes: number | null;
