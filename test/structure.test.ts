@@ -11,6 +11,15 @@ import { askDetails } from "#test/fixtures/details";
 
 const ROOT = join(import.meta.dirname, "..");
 
+/**
+ * CLAUDE.md is private: release-kit strips it from the public mirror. The
+ * guide checks run only where the file exists, so a public clone still runs
+ * the rest of this suite.
+ */
+const GUIDE_PATH = join(ROOT, "CLAUDE.md");
+const HAS_GUIDE = existsSync(GUIDE_PATH);
+const GUIDE = HAS_GUIDE ? readFileSync(GUIDE_PATH, "utf-8") : "";
+
 function src(name: string): string {
   return readFileSync(join(ROOT, "src", name), "utf-8");
 }
@@ -380,16 +389,14 @@ describe("operator docs", () => {
     expect(flat).toContain("first agent turn");
   });
 
-  it("the project guide lists the command and judge modules in Layout", () => {
-    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
-    expect(guide).toContain("src/command.ts");
-    expect(guide).toContain("src/judge.ts");
+  it.skipIf(!HAS_GUIDE)("the project guide lists the command and judge modules in Layout", () => {
+    expect(GUIDE).toContain("src/command.ts");
+    expect(GUIDE).toContain("src/judge.ts");
   });
 
-  it("the project guide lists the health module and its test in Layout", () => {
-    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
-    expect(guide).toContain("src/health.ts");
-    expect(guide).toContain("test/health.test.ts");
+  it.skipIf(!HAS_GUIDE)("the project guide lists the health module and its test in Layout", () => {
+    expect(GUIDE).toContain("src/health.ts");
+    expect(GUIDE).toContain("test/health.test.ts");
   });
 
   it("documents the three footer health suffix states", () => {
@@ -400,11 +407,10 @@ describe("operator docs", () => {
   });
 
   it("README.md and CLAUDE.md are ASCII only", () => {
-    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
     // eslint-disable-next-line no-control-regex
     expect(readme).not.toMatch(/[^\x00-\x7F]/);
     // eslint-disable-next-line no-control-regex
-    expect(guide).not.toMatch(/[^\x00-\x7F]/);
+    expect(GUIDE).not.toMatch(/[^\x00-\x7F]/);
   });
 
   it("ships a config example that validates against the schema", () => {
@@ -720,7 +726,6 @@ describe("guidance discipline", () => {
   describe("docs claims", () => {
     const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
     const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf-8");
-    const guide = readFileSync(join(ROOT, "CLAUDE.md"), "utf-8");
     const flat = readme.replace(/\s+/g, " ");
 
     it("README has the guidance section with trust gating, caps, and log fields", () => {
@@ -823,23 +828,23 @@ describe("guidance discipline", () => {
       expect(flat).not.toContain("classifierEnabled: false");
     });
 
-    it("CLAUDE.md lists the quick judge modules and the revised failure rule", () => {
+    it.skipIf(!HAS_GUIDE)("CLAUDE.md lists the quick judge modules and the revised failure rule", () => {
       for (const module of [
         "src/quick-judge.ts",
         "src/system-one-review.ts",
         "src/verdict-policy.ts",
       ]) {
-        expect(guide).toContain(module);
+        expect(GUIDE).toContain(module);
       }
-      expect(guide.replace(/\s+/g, " ")).toMatch(
+      expect(GUIDE.replace(/\s+/g, " ")).toMatch(
         /a failure never allows; it defers unless (?:the link's )?onError is deny/i,
       );
     });
 
-    it("CLAUDE.md lists the guidance module and names it as a disk reader", () => {
-      expect(guide).toContain("src/guidance.ts");
-      expect(guide).toContain("test/guidance.test.ts");
-      expect(guide).toMatch(/guidance\.ts[^\n]*\n?[^\n]*(loader|disk)/i);
+    it.skipIf(!HAS_GUIDE)("CLAUDE.md lists the guidance module and names it as a disk reader", () => {
+      expect(GUIDE).toContain("src/guidance.ts");
+      expect(GUIDE).toContain("test/guidance.test.ts");
+      expect(GUIDE).toMatch(/guidance\.ts[^\n]*\n?[^\n]*(loader|disk)/i);
     });
   });
 });
