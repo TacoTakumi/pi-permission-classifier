@@ -31,9 +31,9 @@ function fullyPopulatedDetails(): PromptPermissionDetails {
         value: "git status --porcelain",
         matchedPattern: "git *",
         matchedSpelling: null,
-        decidingPath: null,
         commandContext: null,
         executedUnit: "git status --porcelain # via wrapper",
+        decidingPath: null,
       },
       evidence: [
         { label: "File contents", text: SECRET_EVIDENCE, detail: null },

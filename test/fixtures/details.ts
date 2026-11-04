@@ -18,9 +18,9 @@ export function askDetails(
     value: "git status --porcelain",
     matchedPattern: null,
     matchedSpelling: null,
-    decidingPath: null,
     commandContext: null,
     executedUnit: null,
+    decidingPath: null,
     ...request,
   };
   return {
