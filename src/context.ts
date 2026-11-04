@@ -1,19 +1,19 @@
 /**
- * The scoped full-command read: the one place in the classifier that
- * touches payload evidence.
+ * The designated context reader for full commands and operation evidence.
  *
  * A bash gate that intercepts one unit of a larger command attaches the whole
  * command as the payload's single "full command" evidence entry
- * (agent-authored ask text, never a tool result). This module extracts exactly
- * that entry — bash kind, designated label, non-empty string text — and
- * measures it for the budget gate and the audit trail. Everything else — other
- * kinds, other labels, malformed shapes — yields null, and nothing here
- * throws: absence degrades to the value-only prompt.
+ * (agent-authored ask text, never a tool result). Full commands require a
+ * bash payload and the designated label. Operation context separately selects
+ * complete, validated file-operation evidence. Annotations, unrelated evidence,
+ * previews and malformed shapes are ignored. Command and operation measurements
+ * remain independent in the audit log and share one byte budget.
  */
 
 import { createHash } from "node:crypto";
 
 import type { PromptPayload } from "@gotgenes/pi-permission-system";
+import { z } from "zod";
 
 /** The upstream label on the enclosing-command evidence entry. */
 const FULL_COMMAND_LABEL = "full command";
@@ -58,9 +58,85 @@ export function extractFullCommandContext(
     return {
       text,
       bytes: Buffer.byteLength(text, "utf8"),
-      hash12: createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12),
+      hash12: createHash("sha256")
+        .update(text, "utf8")
+        .digest("hex")
+        .slice(0, 12),
     };
   } catch {
     return null;
   }
+}
+
+const replacementSchema = z.object({
+  oldText: z.string(),
+  newText: z.string(),
+});
+const fileOperationSchema = z.union([
+  z.object({
+    tool: z.literal("read"),
+    path: z.string(),
+    offset: z.number().optional(),
+    limit: z.number().optional(),
+  }),
+  z.object({ tool: z.literal("write"), path: z.string(), content: z.string() }),
+  z
+    .object({
+      tool: z.literal("edit"),
+      path: z.string(),
+      oldText: z.string().optional(),
+      newText: z.string().optional(),
+      edits: z.array(replacementSchema).min(1).optional(),
+    })
+    .refine(
+      (value) =>
+        (value.oldText === undefined) === (value.newText === undefined) &&
+        (value.edits !== undefined || value.oldText !== undefined),
+    ),
+]);
+
+export interface OperationContext {
+  readonly fileOperation: z.infer<typeof fileOperationSchema>;
+}
+
+export type ContextMeasurement = Pick<FullCommandContext, "bytes" | "hash12">;
+
+export function extractOperationContext(
+  payload: PromptPayload,
+): OperationContext | null {
+  try {
+    const entry =
+      payload.kind === "tool" && Array.isArray(payload.evidence)
+        ? payload.evidence.find(
+            (candidate) => candidate?.label === "file operation",
+          )
+        : undefined;
+    if (typeof entry?.text === "string") {
+      try {
+        const parsed = fileOperationSchema.safeParse(JSON.parse(entry.text));
+        if (parsed.success && parsed.data.tool === payload.request.toolName) {
+          return { fileOperation: parsed.data };
+        }
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function measureOperationContext(
+  operation: OperationContext | null,
+): ContextMeasurement | null {
+  if (operation === null) return null;
+  const text = JSON.stringify(operation.fileOperation);
+  return {
+    bytes: Buffer.byteLength(text, "utf8"),
+    hash12: createHash("sha256")
+      .update(text, "utf8")
+      .digest("hex")
+      .slice(0, 12),
+  };
 }

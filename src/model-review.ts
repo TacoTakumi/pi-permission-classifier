@@ -19,7 +19,7 @@ import type {
 import type { AuthorizerVerdict, PromptPermissionDetails } from "@gotgenes/pi-permission-system";
 
 import type { ClassifierConfig } from "./config-schema";
-import type { FullCommandContext } from "./context";
+import type { FullCommandContext, OperationContext } from "./context";
 import type { IncludedGuidance } from "./guidance";
 import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "./prompt";
 import type { UserIntent } from "./user-intent";
@@ -39,6 +39,7 @@ export const GENERIC_TEACHING_REASON =
  * the `as unknown as Tool` bridge satisfies the `TSchema`-typed `parameters`
  * field without a `typebox` dependency.
  */
+// SAFETY: the SDK consumes JSON Schema properties/required without TypeBox metadata.
 const VERDICT_TOOL = {
   name: "report_verdict",
   description:
@@ -108,6 +109,7 @@ export interface ReviewAskInputs {
   headers?: Record<string, string | null>;
   /** Budget-gated full-command context; absent renders the value-only prompt. */
   context?: FullCommandContext | null;
+  operationContext?: OperationContext | null;
   /** Selected guidance files, rendered after the preamble; absent renders none. */
   guidance?: readonly IncludedGuidance[];
   /** The user's own messages when intent is available; absent renders no user block. */
@@ -168,6 +170,7 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
             inputs.context ?? null,
             inputs.guidance ?? [],
             inputs.userIntent,
+            inputs.operationContext ?? null,
           ),
           timestamp: Date.now(),
         },

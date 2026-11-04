@@ -114,17 +114,22 @@ function readsEvidence(source: string): boolean {
 }
 
 describe("scoped evidence read", () => {
-  it("only context.ts reads payload evidence, pinned to the bash full-command entry", () => {
+  it("only context.ts reads evidence, scoped to full commands and validated file operations", () => {
     for (const name of LINK_FILES) {
       const source = src(name);
       if (name === "context.ts") {
         expect(readsEvidence(source), "context.ts must read evidence").toBe(
           true,
         );
-        // The pin: the one read admits only the bash kind and the
-        // designated label.
-        expect(source).toContain('payload.kind !== "bash"');
-        expect(source).toContain('"full command"');
+        const command = functionSource(source, "extractFullCommandContext");
+        expect(command).toContain('payload.kind !== "bash"');
+        expect(command).toContain("candidate.label === FULL_COMMAND_LABEL");
+        const operation = functionSource(source, "extractOperationContext");
+        expect(operation).toContain('payload.kind === "tool"');
+        expect(operation).toContain('candidate?.label === "file operation"');
+        expect(operation).toContain("fileOperationSchema.safeParse(JSON.parse(entry.text))");
+        expect(operation).toContain("parsed.data.tool === payload.request.toolName");
+        expect(operation).not.toContain("annotations");
       } else {
         expect(readsEvidence(source), `${name} reads payload evidence`).toBe(
           false,
@@ -754,14 +759,16 @@ describe("guidance discipline", () => {
       }
     });
 
-    it("CHANGELOG's top heading is a dated version listing the rename and the removed forms", () => {
+    it("CHANGELOG has a dated latest release and records the rename in 0.6.0", () => {
       const headings = changelog.match(/^## .*$/gm) ?? [];
       expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
       expect(headings[0]).not.toMatch(/unreleased/i);
-      const newest = changelog
-        .slice(changelog.indexOf(headings[0]!) + headings[0]!.length)
+      const renameHeading = headings.find((heading) => heading.startsWith("## [0.6.0]"));
+      expect(renameHeading).toBeDefined();
+      const renameRelease = changelog
+        .slice(changelog.indexOf(renameHeading!) + renameHeading!.length)
         .split(/\n## /)[0]!;
-      const flatNewest = newest.replace(/\s+/g, " ");
+      const flatNewest = renameRelease.replace(/\s+/g, " ");
       for (const claim of [
         "### Added",
         "### Changed",
