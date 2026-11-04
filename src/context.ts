@@ -5,9 +5,9 @@
  * command as the payload's single "full command" evidence entry
  * (agent-authored ask text, never a tool result). Full commands require a
  * bash payload and the designated label. Operation context separately selects
- * operation-purpose annotations and complete, validated file-operation
- * evidence. Unrelated evidence, previews and malformed shapes are ignored.
- * Combined measurements gate the LLM request and supply the audit hash.
+ * complete, validated file-operation evidence. Annotations, unrelated evidence,
+ * previews and malformed shapes are ignored. Command and operation measurements
+ * remain independent in the audit log and share one byte budget.
  */
 
 import { createHash } from "node:crypto";
@@ -96,8 +96,7 @@ const fileOperationSchema = z.union([
 ]);
 
 export interface OperationContext {
-  readonly purpose?: string;
-  readonly fileOperation?: z.infer<typeof fileOperationSchema>;
+  readonly fileOperation: z.infer<typeof fileOperationSchema>;
 }
 
 export type ContextMeasurement = Pick<FullCommandContext, "bytes" | "hash12">;
@@ -106,17 +105,6 @@ export function extractOperationContext(
   payload: PromptPayload,
 ): OperationContext | null {
   try {
-    const purpose = Array.isArray(payload.annotations)
-      ? payload.annotations.find(
-          (entry) => entry?.source === "operation-purpose",
-        )?.text
-      : undefined;
-    const context: {
-      purpose?: string;
-      fileOperation?: OperationContext["fileOperation"];
-    } = {};
-    if (typeof purpose === "string" && purpose.trim() !== "")
-      context.purpose = purpose;
     const entry =
       payload.kind === "tool" && Array.isArray(payload.evidence)
         ? payload.evidence.find(
@@ -127,27 +115,23 @@ export function extractOperationContext(
       try {
         const parsed = fileOperationSchema.safeParse(JSON.parse(entry.text));
         if (parsed.success && parsed.data.tool === payload.request.toolName) {
-          context.fileOperation = parsed.data;
+          return { fileOperation: parsed.data };
         }
       } catch {
-        // 无效的文件证据不作为操作内容提供给模型。
+        return null;
       }
     }
-    return Object.keys(context).length === 0 ? null : context;
+    return null;
   } catch {
     return null;
   }
 }
 
-export function measureReviewContext(
-  fullCommand: FullCommandContext | null,
+export function measureOperationContext(
   operation: OperationContext | null,
 ): ContextMeasurement | null {
-  if (operation === null) return fullCommand;
-  const text = JSON.stringify({
-    ...(fullCommand === null ? {} : { fullCommand: fullCommand.text }),
-    ...operation,
-  });
+  if (operation === null) return null;
+  const text = JSON.stringify(operation.fileOperation);
   return {
     bytes: Buffer.byteLength(text, "utf8"),
     hash12: createHash("sha256")

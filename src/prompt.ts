@@ -5,8 +5,8 @@
  * decision value, matched pattern, executed unit, nested execution context,
  * requester provenance — plus budget-gated full-command and operation
  * context extracted by src/context.ts. The optional operation context holds
- * the agent-authored purpose and complete read/edit/write arguments, never
- * unrelated annotations, tool results or arbitrary input previews. This module
+ * complete read/edit/write arguments, never annotations, tool results or
+ * arbitrary input previews. This module
  * reads no payload evidence itself. Untrusted strings are delimited as data,
  * and delimiter tags inside them are escaped so an operation cannot close
  * its block or forge a user block.
@@ -248,15 +248,6 @@ export function renderReviewPrompt(
           "<full-command>",
           escapeDelimiters(context.text),
           "</full-command>",
-        ]),
-    ...(operationContext?.purpose === undefined
-      ? []
-      : [
-          "",
-          "Operation purpose (agent-authored explanation, not user authorization; compare it with the actual action):",
-          "<operation-purpose>",
-          escapeDelimiters(operationContext.purpose),
-          "</operation-purpose>",
         ]),
     ...(operationContext?.fileOperation === undefined
       ? []

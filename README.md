@@ -115,12 +115,12 @@ and installing it grants it no authority until you name it in the chain.
 
    Each entry records the judge (`quick` or `llm`), request id,
    surface, value, model id, latency, verdict, defer reason, and three
-   context fields: `contextIncluded`
-   (true when full-command or operation context was rendered to the LLM judge,
-   or a full command was rendered to the quick judge),
-   `contextBytes` (the measured UTF-8 byte length, null when absent), and
+   context fields: `contextIncluded` (true when a full command was rendered),
+   `contextBytes` (the command's UTF-8 byte length, null when absent), and
    `contextHash` (first 12 hex chars of its sha256, null when absent).
-   The operation context itself is never added to this decision entry. An over-budget context
+   The LLM judge separately records `operationContextIncluded`,
+   `operationContextBytes`, and `operationContextHash` for file-operation evidence.
+   The operation content itself is never added to this decision entry. An over-budget context
    defers with reason `context-over-budget` before any model call.
    Enable `debugLog` in the permission system config to also capture raw
    model replies and short-circuit traces.
@@ -168,7 +168,7 @@ and every quick judge ask is then `model-unresolved`; repeat `provider` and
 | `instructions` | built-in rubric | System prompt for the LLM judge. Replaces the default rubric verbatim when set. |
 | `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
 | `timeoutMs` | `5000` | The LLM judge's own model call budget in milliseconds (positive integer). The quick judge has a separate `quickJudge.timeoutMs`. |
-| `contextBudgetBytes` | `8192` | Cap in UTF-8 bytes (positive integer): the LLM judge measures the combined full command, purpose and file-operation JSON; the quick judge measures its full command. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
+| `contextBudgetBytes` | `8192` | Cap in UTF-8 bytes (positive integer): the LLM judge measures the full command plus validated file-operation JSON; the quick judge measures its full command. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
 | `verdicts` | `"allow-deny-defer"` | Which verdicts the LLM judge may return. See "Verdicts and onError". |
 | `onError` | `"defer"` | What the LLM judge returns on a failure: `"defer"` or `"deny"`. Never allow. |
 | `quickJudge` | unset | The quick judge settings. See "quickJudge settings". |
@@ -309,21 +309,21 @@ Set `instructions` to replace the rubric wholesale with your own.
 
 With a permission-system version that supplies the evidence described in
 [gotgenes/pi-packages#1105](https://github.com/gotgenes/pi-packages/issues/1105),
-the LLM judge also receives the `operation-purpose` annotation and the
-`file operation` evidence entry.
-The purpose is an agent-authored explanation, not user authorization.
+the LLM judge also receives the validated `file operation` evidence entry.
+Agent-authored purpose annotations are not selected or sent to the judge.
 The file entry contains the tool and path, read offsets and limits, every
-edit replacement, or the complete write content.
+edit replacement (including old text copied from the file), or the complete write content.
 It does not read the target file from disk or include arbitrary MCP arguments,
 other annotations, tool results, or human input previews.
 
 The full command and operation context share `contextBudgetBytes`.
-When operation context exists, the measure is the UTF-8 size of their
-combined JSON; when only a full command exists, its original measure is retained.
+Their summed UTF-8 byte lengths gate the request: the original command text
+and the JSON serialization of the validated file-operation object are measured separately.
 Over-budget context is never truncated or submitted to a model: the ask
 follows the existing over-budget policy.
-Prompt delimiters inside purpose and file strings are escaped as data.
-Only context bytes and a hash are added to the classifier decision entry.
+Prompt delimiters inside file strings are escaped as data.
+The existing command byte/hash fields retain their meaning; separate operation-context
+fields record bytes and a hash without logging file arguments.
 With a hosted LLM, these arguments, including write content, leave the machine.
 The quick judge retains its existing inputs and does not receive this
 additional operation context.
@@ -773,9 +773,11 @@ shutdown.
   judge reviews, it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
   provenance) into a prompt, followed by the guidance files selected for
-  this ask and your own messages in the session. Tool results, assistant
-  text and file contents never reach the judge, and the judged value, the
-  guidance and your messages are delimited as data, not instructions.
+  this ask and your own messages in the session. The budget-gated file-operation
+  entry also sends read ranges, edit old/new text, and complete write content.
+  Tool results, assistant text, and other file contents are not collected.
+  Agent-authored purpose annotations are not sent. Every selected block is
+  delimited as data, not instructions.
 - The judge model must answer through a forced `report_verdict` tool call
   (allow / deny / defer), so there is no free-text parsing to get wrong.
   The call is aborted after that judge's own timeout: the top-level

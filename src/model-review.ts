@@ -39,7 +39,7 @@ export const GENERIC_TEACHING_REASON =
  * the `as unknown as Tool` bridge satisfies the `TSchema`-typed `parameters`
  * field without a `typebox` dependency.
  */
-// SAFETY: SDK 在运行时接受含 properties 和 required 的 JSON Schema。
+// SAFETY: the SDK consumes JSON Schema properties/required without TypeBox metadata.
 const VERDICT_TOOL = {
   name: "report_verdict",
   description:

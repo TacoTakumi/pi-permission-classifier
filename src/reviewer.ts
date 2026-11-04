@@ -42,7 +42,7 @@ import {
   type ContextMeasurement,
   extractFullCommandContext,
   extractOperationContext,
-  measureReviewContext,
+  measureOperationContext,
 } from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
@@ -192,8 +192,8 @@ export function createClassifierReviewer(
       // link's onError, and never an allow.
       const verdict = backstopVerdict(deps);
       try {
-        const context = measureReviewContext(
-          extractFullCommandContext(details.payload),
+        const context = extractFullCommandContext(details.payload);
+        const operation = measureOperationContext(
           extractOperationContext(details.payload),
         );
         log.review(DECISION_EVENT, {
@@ -207,6 +207,7 @@ export function createClassifierReviewer(
           verdict: verdict.kind,
           deferReason: "internal-error",
           ...contextFields(false, context),
+          ...operationContextFields(false, operation),
           ...guidanceFields(trail.guidance),
         });
       } catch {
@@ -252,7 +253,8 @@ async function decide(
   const value = details.payload.request.value;
   const fullCommand = extractFullCommandContext(details.payload);
   const operationContext = extractOperationContext(details.payload);
-  const context = measureReviewContext(fullCommand, operationContext);
+  const context = fullCommand;
+  const operation = measureOperationContext(operationContext);
 
   const config = deps.getConfig();
   if (!config) {
@@ -263,6 +265,7 @@ async function decide(
       modelId: null,
       deferReason: "no-config",
       context,
+      operation,
     });
   }
 
@@ -289,7 +292,7 @@ async function decide(
   // not even truncated. The ask is uncertain under the policy, with the
   // measurements on record. Decided before the breaker and model stages: it
   // is a property of the ask and the config alone.
-  if (context !== null && context.bytes > config.contextBudgetBytes) {
+  if ((context?.bytes ?? 0) + (operation?.bytes ?? 0) > config.contextBudgetBytes) {
     return recordPreModel(deps, log, policy, {
       requestId,
       surface,
@@ -297,6 +300,7 @@ async function decide(
       modelId: null,
       deferReason: "context-over-budget",
       context,
+      operation,
     });
   }
 
@@ -308,6 +312,7 @@ async function decide(
       modelId: null,
       deferReason: "breaker-open",
       context,
+      operation,
     });
   }
 
@@ -327,6 +332,7 @@ async function decide(
           : null,
       deferReason: "model-unresolved",
       context,
+      operation,
     });
   }
   const modelId = `${model.provider}/${model.id}`;
@@ -340,6 +346,7 @@ async function decide(
       modelId,
       deferReason: "auth-failed",
       context,
+      operation,
     });
   }
 
@@ -359,6 +366,7 @@ async function decide(
       modelId,
       deferReason: "guidance-load-failed",
       context,
+      operation,
     });
   }
 
@@ -414,6 +422,7 @@ async function decide(
     verdict: verdict.kind,
     deferReason,
     ...contextFields(context !== null, context),
+    ...operationContextFields(operation !== null, operation),
     ...guidanceFields(guidance),
   });
   // Health folds in what the judge did, not what the policy made of it, so
@@ -478,6 +487,7 @@ function recordPreModel(
     modelId: string | null;
     deferReason: PreModelDeferReason;
     context: ContextMeasurement | null;
+    operation: ContextMeasurement | null;
   },
 ): AuthorizerVerdict {
   const verdict: AuthorizerVerdict =
@@ -495,6 +505,7 @@ function recordPreModel(
     verdict: verdict.kind,
     deferReason: entry.deferReason,
     ...contextFields(false, entry.context),
+    ...operationContextFields(false, entry.operation),
     ...guidanceFields(EMPTY_GUIDANCE),
   });
   report(deps, { verdict: "defer", deferReason: entry.deferReason });
@@ -527,6 +538,21 @@ export function contextFields(
     contextIncluded: included,
     contextBytes: context?.bytes ?? null,
     contextHash: context?.hash12 ?? null,
+  };
+}
+
+function operationContextFields(
+  included: boolean,
+  operation: ContextMeasurement | null,
+): {
+  operationContextIncluded: boolean;
+  operationContextBytes: number | null;
+  operationContextHash: string | null;
+} {
+  return {
+    operationContextIncluded: included,
+    operationContextBytes: operation?.bytes ?? null,
+    operationContextHash: operation?.hash12 ?? null,
   };
 }
 
