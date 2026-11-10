@@ -42,6 +42,14 @@ import { extractFullCommandContext, type FullCommandContext } from "./context";
 import type { GuidanceSelection } from "./guidance";
 import type { HealthOutcome } from "./health";
 import { type CompleteFn, type ReviewOutcome, reviewAsk } from "./model-review";
+import {
+  type TargetContextDeps,
+  type TargetReading,
+  extractTargetContext,
+  resolveTargetDeps,
+  sessionCwdOf,
+  tempDirectoryOf,
+} from "./target-context";
 import type { UserIntent } from "./user-intent";
 import {
   applyVerdictPolicy,
@@ -148,6 +156,18 @@ export interface ClassifierReviewerDeps {
    * nothing about what listens; the extension folds it into session health.
    */
   onOutcome?: (outcome: HealthOutcome) => void;
+  /**
+   * The session's working directory, which the target facts measure
+   * containment against. Absent leaves the target's location unknown; the
+   * path itself is still read and reported.
+   */
+  getCwd?: () => string;
+  /**
+   * The target-read seams (filesystem, temporary directory, cwd). Tests
+   * answer them in memory; production leaves them unset and takes the real
+   * ones, built from `getCwd`.
+   */
+  targetDeps?: TargetContextDeps;
 }
 
 /**
@@ -200,6 +220,8 @@ export function createClassifierReviewer(
           deferReason: "internal-error",
           ...contextFields(false, context),
           ...guidanceFields(trail.guidance),
+          // Target fields omitted: reading them needs the seams that may
+          // themselves have thrown, and this entry must be written.
         });
       } catch {
         // The log failed too; there is nothing left to record on.
@@ -243,6 +265,8 @@ async function decide(
   const surface = gateSurfaceOf(details);
   const value = details.payload.request.value;
   const context = extractFullCommandContext(details.payload);
+  const targetSeams = resolveTargetDeps(deps.targetDeps, deps.getCwd);
+  const target = extractTargetContext(details, targetSeams);
 
   const config = deps.getConfig();
   if (!config) {
@@ -253,6 +277,7 @@ async function decide(
       modelId: null,
       deferReason: "no-config",
       context,
+      target,
     });
   }
 
@@ -287,6 +312,7 @@ async function decide(
       modelId: null,
       deferReason: "context-over-budget",
       context,
+      target,
     });
   }
 
@@ -298,6 +324,7 @@ async function decide(
       modelId: null,
       deferReason: "breaker-open",
       context,
+      target,
     });
   }
 
@@ -317,6 +344,7 @@ async function decide(
           : null,
       deferReason: "model-unresolved",
       context,
+      target,
     });
   }
   const modelId = `${model.provider}/${model.id}`;
@@ -330,6 +358,7 @@ async function decide(
       modelId,
       deferReason: "auth-failed",
       context,
+      target,
     });
   }
 
@@ -349,6 +378,7 @@ async function decide(
       modelId,
       deferReason: "guidance-load-failed",
       context,
+      target,
     });
   }
 
@@ -363,6 +393,11 @@ async function decide(
     context,
     guidance: guidance.included,
     ...(userIntent === undefined ? {} : { userIntent }),
+    promptFacts: {
+      ...(target.included ? { target: target.target } : {}),
+      cwd: sessionCwdOf(targetSeams),
+      tempDirectory: tempDirectoryOf(targetSeams),
+    },
   });
   if (
     outcome.deferReason !== undefined &&
@@ -403,6 +438,7 @@ async function decide(
     verdict: verdict.kind,
     deferReason,
     ...contextFields(context !== null, context),
+    ...targetFields(target),
     ...guidanceFields(guidance),
   });
   // Health folds in what the judge did, not what the policy made of it, so
@@ -467,6 +503,7 @@ function recordPreModel(
     modelId: string | null;
     deferReason: PreModelDeferReason;
     context: FullCommandContext | null;
+    target: TargetReading;
   },
 ): AuthorizerVerdict {
   const verdict: AuthorizerVerdict =
@@ -484,6 +521,7 @@ function recordPreModel(
     verdict: verdict.kind,
     deferReason: entry.deferReason,
     ...contextFields(false, entry.context),
+    ...targetFields(entry.target),
     ...guidanceFields(EMPTY_GUIDANCE),
   });
   report(deps, { verdict: "defer", deferReason: entry.deferReason });
@@ -516,6 +554,43 @@ export function contextFields(
     contextIncluded: included,
     contextBytes: context?.bytes ?? null,
     contextHash: context?.hash12 ?? null,
+  };
+}
+
+/**
+ * The seven target fields every decision entry carries. The path is logged
+ * outright: the review log already carries it in the tool-input preview.
+ * `targetOmitted` names why a target is absent.
+ */
+export function targetFields(reading: TargetReading): {
+  targetIncluded: boolean;
+  targetPath: string | null;
+  targetResolved: string | null;
+  targetDirectory: string | null;
+  targetState: string | null;
+  targetLocation: string | null;
+  targetOmitted: string | null;
+} {
+  if (reading.included === false) {
+    return {
+      targetIncluded: false,
+      targetPath: null,
+      targetResolved: null,
+      targetDirectory: null,
+      targetState: null,
+      targetLocation: null,
+      targetOmitted: reading.reason,
+    };
+  }
+  const { target } = reading;
+  return {
+    targetIncluded: true,
+    targetPath: target.path,
+    targetResolved: target.resolved,
+    targetDirectory: target.directory,
+    targetState: target.state,
+    targetLocation: target.location,
+    targetOmitted: null,
   };
 }
 

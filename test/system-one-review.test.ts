@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FullCommandContext } from "#src/context";
 import type { IncludedGuidance } from "#src/guidance";
+import type { TargetContext } from "#src/target-context";
 import {
   ALLOW_THRESHOLDS,
   buildSystemOneContext,
@@ -556,5 +557,95 @@ describe("mapSystemOneResult with user intent", () => {
   it("ignores requested and forbidden answers without intent", () => {
     const answered = withIntent(LOW, LOW, { none: HIGH }, HIGH, LOW);
     expect(mapSystemOneResult(answered, BUILT_IN).kind).toBe("uncertain");
+  });
+});
+
+describe("buildSystemOneContext with a target file", () => {
+  const TARGET: TargetContext = {
+    path: "/work/repo/src/client.py",
+    resolved: "/srv/elsewhere/client.py",
+    relativeSpelling: "src/client.py",
+    directory: "/work/repo/src",
+    state: "file",
+    location: "outside",
+  };
+
+  it("carries the target facts ahead of the other state keys", () => {
+    const context = buildSystemOneContext({
+      details: askDetails({ value: "edit" }),
+      surface: "edit",
+      cwd: "/work/repo",
+      target: TARGET,
+      fullCommand: null,
+      contextBudgetBytes: 8192,
+    });
+
+    expect(Object.keys(context.state)).toEqual([
+      "targetPath",
+      "targetResolved",
+      "targetDirectory",
+      "targetState",
+      "targetLocation",
+      "value",
+      "surface",
+      "tool",
+      "cwd",
+    ]);
+    expect(context.state.targetPath).toBe("/work/repo/src/client.py");
+    expect(context.state.targetLocation).toBe("outside");
+  });
+
+  it("leaves the resolved key out when no symlink leads elsewhere", () => {
+    const context = buildSystemOneContext({
+      details: askDetails({ value: "edit" }),
+      surface: "edit",
+      cwd: "/work/repo",
+      target: { ...TARGET, resolved: null },
+      fullCommand: null,
+      contextBudgetBytes: 8192,
+    });
+
+    expect(Object.keys(context.state)).not.toContain("targetResolved");
+  });
+
+  it("renders the same state as before when there is no target", () => {
+    const without = buildSystemOneContext({
+      details: askDetails(),
+      surface: "bash",
+      cwd: "/work/repo",
+      fullCommand: FULL,
+      contextBudgetBytes: 8192,
+    });
+    const withNull = buildSystemOneContext({
+      details: askDetails(),
+      surface: "bash",
+      cwd: "/work/repo",
+      target: null,
+      fullCommand: FULL,
+      contextBudgetBytes: 8192,
+    });
+
+    expect(withNull).toEqual(without);
+    expect(Object.keys(withNull.state)).toEqual([
+      "value",
+      "surface",
+      "tool",
+      "cwd",
+      "fullCommand",
+    ]);
+  });
+
+  it("keeps the shipped questions untouched: the target is a fact, not a question", () => {
+    const context = buildSystemOneContext({
+      details: askDetails({ value: "edit" }),
+      surface: "edit",
+      cwd: "/work/repo",
+      target: TARGET,
+      fullCommand: null,
+      contextBudgetBytes: 8192,
+    });
+
+    expect(context.questions).toBe(SYSTEM_ONE_QUESTIONS);
+    expect(Object.keys(SYSTEM_ONE_QUESTIONS)).toEqual(["reversible", "contained", "hazard"]);
   });
 });

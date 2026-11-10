@@ -4,12 +4,13 @@
  * answers become a link outcome.
  *
  * Pure: no I/O, no clock, no model call. The question text lives here and
- * nowhere in config. The state carries the ask facts only: the gated value,
- * surface, tool and cwd, the full command when within budget, the selected
- * guidance files when the caller passes them, and the user's own messages
- * when intent is available. Tool results, file contents, assistant text,
- * payload evidence, annotations and the tool-input preview never reach the
- * model.
+ * nowhere in config. The state carries the ask facts only: the file the action
+ * targets when the gate resolved one, then the gated value, surface, tool and
+ * cwd, the full command when within budget, the selected guidance files when
+ * the caller passes them, and the user's own messages when intent is available.
+ * The target keys lead, because for a path-bearing tool the gated value is only
+ * the tool name. Tool results, file contents, assistant text, payload evidence,
+ * annotations and the tool-input preview never reach the model.
  */
 
 import type {
@@ -23,6 +24,7 @@ import type { PromptPermissionDetails } from "@gotgenes/pi-permission-system";
 
 import type { FullCommandContext } from "./context";
 import type { IncludedGuidance } from "./guidance";
+import type { TargetContext } from "./target-context";
 import type { UserIntent } from "./user-intent";
 import type { LinkOutcome } from "./verdict-policy";
 
@@ -147,6 +149,8 @@ export interface SystemOneContextInputs {
   surface: string;
   /** The session cwd the action runs in. */
   cwd: string;
+  /** The file the action targets, when the gate resolved one. */
+  target?: TargetContext | null;
   /** The extracted full command, or null when the ask has none. */
   fullCommand: FullCommandContext | null;
   /** A full command larger than this is left out of the state. */
@@ -160,12 +164,19 @@ export interface SystemOneContextInputs {
 /** Build the classify context for one ask. */
 export function buildSystemOneContext(inputs: SystemOneContextInputs): ClassifierContext {
   const request = inputs.details.payload.request;
-  const state: JsonObject = {
-    value: request.value,
-    surface: inputs.surface,
-    tool: request.toolName,
-    cwd: inputs.cwd,
-  };
+  const target = inputs.target ?? null;
+  const state: JsonObject = {};
+  if (target !== null) {
+    state.targetPath = target.path;
+    if (target.resolved !== null) state.targetResolved = target.resolved;
+    state.targetDirectory = target.directory;
+    state.targetState = target.state;
+    state.targetLocation = target.location;
+  }
+  state.value = request.value;
+  state.surface = inputs.surface;
+  state.tool = request.toolName;
+  state.cwd = inputs.cwd;
   if (inputs.fullCommand !== null && inputs.fullCommand.bytes <= inputs.contextBudgetBytes) {
     state.fullCommand = inputs.fullCommand.text;
   }

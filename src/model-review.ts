@@ -21,7 +21,7 @@ import type { AuthorizerVerdict, PromptPermissionDetails } from "@gotgenes/pi-pe
 import type { ClassifierConfig } from "./config-schema";
 import type { FullCommandContext } from "./context";
 import type { IncludedGuidance } from "./guidance";
-import { DEFAULT_INSTRUCTIONS, renderReviewPrompt } from "./prompt";
+import { DEFAULT_INSTRUCTIONS, type PromptFacts, renderReviewPrompt } from "./prompt";
 import type { UserIntent } from "./user-intent";
 
 /** The reason used for a deny when the model omits its own. */
@@ -112,6 +112,8 @@ export interface ReviewAskInputs {
   guidance?: readonly IncludedGuidance[];
   /** The user's own messages when intent is available; absent renders no user block. */
   userIntent?: UserIntent;
+  /** The target, session working directory and temporary directory for the render. */
+  promptFacts?: PromptFacts;
 }
 
 /**
@@ -168,6 +170,7 @@ export async function reviewAsk(inputs: ReviewAskInputs): Promise<ReviewOutcome>
             inputs.context ?? null,
             inputs.guidance ?? [],
             inputs.userIntent,
+            inputs.promptFacts ?? {},
           ),
           timestamp: Date.now(),
         },
