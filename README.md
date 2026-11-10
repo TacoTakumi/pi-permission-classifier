@@ -114,13 +114,53 @@ and installing it grants it no authority until you name it in the chain.
        ~/.pi/agent/extensions/pi-permission-system/logs/pi-permission-system-permission-review.jsonl
 
    Each entry records the judge (`quick` or `llm`), request id,
-   surface, value, model id, latency, verdict, defer reason, and three
-   context fields: `contextIncluded`
+   surface, value, model id, latency, verdict, defer reason, three
+   context fields, and seven target fields.
+
+   The context fields are `contextIncluded`
    (true only when a full command was rendered to the judge),
    `contextBytes` (its UTF-8 byte length, null when absent), and
    `contextHash` (first 12 hex chars of its sha256, null when absent).
    The full-command text itself is never logged. An over-budget context
    defers with reason `context-over-budget` before any model call.
+
+   The seven target fields say which file the action works on. They appear on
+   every entry, whether or not there was a file to report.
+
+   - `targetIncluded` is true when a target was found.
+   - `targetPath` is the absolute path the gate matched on. The permission system
+     already writes that same string into the ask as `path`, so this field adds
+     nothing to what the log holds.
+   - `targetResolved` is only present when a symlink is involved. It is the path
+     you arrive at after following the link, which is where the action lands.
+   - `targetDirectory` is the directory that holds the file.
+   - `targetState` says what is there now. `file` and `directory` need no
+     explanation. `missing` means the file is not there yet but its directory
+     is, so this action would create it. `missing-parent` means neither the file
+     nor its directory exists. `unknown` means the stat failed and the
+     filesystem would not say.
+   - `targetLocation` says which of three places the file falls in: `project`,
+     `temp`, or `outside`. Those are the places the rubric treats differently.
+     The value is `unknown` when neither of the named directories could be read.
+   - `targetOmitted` says why there is no target. This is the field to read when
+     you want to know whether a file ask lost its path. Two of the values are
+     ordinary. `no-canonical-path` means the gate never worked out a canonical
+     path, which is what an MCP target, a skill name, or a tool that takes no
+     path at all looks like. `multi-path-command` means the ask is a shell
+     command, which can touch many files at once. The others are worth noticing.
+     `undetermined-action` means an ask reached this link from a subagent without
+     its payload, so this side cannot tell whether the child was running a
+     command or editing a file. `unusable-path` means the path contains a
+     character that would display as a different path from the one being judged,
+     in the prompt and in this log alike. `over-size-cap` means the path was too
+     long to send. `no-access-intent` and `extraction-failed` mean the read
+     itself came up empty.
+
+   A bash command never has a target. Its paths are already visible in the
+   command, which the judge reads in full. That includes a command escalated from
+   a subagent, because an escalation drops the command text: what says "this is a
+   command" is the payload kind.
+
    Enable `debugLog` in the permission system config to also capture raw
    model replies and short-circuit traces.
 
@@ -472,13 +512,23 @@ for all three when you set it. It denies when one hazard other than none reaches
 push"). A deny wins when both match. Anything else is uncertain and maps
 through `verdicts`. The question text is fixed in code.
 
+A file ask carries the facts the gate resolved about the file it targets, so a
+file tool is not judged on its name alone, and `contained` verdicts on file
+tools shift with those facts. `eval/PATH_CONTEXT.md` records the measured shift
+on three models and how to reproduce it on yours.
+
 The model sees the gated value, the surface, the tool name, the cwd, the full
 command when it fits `contextBudgetBytes`, and the selected guidance files
-when `guidance` is on. It never sees your messages (see "User messages"),
-tool results, file contents, evidence, annotations or the tool-input
-preview. The `path` and `external_directory`
-families and an undeterminable surface defer with no model call, whatever
-`verdicts` and `onError` say.
+when `guidance` is on. When the gate resolved a path, a target block leads the
+prompt: the absolute spelling the gate matched, the symlink-resolved spelling
+when a symlink leads somewhere else, what exists there, and whether that is
+inside the working directory, inside the temporary directory, or outside both.
+The block names paths and what exists at them, never file contents, and a bash
+command carries no target because its paths are already in the command. The
+model never sees your messages (see "User messages"), tool results, file
+contents, evidence, annotations or the tool-input preview. The `path` and
+`external_directory` families and an undeterminable surface defer with no model
+call, whatever `verdicts` and `onError` say.
 
 ### quickJudge settings
 
@@ -540,10 +590,12 @@ with reason `call-failed`.
 
 With a hosted classifier such as `typesafe/jev-latest`, every ask the quick
 judge reviews leaves your machine: the gated value, the full command (within
-`contextBudgetBytes`), the surface, the tool name, the cwd path, and, with
-`guidance` on, the full text of the selected guidance files. Set
-`"guidance": false` to keep your guidance files local. Use a local model if
-none of this may leave the machine.
+`contextBudgetBytes`), the surface, the tool name, the cwd path, the target
+file path when the gate resolved one, including the symlink-resolved spelling
+when a symlink leads somewhere else, and, with `guidance` on, the full text of
+the selected guidance files. Set `"guidance": false` to keep your guidance files
+local. File contents are never sent. Use a local model if none of this may
+leave the machine.
 
 ### Local classifier models
 

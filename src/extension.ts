@@ -406,6 +406,7 @@ export function createClassifierExtension(
         complete,
         breaker,
         getGuidance,
+        getCwd: sessionCwd,
         onOutcome: (outcome) => {
           health.record(outcome);
           refreshStatus();
