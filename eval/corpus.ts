@@ -9,7 +9,10 @@
  */
 
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 
+import type { TargetContext, TargetState } from "../src/target-context";
+import { extractTargetContext } from "../src/target-context";
 import type { StoredAsk } from "./pull";
 
 /**
@@ -32,8 +35,11 @@ export type Tier = "hard" | "soft";
 /** One ask the eval sends to the quick judge. */
 export interface EvalCase {
   id: string;
-  /** `safe` for a logged ask that was approved; a category for a hazard case. */
-  kind: "safe" | "hazard";
+  /**
+   * `safe` for a logged ask that was approved, `hazard` for a hand-written
+   * command case, `file-op` for a path-only file case.
+   */
+  kind: "safe" | "hazard" | "file-op";
   category?: string;
   value: string;
   surface: string;
@@ -49,6 +55,120 @@ export interface EvalCase {
   variant?: Variant;
   /** Hazard cases only: whether a user request may clear it. */
   tier?: Tier;
+  /** File-op cases only: what the case is for. */
+  fileTier?: FileOpTier;
+  /** File-op cases only: the group of cases that differ only in the path. */
+  pairId?: string;
+  /**
+   * File-op cases only: the target facts, produced by the same extractor the
+   * link runs, so an eval state is a production state.
+   */
+  target?: TargetContext;
+}
+
+/**
+ * What a file-op case is for. `safe` and `create` are ordinary project work;
+ * `temp` is the operating system's temporary directory; `outside` is a real
+ * file somewhere else; `never` is a secret or a guard, which no threshold may
+ * allow; `pair` is one member of a group whose only difference is the path.
+ */
+export type FileOpTier = "safe" | "create" | "temp" | "outside" | "never" | "pair";
+
+/** One file-op case, as eval/file-op-cases.json holds it. */
+export interface FileOpCase {
+  id: string;
+  tier: FileOpTier;
+  pairId?: string;
+  /** The tool the gate gated, which is also the gated value. */
+  tool: string;
+  /** The absolute spelling the gate matched on. */
+  path: string;
+  /**
+   * A working-directory-relative spelling to emit into `matchValues`, the way
+   * the gate emits one. Named for what the case author says was written; the
+   * fact the extractor returns is called `relativeSpelling` instead, because a
+   * gate also synthesizes that spelling for any path inside the project, and no
+   * reader of `matchValues` can tell the two apart. The prompt follows the
+   * extractor's wording, not this one.
+   */
+  asWritten?: string;
+  /** The symlink-resolved spelling, when a symlink leads somewhere else. */
+  resolved?: string | null;
+  /** What exists at the target. */
+  state: TargetState;
+}
+
+/** eval/file-op-cases.json. */
+export interface FileOpCaseFile {
+  cwd: string;
+  temp: string;
+  cases: FileOpCase[];
+}
+
+/**
+ * Pure: the file-op cases as asks whose only evidence is the path.
+ *
+ * Each case names what exists at the target and where the two places are, and
+ * the target facts come out of `extractTargetContext` — the code the link runs
+ * — rather than a copy of its rules. A case whose facts the extractor will not
+ * produce throws at load, so the corpus cannot quietly drift from production.
+ */
+export function fileOpCases(file: FileOpCaseFile): EvalCase[] {
+  return file.cases.map((testCase) => {
+    const cwd = file.cwd;
+    const temp = file.temp;
+    const canonical = testCase.resolved ?? testCase.path;
+    const matchValues =
+      testCase.asWritten === undefined
+        ? [testCase.path, canonical]
+        : [testCase.path, testCase.asWritten, canonical];
+    const details = {
+      payload: { request: { value: testCase.tool, toolName: testCase.tool } },
+      accessIntent: {
+        surface: testCase.tool,
+        matchValues,
+        boundaryValue: canonical,
+      },
+    } as never;
+    const reading = extractTargetContext(details, {
+      getCwd: () => cwd,
+      getTempDirectory: () => temp,
+      realpath: (candidate) =>
+        candidate === canonical || candidate === cwd || candidate === temp ? candidate : null,
+      stat: (candidate) => {
+        if (candidate === canonical) {
+          if (testCase.state === "file") return "file";
+          if (testCase.state === "directory") return "directory";
+          return "missing";
+        }
+        if (candidate === dirname(canonical)) {
+          return testCase.state === "missing-parent" ? "missing" : "directory";
+        }
+        return "missing";
+      },
+    });
+    if (reading.included === false) {
+      throw new Error(`file-op case ${testCase.id} yields no target (${reading.reason})`);
+    }
+    return {
+      id: testCase.id,
+      kind: "file-op" as const,
+      category: testCase.tier,
+      value: testCase.tool,
+      surface: testCase.tool,
+      tool: testCase.tool,
+      cwd,
+      fileTier: testCase.tier,
+      ...(testCase.pairId === undefined ? {} : { pairId: testCase.pairId }),
+      target: reading.target,
+    };
+  });
+}
+
+/** The file-op corpus, read from disk. */
+export function loadFileOpCases(path: string): EvalCase[] {
+  const parsed = JSON.parse(readFileSync(path, "utf-8")) as FileOpCaseFile;
+  return fileOpCases(parsed);
 }
 
 /** One hand-written hazard case, as eval/hazard-cases.json holds it. */

@@ -279,13 +279,25 @@ describe("quick judge eval", () => {
     const read = (name: string) => readFileSync(join(ROOT, "eval", name), "utf-8");
     expect(read("pull.run.ts")).toContain("pi-permission-system-permission-review.jsonl");
     expect(read("pull.run.ts")).toContain('"sessions"');
-    for (const name of ["corpus.ts", "run.eval.ts", "pull.ts", "quick-judge-eval.ts"]) {
+    for (const name of [
+      "corpus.ts",
+      "run.eval.ts",
+      "pull.ts",
+      "quick-judge-eval.ts",
+      "path-context.eval.ts",
+    ]) {
       expect(read(name), name).not.toContain("permission-review.jsonl");
       expect(read(name), name).not.toContain('"sessions"');
       expect(read(name), name).not.toMatch(/readdirSync|createReadStream|node:readline/);
     }
     expect(importsOf(read("pull.ts")).filter((spec) => spec.startsWith("node:"))).toEqual([]);
-    expect(importsOf(read("corpus.ts")).filter((spec) => spec.startsWith("node:"))).toEqual(["node:fs"]);
+    // corpus.ts reads the ask store and the case files, and nothing else.
+    // node:path is there for the path-only cases, which name a target's parent
+    // directory so the extractor can be asked what exists.
+    expect(importsOf(read("corpus.ts")).filter((spec) => spec.startsWith("node:"))).toEqual([
+      "node:fs",
+      "node:path",
+    ]);
   });
 
   it("stays out of the link code, the test run and git", () => {
