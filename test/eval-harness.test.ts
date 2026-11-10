@@ -1,6 +1,8 @@
 import type { ClassifierContext, ClassifierResult } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
+import type { TargetContext } from "#src/target-context";
+
 import { CANDIDATES } from "../eval/candidates";
 import {
   type EvalCase,
@@ -385,6 +387,49 @@ describe("eval intent scoring", () => {
     const { userMessages: _, ...unpaired } = PAIRED;
     expect(cacheKey(PAIRED, CANDIDATES.shipped!)).toBe(cacheKey(unpaired, CANDIDATES.shipped!));
     expect(cacheKey(PAIRED, CANDIDATES.shipped!, true)).not.toBe(cacheKey(PAIRED, CANDIDATES.shipped!));
+  });
+
+  it("scores a case with its target cleared, and caches the two apart", () => {
+    const target: TargetContext = {
+      path: "/w/src/app.py",
+      resolved: null,
+      relativeSpelling: "src/app.py",
+      directory: "/w/src",
+      state: "file",
+      location: "project",
+    };
+    const fileCase: EvalCase = {
+      id: "ctrl",
+      kind: "file-op",
+      fileTier: "safe",
+      value: "edit",
+      surface: "edit",
+      tool: "edit",
+      cwd: "/w",
+      target,
+    };
+
+    const cleared = { ...fileCase, target: undefined };
+
+    expect(contextFor(fileCase, CANDIDATES.shipped!, undefined).state.targetPath).toBe(
+      "/w/src/app.py",
+    );
+    expect(contextFor(cleared, CANDIDATES.shipped!, undefined).state).not.toHaveProperty(
+      "targetPath",
+    );
+    // A cleared field is a different state, so it must not read the earlier
+    // answer from the cache, with or without intent.
+    expect(cacheKey(cleared, CANDIDATES.shipped!)).not.toBe(
+      cacheKey(fileCase, CANDIDATES.shipped!),
+    );
+    expect(cacheKey(cleared, CANDIDATES.shipped!, true)).not.toBe(
+      cacheKey(fileCase, CANDIDATES.shipped!, true),
+    );
+    // A case that never had the field is unchanged by clearing it, so its score
+    // is reused: a run without targets pays only for the cases that had one.
+    expect(cacheKey({ ...PLAIN, target: undefined }, CANDIDATES.shipped!)).toBe(
+      cacheKey(PLAIN, CANDIDATES.shipped!),
+    );
   });
 
   it("reads requested, forbidden and every hazard probability", () => {
