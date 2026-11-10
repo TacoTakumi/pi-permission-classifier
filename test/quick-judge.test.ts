@@ -26,6 +26,7 @@ import { HAZARD_OPTIONS } from "#src/system-one-review";
 import { COULD_NOT_CONFIRM_REASON, failureDenyReason } from "#src/verdict-policy";
 import { assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
+import { bashAsk, editAsk, memoryTargetDeps } from "#test/fixtures/target";
 
 const QUERY = {} as PermissionQuery;
 const JEV = { provider: "typesafe", id: "jev", type: "classifier" } as never;
@@ -884,5 +885,94 @@ describe("user intent", () => {
     );
     await authorize(askDetails(), QUERY, fakeLog());
     expect(getUserIntent).not.toHaveBeenCalled();
+  });
+});
+
+describe("quick judge target evidence", () => {
+  const PROJECT_FILE = "/work/repo/src/client.py";
+
+  function targetWorld() {
+    return memoryTargetDeps({
+      files: [PROJECT_FILE],
+      directories: ["/work/repo", "/work/repo/src"],
+      cwd: "/work/repo",
+    });
+  }
+
+  /** Run one ask and return the state the classifier model was sent. */
+  async function stateFor(details: PromptPermissionDetails) {
+    const seen: ClassifierContext[] = [];
+    const registry = fakeRegistry(vi.fn(async (_model, context) => {
+      seen.push(context);
+      return ALLOW_RESULT;
+    }));
+    const log = fakeLog();
+
+    await createQuickJudge(makeDeps({ targetDeps: targetWorld(), getRegistry: () => registry }))(
+      details,
+      QUERY,
+      log,
+    );
+
+    return { state: seen[0]?.state ?? {}, entry: decisionEntries(log)[0] };
+  }
+
+  it("sends the target it extracted to the model", async () => {
+    // The order the keys arrive in is the shared builder's contract, tested in
+    // system-one-review.test.ts; what this link owes is that the facts it read
+    // from the filesystem reach the model at all.
+    const { state } = await stateFor(editAsk(PROJECT_FILE, "src/client.py"));
+
+    expect(state.targetPath).toBe(PROJECT_FILE);
+    expect(state.targetDirectory).toBe("/work/repo/src");
+    expect(state.targetState).toBe("file");
+    expect(state.targetLocation).toBe("project");
+  });
+
+  it("logs the same facts on the decision entry", async () => {
+    const { entry } = await stateFor(editAsk(PROJECT_FILE, "src/client.py"));
+
+    expect(entry).toMatchObject({
+      targetIncluded: true,
+      targetPath: PROJECT_FILE,
+      targetDirectory: "/work/repo/src",
+      targetState: "file",
+      targetLocation: "project",
+      targetOmitted: null,
+    });
+  });
+
+  it("leaves the state unchanged for a bash ask and says why", async () => {
+    // A command gets no target: its paths are in the command the model already
+    // reads. A command whose path gate named a token reports a path-family
+    // surface and never reaches this stage, so the extractor tests cover it.
+    const { state, entry } = await stateFor(
+      bashAsk("cp ./notes.txt /home/dev/.ssh/authorized_keys"),
+    );
+
+    expect(Object.keys(state)).toEqual(["value", "surface", "tool", "cwd", "guidance"]);
+    expect(entry).toMatchObject({
+      targetIncluded: false,
+      targetPath: null,
+      targetOmitted: "multi-path-command",
+    });
+  });
+
+  it("names a create in the state, so a write of a new file is not a mystery", async () => {
+    const { state } = await stateFor(editAsk("/work/repo/new-test.ts", "new-test.ts"));
+
+    expect(state.targetState).toBe("missing");
+    expect(state.targetLocation).toBe("project");
+  });
+
+  it("still decides from its own thresholds with a target present", async () => {
+    const registry = fakeRegistry(vi.fn(async () => UNCERTAIN_RESULT));
+    const log = fakeLog();
+
+    const verdict = await createQuickJudge(
+      makeDeps({ targetDeps: targetWorld(), getRegistry: () => registry }),
+    )(editAsk(PROJECT_FILE, "src/client.py"), QUERY, log);
+
+    expect(verdict).toEqual({ kind: "defer" });
   });
 });

@@ -23,6 +23,12 @@ import {
 } from "#src/verdict-policy";
 import { assistantText, assistantToolCall } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
+import {
+  bashAsk,
+  editAsk,
+  memoryTargetDeps,
+  TARGET_BLOCK_HEADER,
+} from "#test/fixtures/target";
 
 const CONFIG = classifierConfigSchema.parse({});
 
@@ -1125,5 +1131,171 @@ describe("user intent", () => {
     );
     await authorize(askDetails(), QUERY, fakeLog());
     expect(getUserIntent).not.toHaveBeenCalled();
+  });
+});
+
+describe("target evidence", () => {
+  const PROJECT_FILE = "/home/dev/proj/src/client.py";
+
+  function targetReviewer(overrides: Partial<ClassifierReviewerDeps> = {}) {
+    return createClassifierReviewer(
+      makeDeps({
+        complete: completeReporting({ verdict: "allow" }),
+        getCwd: () => "/home/dev/proj",
+        targetDeps: memoryTargetDeps({
+          files: [PROJECT_FILE],
+          directories: ["/home/dev/proj", "/home/dev/proj/src"],
+        }),
+        ...overrides,
+      }),
+    );
+  }
+
+  /** The prompt the reviewer sent, or undefined when no call was made. */
+  function promptOf(complete: CompleteFn): string | undefined {
+    const call = (complete as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as
+      | { messages?: [{ content?: string }] }
+      | undefined;
+    return call?.messages?.[0]?.content;
+  }
+
+  it("logs the path, its state and its place on the decided ask", async () => {
+    const log = fakeLog();
+
+    await targetReviewer()(editAsk(PROJECT_FILE, "src/client.py"), QUERY, log);
+
+    expect(decisionEntry(log)).toMatchObject({
+      targetIncluded: true,
+      targetPath: PROJECT_FILE,
+      targetResolved: null,
+      targetDirectory: "/home/dev/proj/src",
+      targetState: "file",
+      targetLocation: "project",
+      targetOmitted: null,
+    });
+  });
+
+  it("sends the target and the working directory to the model", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+
+    await targetReviewer({ complete })(editAsk(PROJECT_FILE, "src/client.py"), QUERY, fakeLog());
+
+    // The wording of the block is prompt.test.ts's business; what matters here
+    // is that the reviewer hands the target and the working directory over.
+    const prompt = promptOf(complete) ?? "";
+    expect(prompt).toContain(`<target-file>\n${PROJECT_FILE}\n</target-file>`);
+    expect(prompt).toContain("- Working directory: /home/dev/proj");
+  });
+
+  it("puts the target before the ask facts in what the model receives", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+
+    await targetReviewer({ complete })(editAsk(PROJECT_FILE, "src/client.py"), QUERY, fakeLog());
+
+    const prompt = promptOf(complete) ?? "";
+    expect(prompt.indexOf(TARGET_BLOCK_HEADER)).toBeLessThan(prompt.indexOf("Ask facts:"));
+  });
+
+  it("carries a create to the model as the new file it is", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const created = "/home/dev/proj/new-test.ts";
+    const log = fakeLog();
+
+    await targetReviewer({ complete })(editAsk(created, "new-test.ts"), QUERY, log);
+
+    expect(promptOf(complete)).toContain(`<target-file>\n${created}\n</target-file>`);
+    expect(promptOf(complete)).toContain("does not exist yet");
+    expect(decisionEntry(log)).toMatchObject({ targetState: "missing" });
+  });
+
+  it("logs why a bash ask has no target and renders no target block", async () => {
+    const complete = completeReporting({ verdict: "allow" });
+    const log = fakeLog();
+
+    // A command that reaches a judge is the plain shape: one whose path gate
+    // named a token reports a path-family surface, which this link never sends
+    // to a model. Either way it is the command field that denies it a target.
+    await targetReviewer({ complete })(
+      bashAsk("cp ./notes.txt /home/dev/.ssh/authorized_keys"),
+      QUERY,
+      log,
+    );
+
+    expect(decisionEntry(log)).toMatchObject({
+      targetIncluded: false,
+      targetPath: null,
+      targetState: null,
+      targetOmitted: "multi-path-command",
+    });
+    expect(promptOf(complete)).not.toContain(TARGET_BLOCK_HEADER);
+    expect(promptOf(complete)).toContain("- Working directory: /home/dev/proj");
+  });
+
+  it("logs the target on a pre-model defer, so the entry says what was withheld", async () => {
+    const log = fakeLog();
+
+    await targetReviewer({ getConfig: () => undefined })(
+      editAsk(PROJECT_FILE, "src/client.py"),
+      QUERY,
+      log,
+    );
+
+    expect(decisionEntry(log)).toMatchObject({
+      deferReason: "no-config",
+      targetIncluded: true,
+      targetPath: PROJECT_FILE,
+      targetState: "file",
+      targetLocation: "project",
+    });
+  });
+
+  it("writes the internal-error backstop entry without reading the seams", async () => {
+    // The backstop runs where a seam may itself have thrown, so it writes the
+    // entry without reading the target.
+    const registry = {
+      find: vi.fn(),
+      getApiKeyAndHeaders: vi.fn(async () => {
+        throw new Error("registry blew up");
+      }),
+    };
+    const log = fakeLog();
+
+    const verdict = await createClassifierReviewer(
+      makeDeps({
+        getRegistry: () => registry,
+        targetDeps: {
+          ...memoryTargetDeps(),
+          stat: () => {
+            throw new Error("no disk");
+          },
+        },
+      }),
+    )(editAsk(PROJECT_FILE, "src/client.py"), QUERY, log);
+
+    const entry = decisionEntry(log);
+    expect(verdict).toEqual({ kind: "defer" });
+    expect(entry?.deferReason).toBe("internal-error");
+    // Absent rather than null: the backstop writes only what it has read.
+    expect(entry).not.toHaveProperty("targetPath");
+    expect(entry).not.toHaveProperty("targetIncluded");
+  });
+
+  it("asks the filesystem about the target path and nothing else", async () => {
+    const asked: string[] = [];
+    const log = fakeLog();
+
+    await targetReviewer({
+      targetDeps: {
+        ...memoryTargetDeps({ files: [PROJECT_FILE], directories: ["/home/dev/proj/src"] }),
+        stat: (path) => {
+          asked.push(path);
+          return path === PROJECT_FILE ? "file" : "missing";
+        },
+      },
+    })(editAsk(PROJECT_FILE, "src/client.py"), QUERY, log);
+
+    // One stat, of the target itself. That file text never enters the prompt or
+    // the log is a property of the module, pinned in structure.test.ts.
+    expect(asked).toEqual([PROJECT_FILE]);
   });
 });

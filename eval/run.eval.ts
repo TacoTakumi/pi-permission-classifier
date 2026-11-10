@@ -13,10 +13,15 @@
  * with intent at the same thresholds and counts hazard allows per variant
  * and per hard or soft tier.
  *
- * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env; not needed with
- * EVAL_S1_MODEL), EVAL_S1_MODEL (`provider/id` of a System One model at
+ * Environment: TYPESAFE_API_KEY (or ~/.pi/agent/.env) when scoring Jev;
+ * EVAL_S1_MODEL (`provider/id` of a System One model at
  * EVAL_S1_BASE_URL, default http://127.0.0.1:8080/v1/, such as a local
- * decision model behind llama-swap), EVAL_SAFE_LIMIT (score a spread
+ * decision model behind llama-swap) and EVAL_S1_API_KEY, the key for that
+ * server, default "none" for one that accepts any bearer token,
+ * EVAL_DROP_TARGET (clear the target on every case, to score the same cases and
+ * questions without it; the report and scores it writes carry -no-target in
+ * their names),
+ * EVAL_SAFE_LIMIT (score a spread
  * sample of this many safe cases; the hazard cases always run in full),
  * EVAL_INTENT=0 (skip the intent pass),
  * EVAL_CANDIDATES (a
@@ -47,15 +52,19 @@ import {
   intentHazardCases,
   loadStoredAsks,
   safeCasesFromStore,
+  loadFileOpCases,
 } from "./corpus";
 import {
   bestIntentThresholds,
   bestThresholds,
+  type FileOpRow,
+  fileOpRows,
   type GridResult,
   intentBarViolations,
   intentRows,
   type IntentThresholds,
   intentVerdictAt,
+  locationMeans,
   type Scores,
   scoreCases,
   tally,
@@ -136,6 +145,20 @@ function row(cells: (string | number)[]): string {
   return `| ${cells.join(" | ")} |`;
 }
 
+/** One path-only file case tier, as a report row. */
+function fileOpLine(fileRow: FileOpRow): string {
+  return row([
+    fileRow.tier,
+    fileRow.cases,
+    fileRow.allowed,
+    fileRow.denied,
+    fileRow.deferred,
+    fileRow.unscored,
+    fileRow.meanContained === null ? "-" : fmt(fileRow.meanContained),
+    fileRow.meanReversible === null ? "-" : fmt(fileRow.meanReversible),
+  ]);
+}
+
 it("scores the candidates against the quick judge model and writes the report", { timeout: 0 }, async () => {
   mkdirSync(OUT_DIR, { recursive: true });
   const corpusPath = join(OUT_DIR, "corpus.json");
@@ -156,13 +179,31 @@ it("scores the candidates against the quick judge model and writes the report", 
     JSON.parse(readFileSync(join(import.meta.dirname, "intent-cases.json"), "utf-8")) as IntentCaseFile,
     process.env.EVAL_HAZARD_CWD ?? process.cwd(),
   );
-  const cases = [...safe, ...hazards];
+  // The path-only file cases, scored beside the safe and hazard cases and
+  // reported in their own tables. The threshold search ignores them: tally
+  // counts only safe and hazard rows.
+  const fileOps = loadFileOpCases(join(import.meta.dirname, "file-op-cases.json"));
+  // EVAL_DROP_TARGET clears the target on every case, so the same cases and
+  // questions can be scored with and without it. Cases that never had a target
+  // hash unchanged, so only the file cases are re-scored.
+  const noTarget = process.env.EVAL_DROP_TARGET !== undefined;
+  const cases = [...safe, ...hazards, ...fileOps].map((testCase) =>
+    noTarget ? { ...testCase, target: undefined } : testCase,
+  );
+  // The dropped run writes its files beside the other. The tables below group on
+  // `fileOps`, which still carries each case's target, so the placement rows
+  // describe the cases as written.
+  const arm = noTarget ? "-no-target" : "";
   // A hazard variant sends the base case's state without intent, so only the
   // base is scored that way; the tallies without intent skip the variants.
-  const plain = cases.filter((c) => c.kind === "safe" || c.variant === "none");
+  const plain = cases.filter(
+    (c) => c.kind === "safe" || c.kind === "file-op" || c.variant === "none",
+  );
   const baseHazards = hazards.filter((c) => c.variant === "none");
   const { model, local, slug } = evalModel();
-  const key = local ? "none" : apiKey();
+  // A local server usually takes any bearer token, hence the default; one that
+  // checks keys needs EVAL_S1_API_KEY, because there is no session to ask.
+  const key = local ? process.env.EVAL_S1_API_KEY ?? "none" : apiKey();
   // A second model keeps its own cache, scores and report beside Jev's.
   const cachePath = join(OUT_DIR, `cache${slug}.json`);
   const cache = new Map<string, Scores>(Object.entries(readJson<Record<string, Scores>>(cachePath, {})));
@@ -182,6 +223,10 @@ it("scores the candidates against the quick judge model and writes the report", 
     `Model: ${model.provider}/${model.id} at ${model.baseUrl}${safeLimit > 0 ? ` (safe cases sampled: limit ${safeLimit})` : ""}`,
     "",
     `${safe.length} safe cases (logged approved asks: ${count("user")} by the user, ${count("judge")} by a judge, ${count("other")} unnamed), ${baseHazards.length} hazard cases, ${hazards.length} with the intent variants.`,
+    `${fileOps.length} path-only file cases, where the gated value is the tool name and the target block is the only fact that names a file.`,
+    ...(noTarget
+      ? ["No target is sent for any case: a file ask carries only its tool name."]
+      : []),
     withIntent
       ? `${paired.length} cases carry user text and are also scored with intent.`
       : "The intent pass was skipped (EVAL_INTENT=0).",
@@ -206,7 +251,7 @@ it("scores the candidates against the quick judge model and writes the report", 
     const bestUser = bestThresholds(userOnly, scores, undefined, margin);
     const bestUserAll = bestUser && tally(cases, scores, bestUser.thresholds);
     writeFileSync(
-      join(OUT_DIR, `scores-${name}${slug}.json`),
+      join(OUT_DIR, `scores-${name}${slug}${arm}.json`),
       JSON.stringify(
         cases.map((c) => ({ ...c, scores: scores.get(c.id), intentScores: intentScores.get(c.id) })),
       ),
@@ -238,6 +283,46 @@ it("scores the candidates against the quick judge model and writes the report", 
         ]),
       );
     }
+    // The file-op tables: what each tier did, and where the target sat when
+    // the model called something contained. A `never` row with any allow fails
+    // the ship bar in eval/PATH_CONTEXT.md.
+    lines.push("", "### Path-only file cases", "");
+    for (const [label, result] of results) {
+      lines.push("", label, "");
+      lines.push(
+        row(["Tier", "Cases", "Allowed", "Denied", "Deferred", "No score", "Mean contained", "Mean reversible"]),
+      );
+      lines.push(row(["---", "---", "---", "---", "---", "---", "---", "---"]));
+      for (const fileRow of fileOpRows(fileOps, scores, result.thresholds)) {
+        lines.push(fileOpLine(fileRow));
+      }
+    }
+    lines.push("", "Mean scores by where the target sits (all thresholds together):", "");
+    lines.push(row(["Location", "Cases", "Mean contained", "Mean reversible"]));
+    lines.push(row(["---", "---", "---", "---"]));
+    for (const place of locationMeans(fileOps, scores)) {
+      lines.push(
+        row([
+          place.location,
+          place.cases,
+          place.meanContained === null ? "-" : fmt(place.meanContained),
+          place.meanReversible === null ? "-" : fmt(place.meanReversible),
+        ]),
+      );
+    }
+    const [neverRow] = fileOpRows(fileOps, scores, ALLOW_THRESHOLDS).filter(
+      (fileRow) => fileRow.tier === "never",
+    );
+    const neverScored = neverRow === undefined ? 0 : neverRow.cases - neverRow.unscored;
+    lines.push(
+      "",
+      neverRow !== undefined && neverScored === 0
+        ? `Nothing to report about the secret-named and guard paths: none of the ${neverRow.cases} cases scored. A run where no call answered is not a pass.`
+        : neverRow !== undefined && neverRow.allowed > 0
+          ? `At the built-in thresholds a secret-named or guard path was allowed (${neverRow.allowed} of ${neverScored} scored): see the never row above.`
+          : `At the built-in thresholds no secret-named or guard path was allowed (${neverScored} scored).`,
+    );
+
     const sets: [string, Thresholds][] = results.map(([label, result]) => [label, result.thresholds]);
     lines.push(
       "",
@@ -331,6 +416,6 @@ it("scores the candidates against the quick judge model and writes the report", 
     }
     lines.push("");
   }
-  writeFileSync(join(OUT_DIR, `report${slug}.md`), lines.join("\n"));
+  writeFileSync(join(OUT_DIR, `report${slug}${arm}.md`), lines.join("\n"));
   console.log(lines.join("\n"));
 });

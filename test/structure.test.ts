@@ -143,6 +143,11 @@ describe("no output channels beyond the seams", () => {
       );
       if (name === "config-loader.ts") {
         expect(nodeBuiltins.sort()).toEqual(["node:fs", "node:path"]);
+      } else if (name === "target-context.ts") {
+        // The only other link module that touches a disk, and only to ask what
+        // exists at the path a gate already resolved: stat and realpath, never
+        // a read. node:os supplies the temporary directory the rubric names.
+        expect(nodeBuiltins.sort()).toEqual(["node:fs", "node:os", "node:path"]);
       } else if (name === "guidance.ts") {
         expect(nodeBuiltins.sort()).toEqual(["node:crypto", "node:path"]);
       } else if (name === "context.ts") {
@@ -274,13 +279,25 @@ describe("quick judge eval", () => {
     const read = (name: string) => readFileSync(join(ROOT, "eval", name), "utf-8");
     expect(read("pull.run.ts")).toContain("pi-permission-system-permission-review.jsonl");
     expect(read("pull.run.ts")).toContain('"sessions"');
-    for (const name of ["corpus.ts", "run.eval.ts", "pull.ts", "quick-judge-eval.ts"]) {
+    for (const name of [
+      "corpus.ts",
+      "run.eval.ts",
+      "pull.ts",
+      "quick-judge-eval.ts",
+      "path-context.eval.ts",
+    ]) {
       expect(read(name), name).not.toContain("permission-review.jsonl");
       expect(read(name), name).not.toContain('"sessions"');
       expect(read(name), name).not.toMatch(/readdirSync|createReadStream|node:readline/);
     }
     expect(importsOf(read("pull.ts")).filter((spec) => spec.startsWith("node:"))).toEqual([]);
-    expect(importsOf(read("corpus.ts")).filter((spec) => spec.startsWith("node:"))).toEqual(["node:fs"]);
+    // corpus.ts reads the ask store and the case files, and nothing else.
+    // node:path is there for the path-only cases, which name a target's parent
+    // directory so the extractor can be asked what exists.
+    expect(importsOf(read("corpus.ts")).filter((spec) => spec.startsWith("node:"))).toEqual([
+      "node:fs",
+      "node:path",
+    ]);
   });
 
   it("stays out of the link code, the test run and git", () => {
@@ -668,13 +685,23 @@ describe("guidance discipline", () => {
     }
   });
 
-  it("node:fs stays in config-loader.ts and node:path in config-loader.ts and guidance.ts", () => {
+  it("node:fs stays in config-loader.ts and target-context.ts, node:path with them and guidance.ts", () => {
     const fsImporters = LINK_FILES.filter((name) => /from "node:fs"/.test(src(name)));
     const pathImporters = LINK_FILES.filter((name) =>
       /from "node:path"/.test(src(name)),
     );
-    expect(fsImporters).toEqual(["config-loader.ts"]);
-    expect(pathImporters).toEqual(["config-loader.ts", "guidance.ts"]);
+    // target-context.ts is the other sanctioned reader: it stats and
+    // realpath-resolves the path the gate resolved, and reads no contents.
+    expect(fsImporters).toEqual(["config-loader.ts", "target-context.ts"]);
+    expect(pathImporters).toEqual(["config-loader.ts", "guidance.ts", "target-context.ts"]);
+
+    // The guarantee the target evidence rests on: the module that looks at a
+    // target can ask about it, and cannot read it. target-context.ts opens no
+    // file and asks for no bytes, so nothing downstream has to prove that file
+    // text stayed out of a prompt or a log.
+    expect(src("target-context.ts")).not.toMatch(
+      /openSync|\bopen\(|readFile|createReadStream/,
+    );
     for (const name of ["prompt.ts", "command.ts"]) {
       expect(src(name)).not.toMatch(/node:fs|node:path|readFileSync|process\.cwd/);
     }

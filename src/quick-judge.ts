@@ -57,9 +57,16 @@ import {
   guidanceFields,
   isExcludedSurface,
   SHORT_CIRCUIT_EVENT,
+  targetFields,
   userIntentFor,
 } from "./reviewer";
 import { buildSystemOneContext, mapSystemOneResult } from "./system-one-review";
+import {
+  type TargetContextDeps,
+  type TargetReading,
+  extractTargetContext,
+  resolveTargetDeps,
+} from "./target-context";
 import type { UserIntent } from "./user-intent";
 import {
   applyVerdictPolicy,
@@ -123,6 +130,12 @@ export interface QuickJudgeDeps {
   getUserIntent?: (forwarded: boolean) => UserIntent | undefined;
   /** This judge's own circuit breaker; the judge makes one when absent. */
   breaker?: CircuitBreaker;
+  /**
+   * The target-read seams (filesystem, temporary directory). Tests answer
+   * them in memory; production leaves them unset and takes the real ones,
+   * built from `getCwd`.
+   */
+  targetDeps?: TargetContextDeps;
   /**
    * Outcome seam: called once per decision entry with what the judge did,
    * so a failure counts even when onError turns it into a deny.
@@ -205,6 +218,7 @@ async function decide(
 ): Promise<AuthorizerVerdict> {
   const surface = gateSurfaceOf(details);
   const fullCommand = extractFullCommandContext(details.payload);
+  const target = extractTargetContext(details, resolveTargetDeps(deps.targetDeps, deps.getCwd));
 
   const settings = deps.getSettings();
   if (!settings) {
@@ -215,6 +229,7 @@ async function decide(
       verdict: "defer",
       deferReason: "no-config",
       ...contextFields(false, fullCommand),
+      ...targetFields(target),
       ...guidanceFields(EMPTY_GUIDANCE),
     });
     report(deps, { verdict: "defer", deferReason: "no-config" });
@@ -245,6 +260,7 @@ async function decide(
       deferReason,
       fullCommand,
       contextIncluded: false,
+      target,
       guidance: EMPTY_GUIDANCE,
     });
 
@@ -285,6 +301,7 @@ async function decide(
     details,
     surface,
     cwd: deps.getCwd(),
+    target: target.included ? target.target : null,
     fullCommand,
     contextBudgetBytes: settings.contextBudgetBytes,
     ...(guidance === undefined ? {} : { guidance: guidance.included }),
@@ -316,6 +333,7 @@ async function decide(
     deferReason: undefined,
     fullCommand,
     contextIncluded: fullCommand !== null,
+    target,
     guidance: guidance ?? EMPTY_GUIDANCE,
     answers,
   });
@@ -402,6 +420,7 @@ function record(
     deferReason: string | undefined;
     fullCommand: FullCommandContext | null;
     contextIncluded: boolean;
+    target: TargetReading;
     guidance: GuidanceSelection;
     answers?: Record<string, JsonValue>;
   },
@@ -415,6 +434,7 @@ function record(
     verdict: verdict.kind,
     deferReason: reason,
     ...contextFields(facts.contextIncluded, facts.fullCommand),
+    ...targetFields(facts.target),
     ...guidanceFields(facts.guidance),
     ...(facts.answers === undefined ? {} : { answers: facts.answers }),
   });

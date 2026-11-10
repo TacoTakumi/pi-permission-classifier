@@ -78,6 +78,9 @@ export function contextFor(
     details: { payload: { request: { value: testCase.value, toolName: testCase.tool } } } as never,
     surface: testCase.surface,
     cwd: testCase.cwd,
+    // A file-op case carries the target the gate would have resolved; the other
+    // cases send no target, as a bash or MCP ask does.
+    ...(testCase.target === undefined ? {} : { target: testCase.target }),
     fullCommand:
       text === undefined
         ? null
@@ -165,6 +168,9 @@ export function cacheKey(
   questions: Record<string, ClassifierQuestion>,
   intent = false,
 ): string {
+  // The case is hashed as sent, and JSON.stringify drops an undefined field: a
+  // case that had a value and lost it gets a new key, a case that never had one
+  // keeps its cached score.
   if (intent) return sha12(JSON.stringify([questions, testCase, "intent"]));
   const { userMessages: _, ...sent } = testCase;
   return sha12(JSON.stringify([questions, sent]));
@@ -497,4 +503,114 @@ export function bestIntentThresholds(
 
 function sha12(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12);
+}
+
+/**
+ * What the quick judge did with the file-op cases at one set of thresholds. The
+ * tiers come from the corpus, and `never` marks the rows no threshold may allow.
+ */
+export interface FileOpRow {
+  tier: string;
+  cases: number;
+  allowed: number;
+  denied: number;
+  deferred: number;
+  unscored: number;
+  /** Mean `contained` over the cases that scored, or null when none did. */
+  meanContained: number | null;
+  /** Mean `reversible` over the cases that scored, or null when none did. */
+  meanReversible: number | null;
+}
+
+/** The file-op rows, one per tier, in tier order. */
+export function fileOpRows(
+  cases: readonly EvalCase[],
+  scores: ReadonlyMap<string, Scores | undefined>,
+  thresholds: Thresholds,
+): FileOpRow[] {
+  interface Tally {
+    cases: number;
+    allowed: number;
+    denied: number;
+    deferred: number;
+    unscored: number;
+    contained: number;
+    reversible: number;
+  }
+  const byTier = new Map<string, Tally>();
+  for (const testCase of cases) {
+    if (testCase.kind !== "file-op") continue;
+    const tier = testCase.fileTier ?? "unset";
+    const tallyOf =
+      byTier.get(tier) ??
+      { cases: 0, allowed: 0, denied: 0, deferred: 0, unscored: 0, contained: 0, reversible: 0 };
+    tallyOf.cases += 1;
+    const score = scores.get(testCase.id);
+    if (score === undefined) {
+      tallyOf.unscored += 1;
+    } else {
+      const verdict = verdictAt(score, thresholds);
+      if (verdict === "allow") tallyOf.allowed += 1;
+      else if (verdict === "deny") tallyOf.denied += 1;
+      else tallyOf.deferred += 1;
+      tallyOf.contained += score.contained;
+      tallyOf.reversible += score.reversible;
+    }
+    byTier.set(tier, tallyOf);
+  }
+  return [...byTier.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tier, tallyOf]) => {
+      const scored = tallyOf.cases - tallyOf.unscored;
+      return {
+        tier,
+        cases: tallyOf.cases,
+        allowed: tallyOf.allowed,
+        denied: tallyOf.denied,
+        deferred: tallyOf.deferred,
+        unscored: tallyOf.unscored,
+        meanContained: scored === 0 ? null : tallyOf.contained / scored,
+        meanReversible: scored === 0 ? null : tallyOf.reversible / scored,
+      };
+    });
+}
+
+/** Where a file-op case's target sits, for the placement means. */
+export interface LocationRow {
+  location: string;
+  cases: number;
+  meanContained: number | null;
+  meanReversible: number | null;
+}
+
+/**
+ * Mean scores grouped by where the target sits, over the cases that have one.
+ * The verdict column would be noise here, since what a score does depends on the
+ * thresholds in use, so the means carry the comparison.
+ */
+export function locationMeans(
+  cases: readonly EvalCase[],
+  scores: ReadonlyMap<string, Scores | undefined>,
+): LocationRow[] {
+  const groups = new Map<string, { cases: number; contained: number; reversible: number }>();
+  for (const testCase of cases) {
+    if (testCase.kind !== "file-op" || testCase.target === undefined) continue;
+    const location = testCase.target.location;
+    const group = groups.get(location) ?? { cases: 0, contained: 0, reversible: 0 };
+    const score = scores.get(testCase.id);
+    if (score !== undefined) {
+      group.cases += 1;
+      group.contained += score.contained;
+      group.reversible += score.reversible;
+    }
+    groups.set(location, group);
+  }
+  return [...groups.entries()]
+    .map(([location, group]) => ({
+      location,
+      cases: group.cases,
+      meanContained: group.cases === 0 ? null : group.contained / group.cases,
+      meanReversible: group.cases === 0 ? null : group.reversible / group.cases,
+    }))
+    .sort((left, right) => left.location.localeCompare(right.location));
 }

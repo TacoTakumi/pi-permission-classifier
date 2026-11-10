@@ -6,6 +6,7 @@ import {
   type CompleteFn,
   GENERIC_TEACHING_REASON,
   reviewAsk,
+  type ReviewAskInputs,
 } from "#src/model-review";
 import { DEFAULT_INSTRUCTIONS } from "#src/prompt";
 import {
@@ -14,6 +15,7 @@ import {
   assistantToolCall,
 } from "#test/fixtures/assistant-message";
 import { askDetails } from "#test/fixtures/details";
+import { editAsk } from "#test/fixtures/target";
 
 const CONFIG = classifierConfigSchema.parse({});
 
@@ -250,5 +252,50 @@ describe("reviewAsk", () => {
     expect(outcome.verdict).toEqual({ kind: "defer" });
     expect(outcome.deferReason).toBe("timeout");
     expect(outcome.rawReply).toBeUndefined();
+  });
+});
+
+describe("reviewAsk prompt facts", () => {
+  /** The single user message content `reviewAsk` handed to `complete`. */
+  async function promptFor(inputs: Omit<ReviewAskInputs, "complete">): Promise<string> {
+    const complete = completeReporting({ verdict: "defer" });
+    await reviewAsk({ ...inputs, complete });
+    const context = (complete as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Context;
+    return String(context.messages[0]?.content);
+  }
+
+  it("renders the target and the working directory it is given", async () => {
+    const prompt = await promptFor({
+      details: editAsk("/work/repo/src/client.py", "src/client.py"),
+      config: CONFIG,
+      model: MODEL,
+      promptFacts: {
+        target: {
+          path: "/work/repo/src/client.py",
+          resolved: null,
+          relativeSpelling: "src/client.py",
+          directory: "/work/repo/src",
+          state: "file",
+          location: "project",
+        },
+        cwd: "/work/repo",
+        tempDirectory: "/run/user/1000/tmp",
+      },
+    });
+
+    expect(prompt).toContain("<target-file>\n/work/repo/src/client.py\n</target-file>");
+    expect(prompt).toContain("- Working directory: /work/repo");
+    expect(prompt).toContain("temporary directory is /run/user/1000/tmp");
+  });
+
+  it("renders the value-only prompt when given no facts", async () => {
+    const prompt = await promptFor({
+      details: askDetails(),
+      config: CONFIG,
+      model: MODEL,
+    });
+
+    expect(prompt).not.toContain("File the action targets");
+    expect(prompt).not.toContain("Working directory");
   });
 });
