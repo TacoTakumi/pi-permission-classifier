@@ -244,6 +244,31 @@ describe("mode quick-then-llm", () => {
     expect(decisionEntries(log).map((entry) => entry.judge)).toEqual(["quick", "llm"]);
   });
 
+  it.each([
+    [{ verdict: "allow" }, { kind: "allow" }],
+    [{ verdict: "deny", reason: "reads a token file" }, { kind: "deny", reason: "reads a token file" }],
+  ])("hands a path-family ask to the LLM judge, whose %o decides", async (llmVerdict, expected) => {
+    const h = harness(cascade(), { llmVerdict });
+    const log = fakeLog();
+    const details = askDetails(
+      { surface: "read" },
+      {
+        accessIntent: {
+          surface: "external_directory_read",
+          matchValues: ["/opt/outside/x"],
+          boundaryValue: "/opt/outside/x",
+        },
+      },
+    );
+    expect(await createJudgeLink(h.deps)(details, QUERY, log)).toEqual(expected);
+    expect(h.classify).not.toHaveBeenCalled();
+    expect(h.complete).toHaveBeenCalledTimes(1);
+    expect(decisionEntries(log)).toMatchObject([
+      { judge: "quick", verdict: "defer", deferReason: "path-family" },
+      { judge: "llm", verdict: expected.kind },
+    ]);
+  });
+
   it("forces allow-defer and onError defer on the quick judge and warns once", async () => {
     const h = harness(cascade({ verdicts: "allow-deny", onError: "deny", model: "nope" }), {
       classify: async () => QUICK_DENY,

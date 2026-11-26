@@ -453,8 +453,10 @@ surfaces added by other extensions and the `path` and `external_directory`
 families. A family is the bare name plus its `<name>_*` members, today
 `path`, `path_read`, `path_write`, `external_directory`,
 `external_directory_read`, and `external_directory_write`. The quick judge
-does not review those two families: it defers them with no model call. There
-is no surface list to maintain.
+never allows an ask on those two families: it records the ask as uncertain
+(defer reason `path-family`) with no model call, and its `verdicts` setting
+maps that, so in `quick-then-llm` the LLM judge decides it. There is no
+surface list to maintain.
 
 Your `path` and `external_directory` deny rules still apply first, because a
 deny never reaches the chain. On those two families the permission system
@@ -536,9 +538,10 @@ inside the working directory, inside the temporary directory, or outside both.
 The block names paths and what exists at them, never file contents, and a bash
 command carries no target because its paths are already in the command. The
 model never sees your messages (see "User messages"), tool results, file
-contents, evidence, annotations or the tool-input preview. The `path` and
-`external_directory` families and an undeterminable surface defer with no model
-call, whatever `verdicts` and `onError` say.
+contents, evidence, annotations or the tool-input preview. A `path` or
+`external_directory` family ask is recorded as uncertain with no model call and
+mapped through `verdicts`; it is never allowed. An undeterminable surface defers
+with no model call, whatever `verdicts` and `onError` say.
 
 ### quickJudge settings
 

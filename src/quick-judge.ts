@@ -7,8 +7,11 @@
  * The decision runs top to bottom, so the cheap gates short-circuit before
  * any model call:
  *   1. settings are loaded (else defer, recorded),
- *   2. the gate-authoritative surface is determinable and outside the `path`
- *      and `external_directory` families (else defer, not recorded),
+ *   2. the gate-authoritative surface is determinable (else defer, not
+ *      recorded); a `path` or `external_directory` family ask is recorded
+ *      as uncertain with no model call and goes through the verdict policy,
+ *      so the quick judge never allows one and in quick-then-llm the LLM
+ *      judge decides it. It is not a health event,
  *   3. the full command fits `contextBudgetBytes` (else over-budget),
  *   4. the judge's own circuit breaker is closed (else breaker-open),
  *   5. the classifier model resolves through `findOfType("classifier", ...)`
@@ -83,6 +86,8 @@ const JUDGE_TAG = "quick";
  * model's own defer, so health treats both as a verdict.
  */
 const UNCERTAIN_REASON = "model-verdict";
+/** The defer reason a path or external_directory family ask records. */
+const PATH_FAMILY_REASON = "path-family";
 
 /** The policy when no settings can be read: never deny, never allow. */
 const DEFAULT_POLICY: VerdictPolicy = { verdicts: "allow-defer", onError: "defer" };
@@ -236,12 +241,12 @@ async function decide(
     return { kind: "defer" };
   }
 
-  if (surface === undefined || isExcludedSurface(surface)) {
+  if (surface === undefined) {
     log.debug(SHORT_CIRCUIT_EVENT, {
       judge: JUDGE_TAG,
       requestId: details.requestId,
-      surface: surface ?? null,
-      reason: surface === undefined ? "undeterminable-surface" : "excluded-surface",
+      surface: null,
+      reason: "undeterminable-surface",
     });
     return { kind: "defer" };
   }
@@ -263,6 +268,23 @@ async function decide(
       target,
       guidance: EMPTY_GUIDANCE,
     });
+
+  // The quick judge passes a path-family ask on: a secret-named file in the
+  // project scores close to an allow with the target in view, so only the
+  // LLM judge decides these.
+  if (isExcludedSurface(surface)) {
+    return record(deps, log, details, surface, policy, { kind: "uncertain" }, {
+      modelId: pairId,
+      modelCalled: false,
+      latencyMs: null,
+      deferReason: PATH_FAMILY_REASON,
+      fullCommand,
+      contextIncluded: false,
+      target,
+      guidance: EMPTY_GUIDANCE,
+      reportHealth: false,
+    });
+  }
 
   if (fullCommand !== null && fullCommand.bytes > settings.contextBudgetBytes) {
     return preModel({ kind: "over-budget" }, "context-over-budget");
@@ -423,6 +445,8 @@ function record(
     target: TargetReading;
     guidance: GuidanceSelection;
     answers?: Record<string, JsonValue>;
+    /** False for an outcome that is neither a model verdict nor a failure. */
+    reportHealth?: boolean;
   },
 ): AuthorizerVerdict {
   const verdict = applyVerdictPolicy(outcome, policy);
@@ -438,7 +462,9 @@ function record(
     ...guidanceFields(facts.guidance),
     ...(facts.answers === undefined ? {} : { answers: facts.answers }),
   });
-  report(deps, healthOf(outcome, reason));
+  if (facts.reportHealth !== false) {
+    report(deps, healthOf(outcome, reason));
+  }
   return verdict;
 }
 

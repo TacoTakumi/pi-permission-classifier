@@ -200,13 +200,18 @@ describe("model resolution", () => {
 });
 
 describe("surface short-circuits", () => {
-  it.each(["path_read", "external_directory_write", "path", "external_directory"])(
-    "defers %s with no classify call under allow-deny and onError deny",
-    async (surface) => {
+  it.each([
+    ["path_read", "allow-defer", "defer"],
+    ["external_directory_write", "allow-defer", "defer"],
+    ["path", "allow-deny", "deny"],
+    ["external_directory", "allow-deny", "deny"],
+  ] as const)(
+    "passes %s on as uncertain with no classify call: %s gives %s",
+    async (surface, verdicts, expected) => {
       const registry = fakeRegistry();
       const authorize = createQuickJudge(
         makeDeps({
-          settings: settings({ verdicts: "allow-deny", onError: "deny" }),
+          settings: settings({ verdicts, onError: "deny" }),
           getRegistry: () => registry,
         }),
       );
@@ -216,9 +221,15 @@ describe("surface short-circuits", () => {
         QUERY,
         log,
       );
-      expect(verdict).toEqual({ kind: "defer" });
+      expect(verdict.kind).toBe(expected);
       expect(registry.classify).not.toHaveBeenCalled();
-      expect(decisionEntry(log)).toBeUndefined();
+      expect(decisionEntry(log)).toMatchObject({
+        judge: "quick",
+        surface,
+        modelCalled: false,
+        verdict: expected,
+        deferReason: "path-family",
+      });
     },
   );
 
@@ -673,7 +684,7 @@ describe("breaker and health", () => {
     expect(decisionEntries(log)).toHaveLength(1);
   });
 
-  it("reports nothing for a surface short-circuit", async () => {
+  it("reports no health outcome for a path-family ask", async () => {
     const onOutcome = vi.fn();
     const authorize = createQuickJudge(makeDeps({ onOutcome }));
     await authorize(
@@ -728,7 +739,7 @@ describe("decision entry tag", () => {
   it("tags the surface short-circuit debug entry judge quick", async () => {
     const log = fakeLog();
     await createQuickJudge(makeDeps())(
-      askDetails({ surface: "path_read" }, { surface: "path_read" }),
+      askDetails({}, { surface: null, accessIntent: undefined }),
       QUERY,
       log,
     );
