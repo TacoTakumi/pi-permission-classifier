@@ -373,8 +373,11 @@ routine in this repo", and the judge sees them verbatim.
   data to the judge, not instructions. The header and the rubric tell the
   judge the seven never-allow items are outside its reach, but that is a
   prompt instruction, not code: a trusted project's file can still steer
-  a model-based verdict, so review what you trust. The engine's own
-  `path` and `external_directory` caps hold regardless.
+  a model-based verdict, so review what you trust. The engine caps a
+  judge's allow on the `path` and `external_directory` families only while
+  the link is not trusted with them. Once `authorizerTrust` trusts the link
+  with a family, a trusted project's file can steer the LLM judge to an
+  allow on that family, and only your own deny rules still hold.
 - Logging: every `classifier.decision` entry carries `guidanceIncluded`
   (one `{path, bytes, hash12}` per rendered file) and `guidanceDropped`
   (one `{path, bytes, reason}` per excluded file, reason one of

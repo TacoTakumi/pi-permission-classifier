@@ -755,6 +755,13 @@ describe("guidance discipline", () => {
     const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf-8");
     const flat = readme.replace(/\s+/g, " ");
 
+    it("README says the guidance caps hold only while the link is untrusted", () => {
+      expect(flat).not.toMatch(/caps hold regardless/);
+      expect(flat).toMatch(
+        /Once `authorizerTrust` trusts the link with a family, a trusted project's file can steer the LLM judge to an allow on that family/,
+      );
+    });
+
     it("README has the guidance section with trust gating, caps, and log fields", () => {
       expect(readme).toMatch(/^### Guidance files$/m);
       expect(flat).toMatch(/trust/i);
