@@ -5,6 +5,47 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-26
+
+### Added
+
+- File asks carry a target block: the absolute path the gate matched, the
+  symlink-resolved path when a symlink leads elsewhere, what exists there,
+  and whether it is inside the working directory, inside the temporary
+  directory, or outside both. Both judges see it, and the prompt adds a
+  `Working directory` line and a rubric paragraph on target files. No file
+  contents are read or sent. Bash asks carry no target, since the judge
+  reads the full command. Each `classifier.decision` entry gains seven
+  target fields (`targetIncluded`, `targetPath`, `targetResolved`,
+  `targetDirectory`, `targetState`, `targetLocation`, `targetOmitted`).
+
+### Changed
+
+- The LLM judge reviews `path` and `external_directory` family asks
+  (`path_read`, `external_directory_write` and the rest) like any other
+  surface, under its `verdicts` and `onError`. pi-permission-system caps
+  an allow on those families to defer unless you trust the link with them:
+  set `"authorizerTrust": { "permission-judge": ["external_directory",
+  "path"] }` in its config (the setting is in gotgenes/pi-packages pull
+  request #983). A deny stands either way, and your own deny rules still
+  apply first.
+- The quick judge never allows a `path` or `external_directory` family
+  ask. It records the ask as uncertain with defer reason `path-family`
+  and no model call, and maps it through its `verdicts`, so in
+  `quick-then-llm` the LLM judge decides it. The pass-on is not counted as
+  a failure in the footer.
+- The `surfaces` warning now reads `This field is ignored: every surface
+  is judged.`
+
+### Fixed
+
+- The path spelling the agent typed relative to the working directory is
+  rendered inside a delimited `<target-relative>` data block instead of on
+  an inline sentence.
+- The package typechecks against pi-permission-system 44, whose verdict
+  union adds `allow_units`. The LLM judge maps that kind to uncertain; the
+  model never returns it.
+
 ## [0.6.1] - 2026-11-03
 
 ### Fixed
