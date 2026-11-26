@@ -483,6 +483,11 @@ function linkOutcomeOf(outcome: ReviewOutcome): LinkOutcome {
       return outcome.deferReason === "timeout" || outcome.deferReason === "call-failed"
         ? { kind: "failure", failure: outcome.deferReason }
         : { kind: "uncertain" };
+    case "allow_units":
+      // A partial allow over a bash chain is a verdict kind the permission
+      // system accepts from a link; the model review never produces one. Treat
+      // it as uncertain so it can never become an allow by accident.
+      return { kind: "uncertain" };
   }
 }
 
