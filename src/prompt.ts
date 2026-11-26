@@ -167,7 +167,7 @@ const USER_HEADER = "Messages the user wrote to the agent in this session, oldes
 
 /** A delimiter tag of this prompt, opening or closing, in any case. */
 const DELIMITER_TAG =
-  /<(\/?\s*(?:user-messages?|ask-value|executed-unit|full-command|guidance|target-file|target-resolved)\b)/gi;
+  /<(\/?\s*(?:user-messages?|ask-value|executed-unit|full-command|guidance|target-file|target-resolved|target-relative)\b)/gi;
 
 /** Escape the delimiter tags in judged or user text so it cannot open or close a block. */
 function escapeDelimiters(text: string): string {
@@ -231,9 +231,10 @@ function targetBlock(target: TargetContext, tempDirectory: string | null): strin
     ...(target.relativeSpelling === null
       ? []
       : [
-          `It can also be written relative to the working directory as ${escapeDelimiters(
-            JSON.stringify(target.relativeSpelling),
-          )}.`,
+          "It can also be written relative to the working directory as:",
+          "<target-relative>",
+          escapeDelimiters(target.relativeSpelling),
+          "</target-relative>",
         ]),
     ...(target.resolved === null
       ? []
