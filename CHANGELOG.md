@@ -18,6 +18,7 @@ this project adheres to
   reads the full command. Each `classifier.decision` entry gains seven
   target fields (`targetIncluded`, `targetPath`, `targetResolved`,
   `targetDirectory`, `targetState`, `targetLocation`, `targetOmitted`).
+  Contributed by Raymond Neilson (rneilson) in pull request #3.
 
 ### Changed
 
