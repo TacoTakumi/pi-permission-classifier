@@ -5,12 +5,11 @@
  * The decision runs top to bottom, deferring at the first miss so the cheap
  * gates short-circuit before any model call:
  *   1. a config is loaded (else defer, recorded),
- *   2. the gate-authoritative surface is determinable and outside the `path`
- *      and `external_directory` families — the bare name or any directional
- *      member such as `path_read` or `external_directory_write` (else defer —
- *      the engine caps any allow on those families anyway, so the classifier
- *      never attempts them); every other surface, whatever its name, is
- *      judged,
+ *   2. the gate-authoritative surface is determinable (else defer); every
+ *      surface is judged, the `path` and `external_directory` families
+ *      included. The permission system caps an allow on those families to
+ *      defer unless the operator trusts this link with the family
+ *      (`authorizerTrust`); a deny stands either way,
  *   3. the extracted full-command context fits `contextBudgetBytes` (else
  *      defer, recorded — over-budget context is never rendered),
  *   4. the judge model and its auth resolve (else defer, recorded),
@@ -59,11 +58,13 @@ import {
 } from "./verdict-policy";
 
 /**
- * Surface families the engine caps to defer; the classifier never even asks.
- * A family covers its bare name and every `<name>_*` member, the shape the
- * engine's delegation envelope uses (`path_read`, `path_write`,
- * `external_directory_read`, `external_directory_write`); an unknown
- * member is excluded too, which only ever defers.
+ * Surface families the permission system caps an allow on unless the
+ * operator trusts the link with them. The LLM judge reviews them; the quick
+ * judge never allows them and passes them on as uncertain. A family covers
+ * its bare name and every `<name>_*` member, the shape the engine's
+ * delegation envelope uses (`path_read`, `path_write`,
+ * `external_directory_read`, `external_directory_write`); an unknown member
+ * is covered too.
  */
 const EXCLUDED_SURFACE_FAMILIES = ["path", "external_directory"] as const;
 
@@ -288,15 +289,6 @@ async function decide(
       judge: JUDGE_TAG,
       requestId,
       reason: "undeterminable-surface",
-    });
-    return { kind: "defer" };
-  }
-  if (isExcludedSurface(surface)) {
-    log.debug(SHORT_CIRCUIT_EVENT, {
-      judge: JUDGE_TAG,
-      requestId,
-      surface,
-      reason: "excluded-surface",
     });
     return { kind: "defer" };
   }

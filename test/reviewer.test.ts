@@ -115,49 +115,84 @@ describe("surface gating", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
+  const PATH_FAMILY = [
     "path",
     "path_read",
     "path_write",
     "external_directory",
     "external_directory_read",
     "external_directory_write",
-  ])(
-    "defers when the gate-authoritative surface is %s, over any display surface",
+  ];
+  const pathAsk = (gateSurface: string) =>
+    askDetails(
+      { surface: "read" },
+      {
+        accessIntent: {
+          surface: gateSurface,
+          matchValues: ["/opt/outside/x"],
+          boundaryValue: "/opt/outside/x",
+        },
+      },
+    );
+
+  it.each(PATH_FAMILY)(
+    "sends a %s ask to the model and returns its allow",
     async (gateSurface) => {
       const complete = completeReporting({ verdict: "allow" });
       const authorize = createClassifierReviewer(makeDeps({ complete }));
       const log = fakeLog();
-      const verdict = await authorize(
-        askDetails(
-          { surface: "read" },
-          {
-            accessIntent: {
-              surface: gateSurface,
-              matchValues: ["/tmp/x"],
-              boundaryValue: "/tmp/x",
-            },
-          },
-        ),
-        QUERY,
-        log,
-      );
-      expect(verdict).toEqual({ kind: "defer" });
-      expect(complete).not.toHaveBeenCalled();
-      expect(decisionEntry(log)).toBeUndefined();
+      const verdict = await authorize(pathAsk(gateSurface), QUERY, log);
+      expect(verdict).toEqual({ kind: "allow" });
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(decisionEntry(log)).toMatchObject({
+        judge: "llm",
+        surface: gateSurface,
+        verdict: "allow",
+      });
     },
   );
 
+  it.each(PATH_FAMILY)("returns the model's deny on a %s ask", async (gateSurface) => {
+    const complete = completeReporting({ verdict: "deny", reason: "reads a token file" });
+    const authorize = createClassifierReviewer(makeDeps({ complete }));
+    const log = fakeLog();
+    const verdict = await authorize(pathAsk(gateSurface), QUERY, log);
+    expect(verdict).toEqual({ kind: "deny", reason: "reads a token file" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(decisionEntry(log)).toMatchObject({ judge: "llm", verdict: "deny" });
+  });
+
+  it("applies onError deny to a timed-out path ask", async () => {
+    const config = classifierConfigSchema.parse({ onError: "deny", timeoutMs: 5 });
+    const hangingComplete = vi.fn<CompleteFn>(
+      (_model, _context, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const authorize = createClassifierReviewer(
+      makeDeps({ complete: hangingComplete, getConfig: () => config }),
+    );
+    const log = fakeLog();
+    const verdict = await authorize(pathAsk("external_directory_read"), QUERY, log);
+    expect(verdict).toEqual({ kind: "deny", reason: failureDenyReason("timeout") });
+    expect(decisionEntry(log)).toMatchObject({
+      judge: "llm",
+      verdict: "deny",
+      deferReason: "timeout",
+    });
+  });
+
   it.each(["path_read", "external_directory_write"])(
-    "defers a %s display surface with no decision entry when no access intent is set",
+    "judges a %s display surface when no access intent is set",
     async (surface) => {
       const complete = completeReporting({ verdict: "allow" });
       const authorize = createClassifierReviewer(makeDeps({ complete }));
       const log = fakeLog();
       const verdict = await authorize(askDetails({ surface }), QUERY, log);
-      expect(verdict).toEqual({ kind: "defer" });
-      expect(complete).not.toHaveBeenCalled();
-      expect(decisionEntry(log)).toBeUndefined();
+      expect(verdict).toEqual({ kind: "allow" });
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(decisionEntry(log)).toMatchObject({ judge: "llm", surface });
     },
   );
 
@@ -471,25 +506,10 @@ describe("outcome seam", () => {
     });
   });
 
-  it.each([
-    ["undeterminable", askDetails({}, { surface: null })],
-    [
-      "excluded",
-      askDetails(
-        { surface: "read" },
-        {
-          accessIntent: {
-            surface: "path",
-            matchValues: ["/tmp/x"],
-            boundaryValue: "/tmp/x",
-          },
-        },
-      ),
-    ],
-  ])("never reports an %s surface short-circuit", async (_label, details) => {
+  it("never reports an undeterminable surface short-circuit", async () => {
     const onOutcome = onOutcomeSpy();
     const authorize = createClassifierReviewer(makeDeps({ onOutcome }));
-    await authorize(details, QUERY, fakeLog());
+    await authorize(askDetails({}, { surface: null }), QUERY, fakeLog());
     expect(onOutcome).not.toHaveBeenCalled();
   });
 
@@ -1035,7 +1055,6 @@ describe("verdicts and onError settings", () => {
 
 describe("short-circuit debug entries", () => {
   it.each([
-    ["an excluded surface", askDetails({ surface: "path_read" }, { surface: "path_read" })],
     ["an undeterminable surface", askDetails({}, { surface: null })],
   ])("tag %s with judge llm", async (_label, details) => {
     const log = fakeLog();

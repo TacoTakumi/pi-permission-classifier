@@ -124,7 +124,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 const IGNORED_FIELDS: Record<string, string> = {
   surfaces:
-    "This field is ignored: every surface outside the path and external_directory families is judged.",
+    "This field is ignored: every surface is judged.",
   systemOne: "This field is ignored: it was renamed to quickJudge.",
   classifierEnabled:
     "This field is ignored: set mode (llm, quick or quick-then-llm) to choose who judges.",

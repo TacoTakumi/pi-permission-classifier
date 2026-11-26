@@ -73,11 +73,8 @@ export interface BashPathShape {
  * `handlers/gates/bash-external-directory.ts:144`), and both report the
  * capability surface rather than `bash`.
  *
- * That surface belongs to a family the classifier never judges
- * (`isExcludedSurface`, `src/reviewer.ts:69-76`), so this shape short-circuits
- * before any model call. It is exercised at the extractor, which is where the
- * refusal lives; a judge-level test with it would assert a prompt that can never
- * be rendered.
+ * The target extractor refuses this shape (a command targets no single file),
+ * so it is exercised at the extractor, which is where the refusal lives.
  */
 export function bashPathAsk(
   command: string,

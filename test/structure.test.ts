@@ -359,7 +359,7 @@ describe("operator docs", () => {
     expect(surfacesRow).toMatch(/ignored/);
     expect(readme).not.toContain("### Choosing surfaces");
     expect(readme.replace(/\s+/g, " ")).toMatch(
-      /every surface except the `path` and `external_directory` families/,
+      /The LLM judge reviews every surface/,
     );
   });
 

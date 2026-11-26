@@ -92,9 +92,8 @@ and installing it grants it no authority until you name it in the chain.
        mkdir -p ~/.pi/agent/extensions/pi-permission-classifier
        echo '{}' > ~/.pi/agent/extensions/pi-permission-classifier/config.json
 
-   `{}` means: mode `llm`, judged by the session's chat model, every surface
-   except `path` and `external_directory`, 5000 ms timeout, built-in
-   rubric. See `config/config.example.json` for a version that names a
+   `{}` means: mode `llm`, judged by the session's chat model, every
+   surface, 5000 ms timeout, built-in rubric. See `config/config.example.json` for a version that names a
    dedicated model and a quick judge, each with its own call budget.
 
 5. Choose the judges. Start a new pi session and run `/permission-model`:
@@ -205,7 +204,7 @@ and every quick judge ask is then `model-unresolved`; repeat `provider` and
 | `provider` | unset | LLM judge model provider. Set together with `model`; with neither set, the session's chat model judges. |
 | `model` | unset | LLM judge model id, resolved from the session model registry. Set together with `provider`. |
 | `instructions` | built-in rubric | System prompt for the LLM judge. Replaces the default rubric verbatim when set. |
-| `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface outside the `path` and `external_directory` families is judged. A file that sets it logs one warning at load: `This field is ignored: every surface outside the path and external_directory families is judged.` |
+| `surfaces` | ignored | Accepted so older config files still parse, but ignored: every surface is judged. A file that sets it logs one warning at load: `This field is ignored: every surface is judged.` |
 | `timeoutMs` | `5000` | The LLM judge's own model call budget in milliseconds (positive integer). The quick judge has a separate `quickJudge.timeoutMs`. |
 | `contextBudgetBytes` | `8192` | Cap on the extracted full-command context in UTF-8 bytes (positive integer), for both judges. An over-budget ask is never sent to a model and counts as uncertain: it defers, or denies under `verdicts: "allow-deny"`. Context is never truncated to fit. |
 | `verdicts` | `"allow-deny-defer"` | Which verdicts the LLM judge may return. See "Verdicts and onError". |
@@ -449,17 +448,28 @@ useful and cheap:
 
 ### Which surfaces are judged
 
-The judges review every surface except the `path` and
-`external_directory` families, whatever the surface name, including
-surfaces added by other extensions. A family is the bare name plus its
-`<name>_*` members, today `path`, `path_read`, `path_write`,
-`external_directory`, `external_directory_read`, and
-`external_directory_write`. There is no surface list to maintain. Your
-cross-cutting `path` and `external_directory` rules still apply, and the
-engine downgrades any link allow on those families to defer, so the
-judge can never approve access outside the working directory or to a
-path your policy denies. To keep a tool out of the judge's hands, route it
-to `allow` or `deny` in the permission system policy instead of `ask`.
+The LLM judge reviews every surface, whatever the surface name, including
+surfaces added by other extensions and the `path` and `external_directory`
+families. A family is the bare name plus its `<name>_*` members, today
+`path`, `path_read`, `path_write`, `external_directory`,
+`external_directory_read`, and `external_directory_write`. The quick judge
+does not review those two families: it defers them with no model call. There
+is no surface list to maintain.
+
+Your `path` and `external_directory` deny rules still apply first, because a
+deny never reaches the chain. On those two families the permission system
+caps a judge's allow to defer, which ends the ask in a dialog, unless you
+trust the link with the family. pi-permission-system's `authorizerTrust`
+setting does that (it is in a pull request upstream, gotgenes/pi-packages
+#983):
+
+```json
+"authorizerTrust": { "permission-judge": ["external_directory", "path"] }
+```
+
+A judge's deny on those families stands with or without the trust. To keep a
+tool out of the judge's hands, route it to `allow` or `deny` in the permission
+system policy instead of `ask`.
 
 ## Modes
 
@@ -792,9 +802,8 @@ shutdown.
 
 ## How it works
 
-- The judges only see asks your policy routed to `ask`, on every
-  surface except the `path` and `external_directory` families. Anything
-  else is untouched.
+- The judges only see asks your policy routed to `ask`. Anything else is
+  untouched.
 - The mode picks which judge runs (see "Modes"). For each ask the LLM
   judge reviews, it renders the structured ask facts (surface, tool
   names, the decision value, matched pattern, executed unit, requester
@@ -809,8 +818,9 @@ shutdown.
   judge.
 - Each judge's `verdicts` and `onError` settings apply to its verdict and
   to every failure; nothing else changes it. The engine's own
-  bounded-delegation checkpoint enforces the `path` / `external_directory`
-  line.
+  bounded-delegation checkpoint caps an allow on the `path` /
+  `external_directory` families to defer unless `authorizerTrust` trusts
+  the link with the family.
 - Each judge has a circuit breaker that opens after 3 consecutive
   model-call failures or timeouts; that judge's asks then defer instantly
   for a 60 second cooldown, so a down model never stalls your session.
