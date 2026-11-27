@@ -788,14 +788,16 @@ describe("guidance discipline", () => {
       }
     });
 
-    it("CHANGELOG's top heading is a dated version listing the rename and the removed forms", () => {
+    it("CHANGELOG's top heading is a dated version and 0.6.0 lists the rename and the removed forms", () => {
       const headings = changelog.match(/^## .*$/gm) ?? [];
       expect(headings[0]).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/);
       expect(headings[0]).not.toMatch(/unreleased/i);
-      const newest = changelog
-        .slice(changelog.indexOf(headings[0]!) + headings[0]!.length)
+      const renameHeading = headings.find((heading) => heading.startsWith("## [0.6.0]"));
+      expect(renameHeading).toBeDefined();
+      const renameRelease = changelog
+        .slice(changelog.indexOf(renameHeading!) + renameHeading!.length)
         .split(/\n## /)[0]!;
-      const flatNewest = newest.replace(/\s+/g, " ");
+      const flatRelease = renameRelease.replace(/\s+/g, " ");
       for (const claim of [
         "### Added",
         "### Changed",
@@ -809,9 +811,9 @@ describe("guidance discipline", () => {
         "`/permission-model session`",
         "`--permission-model <provider>/<id>`",
       ]) {
-        expect(flatNewest).toContain(claim);
+        expect(flatRelease).toContain(claim);
       }
-      expect(flatNewest).toMatch(/renamed from `classifier` to `permission-judge`/);
+      expect(flatRelease).toMatch(/renamed from `classifier` to `permission-judge`/);
     });
 
     it("README documents the single entry, the alias, the modes, the quick judge, key, egress and local route", () => {
